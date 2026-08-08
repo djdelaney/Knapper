@@ -1,0 +1,17 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]ogs/
+artifacts/
+coverage/
+
+# Local config overrides (never committed — may hold paths/secrets)
+appsettings.Local.json
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# OS
+.DS_Store

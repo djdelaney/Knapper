@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Required by the LibraryImport interop source generator (Interop/Posix.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Knapper.Core.Tests" />
+    <!-- The two-process lock probe builds VaultPath records directly: it
+         exercises the lock protocol, not path validation. -->
+    <InternalsVisibleTo Include="Knapper.LockProbe" />
+  </ItemGroup>
+
+</Project>

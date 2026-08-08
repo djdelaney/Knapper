@@ -1,0 +1,33 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- THE Knapper version: single source of truth for every binary.
+         Surfaced to MCP clients via initialize.serverInfo.version. -->
+    <Version>0.1.0</Version>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors></WarningsNotAsErrors>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <NoWarn>$(NoWarn);NU1507</NoWarn>
+  </PropertyGroup>
+
+  <!-- Knapper is Unix-only BY DESIGN: the mutation contract stands on
+       flock(2) advisory locks, link(2) no-clobber commits, rename(2)
+       atomicity, and preserved Unix file modes. Production is a Debian LXC;
+       dev is macOS. These assembly attributes (applied to every project)
+       make the platform analyzer enforce that instead of demanding guards
+       for a platform the service will never run on. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatform">
+      <_Parameter1>linux</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatform">
+      <_Parameter1>macos</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

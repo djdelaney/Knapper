@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Knapper.Core\Knapper.Core.csproj" />
+    <!-- Referenced so the probe binary lands in this project's output dir;
+         CrossProcessLockTests spawns it with `dotnet exec`. -->
+    <ProjectReference Include="..\..\tools\Knapper.LockProbe\Knapper.LockProbe.csproj" />
+  </ItemGroup>
+
+</Project>

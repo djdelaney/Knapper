@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Knapper.Core/Knapper.Core.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Knapper.LockProbe/Knapper.LockProbe.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Knapper.Core.Tests/Knapper.Core.Tests.csproj" />
+  </Folder>
+</Solution>
