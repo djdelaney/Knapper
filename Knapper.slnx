@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Knapper.Cli/Knapper.Cli.csproj" />
     <Project Path="src/Knapper.Core/Knapper.Core.csproj" />
     <Project Path="src/Knapper.Mcp/Knapper.Mcp.csproj" />
   </Folder>

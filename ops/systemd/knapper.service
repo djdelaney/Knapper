@@ -1,0 +1,42 @@
+# Knapper MCP server — the single authoritative agent interface to /vault.
+# Install: copy to /etc/systemd/system/, adjust paths, systemctl enable --now knapper
+[Unit]
+Description=Knapper MCP server (Obsidian vault interface)
+After=network-online.target obsidian-headless.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=knapper
+Group=knapper
+WorkingDirectory=/opt/knapper/mcp
+ExecStart=/opt/knapper/mcp/Knapper.Mcp
+Restart=on-failure
+RestartSec=5
+
+# Configuration via environment (overrides appsettings.json).
+Environment=Vault__RootPath=/vault
+Environment=Vault__LockDirectory=/var/lib/knapper/locks
+Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
+Environment=Sync__Mode=heartbeat
+Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
+Environment=Mcp__BindAddress=127.0.0.1
+Environment=Mcp__Port=3535
+Environment=Mcp__AllowedHosts__0=mcp.example.com
+# Access origin validation: set these when the Cloudflare Access app exists.
+#Environment=Mcp__Access__Enabled=true
+#Environment=Mcp__Access__TeamDomain=https://YOURTEAM.cloudflareaccess.com
+#Environment=Mcp__Access__Audience=YOUR_ACCESS_APP_AUD
+
+# Hardening. ReadWritePaths lists exactly what the service may touch.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/vault /var/lib/knapper
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

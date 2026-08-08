@@ -1,0 +1,11 @@
+# Touches the sync heartbeat file iff continuous sync looks healthy.
+# The MCP server's mutation gate reads this file's age (Sync__HeartbeatPath);
+# stale or missing = mutations blocked, fail closed.
+[Unit]
+Description=Knapper sync-health heartbeat probe
+
+[Service]
+Type=oneshot
+User=knapper
+Group=knapper
+ExecStart=/opt/knapper/ops/sync-heartbeat.sh /var/lib/knapper/sync-heartbeat

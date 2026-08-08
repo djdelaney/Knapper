@@ -1,0 +1,26 @@
+# Official Obsidian CLI running continuous Sync against /vault (brief §5).
+# The upstream npm package ships NO unit — this is the hand-written one.
+# Prereq (interactive, once): ob login; ob sync-setup --vault Helios
+#   --device-name obsidian-mcp; ob sync-config --conflict-strategy conflict
+#   --file-types image,audio,video,pdf,unsupported   (BOTH flags load-bearing — brief §5)
+[Unit]
+Description=Obsidian headless continuous sync (Helios)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=knapper
+Group=knapper
+ExecStart=/usr/bin/ob sync --continuous
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=true
+ProtectSystem=strict
+# ob keeps its state under the service user's home.
+ReadWritePaths=/vault /home/knapper
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

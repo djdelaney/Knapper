@@ -1,0 +1,14 @@
+# The vault's git snapshot job (brief §10): runs `knapper commit` under the
+# vault-wide commit lock. Pairs with knapper-commit.timer.
+[Unit]
+Description=Knapper vault git snapshot
+
+[Service]
+Type=oneshot
+User=knapper
+Group=knapper
+WorkingDirectory=/opt/knapper/cli
+ExecStart=/opt/knapper/cli/knapper commit
+Environment=Vault__RootPath=/vault
+Environment=Vault__LockDirectory=/var/lib/knapper/locks
+Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl

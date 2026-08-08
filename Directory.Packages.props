@@ -8,6 +8,11 @@
     <!-- YAML frontmatter parsing for vault_search_frontmatter. -->
     <PackageVersion Include="YamlDotNet"                        Version="16.3.0" />
 
+    <!-- Configuration for the CLI (the MCP host gets these via ASP.NET Core) -->
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json"                 Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder"               Version="10.0.10" />
+
     <!-- MCP server -->
     <PackageVersion Include="ModelContextProtocol"              Version="2.1.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore"   Version="2.1.0" />

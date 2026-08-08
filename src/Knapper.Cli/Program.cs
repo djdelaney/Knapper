@@ -1,0 +1,165 @@
+// knapper — the vault's admin binary. Four small commands, hand-dispatched
+// (no CLI framework: nothing here needs option parsing beyond a count).
+//
+//   knapper git-init            init the vault repo + .gitignore (deliberate act; brief §10)
+//   knapper commit              snapshot under the vault-wide commit lock (systemd timer runs this)
+//   knapper status              one-screen operational summary
+//   knapper doctor              config/dependency checks; exit 1 on any failure
+//   knapper audit-tail [n]      last n audit entries (default 20)
+//
+// Configuration: appsettings.json next to the binary (same schema as the MCP
+// server's Vault/Sync sections) + environment variables (Vault__RootPath=…).
+
+using Knapper.Core;
+using Knapper.Core.Git;
+using Knapper.Core.Locking;
+using Knapper.Core.Mutation;
+using Knapper.Core.Options;
+using Knapper.Core.Vault;
+using Microsoft.Extensions.Configuration;
+
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: true)
+    .AddEnvironmentVariables()
+    .Build();
+var vaultOptions = configuration.GetSection(VaultOptions.SectionName).Get<VaultOptions>() ?? new VaultOptions();
+var syncOptions = configuration.GetSection(SyncOptions.SectionName).Get<SyncOptions>() ?? new SyncOptions();
+
+try
+{
+    return args.FirstOrDefault() switch
+    {
+        "git-init" => GitInit(),
+        "commit" => Commit(),
+        "status" => Status(),
+        "doctor" => Doctor(),
+        "audit-tail" => AuditTail(args.Length > 1 && int.TryParse(args[1], out var n) ? n : 20),
+        _ => Usage(),
+    };
+}
+catch (KnapperException e)
+{
+    Console.Error.WriteLine($"[{e.Code}] {e.Message}");
+    return 1;
+}
+
+int Usage()
+{
+    Console.Error.WriteLine("usage: knapper <git-init|commit|status|doctor|audit-tail [n]>");
+    return 2;
+}
+
+(VaultPathResolver Resolver, VaultLockManager Locks) Open()
+{
+    if (string.IsNullOrWhiteSpace(vaultOptions.RootPath))
+        throw new KnapperException(VaultErrorCode.IoError, "Vault:RootPath is not configured");
+    if (string.IsNullOrWhiteSpace(vaultOptions.LockDirectory))
+        throw new KnapperException(VaultErrorCode.IoError, "Vault:LockDirectory is not configured");
+    return (new VaultPathResolver(vaultOptions.RootPath), new VaultLockManager(vaultOptions.LockDirectory));
+}
+
+int GitInit()
+{
+    var (resolver, locks) = Open();
+    new GitCommitJob(resolver, locks).Init();
+    Console.WriteLine($"initialized git repository in {resolver.Root} with the standard .gitignore");
+    Console.WriteLine("REMINDER (brief §10): local-only — NO remote until the credential sweep closes; " +
+                      "PBS backups are now the only protection for vault history.");
+    return 0;
+}
+
+int Commit()
+{
+    var (resolver, locks) = Open();
+    var outcome = new GitCommitJob(resolver, locks).Commit(TimeSpan.FromMilliseconds(vaultOptions.LockTimeoutMs));
+    Console.WriteLine(outcome.Committed ? $"committed {outcome.CommitSha}: {outcome.Message}" : outcome.Message);
+    return 0;
+}
+
+int Status()
+{
+    var (resolver, locks) = Open();
+    var job = new GitCommitJob(resolver, locks);
+    var conflicts = new ConflictDetector(resolver).ScanAll();
+    Console.WriteLine($"vault:      {resolver.Root}");
+    Console.WriteLine($"locks:      {vaultOptions.LockDirectory}");
+    Console.WriteLine($"audit:      {vaultOptions.AuditLogPath}");
+    Console.WriteLine($"conflicts:  {(conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
+    Console.WriteLine($"git:        {(job.RepoExists ? $"repo present, last commit {Describe(job.LastCommitAgeSeconds())}" : "NO repo (knapper git-init)")}");
+    Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (syncOptions.Mode == "heartbeat"
+        ? $" — heartbeat {Describe(new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds())} (max {syncOptions.MaxAgeSeconds}s)"
+        : " (mutations NOT gated — dev only)"));
+    return conflicts.Count == 0 ? 0 : 1;
+
+    static string Describe(double? ageSeconds) =>
+        ageSeconds is { } age ? $"{age:F0}s ago" : "never/missing";
+}
+
+int Doctor()
+{
+    var failures = 0;
+    Check("Vault:RootPath configured and exists",
+        () => !string.IsNullOrWhiteSpace(vaultOptions.RootPath) && Directory.Exists(vaultOptions.RootPath));
+    Check("Vault:LockDirectory configured, outside the vault",
+        () => !string.IsNullOrWhiteSpace(vaultOptions.LockDirectory)
+              && !Path.GetFullPath(vaultOptions.LockDirectory).StartsWith(Path.GetFullPath(vaultOptions.RootPath) + '/', StringComparison.Ordinal));
+    Check("Vault:AuditLogPath configured, outside the vault",
+        () => !string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath)
+              && !Path.GetFullPath(vaultOptions.AuditLogPath).StartsWith(Path.GetFullPath(vaultOptions.RootPath) + '/', StringComparison.Ordinal));
+    Check($"ripgrep runs ({vaultOptions.RipgrepPath})", () =>
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo { FileName = vaultOptions.RipgrepPath, RedirectStandardOutput = true };
+        psi.ArgumentList.Add("--version");
+        using var p = System.Diagnostics.Process.Start(psi);
+        p!.WaitForExit(5000);
+        return p.ExitCode == 0;
+    });
+    Check("git runs", () =>
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo { FileName = "git", RedirectStandardOutput = true };
+        psi.ArgumentList.Add("--version");
+        using var p = System.Diagnostics.Process.Start(psi);
+        p!.WaitForExit(5000);
+        return p.ExitCode == 0;
+    });
+    if (syncOptions.Mode == "heartbeat")
+    {
+        Check($"sync heartbeat fresh (<{syncOptions.MaxAgeSeconds}s)",
+            () => new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds() is { } age && age <= syncOptions.MaxAgeSeconds);
+    }
+    else
+    {
+        Console.WriteLine("warn  sync gate is OPEN — dev only; production sets Sync:Mode=heartbeat");
+    }
+    return failures == 0 ? 0 : 1;
+
+    void Check(string what, Func<bool> probe)
+    {
+        bool ok;
+        try
+        {
+            ok = probe();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ok = false;
+            what += $" ({e.Message})";
+        }
+        Console.WriteLine($"{(ok ? "ok   " : "FAIL ")} {what}");
+        if (!ok)
+            failures++;
+    }
+}
+
+int AuditTail(int count)
+{
+    if (string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath) || !File.Exists(vaultOptions.AuditLogPath))
+    {
+        Console.WriteLine("no audit log");
+        return 0;
+    }
+    foreach (var line in File.ReadLines(vaultOptions.AuditLogPath).TakeLast(count))
+        Console.WriteLine(line);
+    return 0;
+}

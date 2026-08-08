@@ -36,7 +36,12 @@ transaction problem.
 dotnet build Knapper.slnx
 dotnet test Knapper.slnx
 dotnet test tests/Knapper.Core.Tests --filter "FullyQualifiedName~CrossProcessLockTests"
+dotnet run --project src/Knapper.Cli -- doctor      # config/dependency checks (env: Vault__RootPath etc.)
+ops/publish.sh                                      # linux-x64 tarball for CT 106
 ```
+
+Deployment: `ops/ct106-runbook.md` (condensed from the brief; the brief's
+§11 corrections are mandatory reading before building the CT).
 
 `Knapper.slnx` (not `.sln`) is the solution file — .NET 10 emits the new XML
 format by default.
@@ -155,6 +160,14 @@ format by default.
   and the sibling until a human reconciles. The sync gate (`ISyncGate`)
   fails mutations closed when continuous sync is unhealthy — no local
   fallback, ever.
+- **`GitCommitJob` is the vault's only committer, and it snapshots under
+  the vault-wide commit lock** — so a prepared-but-unverified batch write
+  can never be captured. Local-only repo; NO remote until the credential
+  sweep closes (brief §10), and the staged-content secret scan
+  (`SecretScanner`) refuses commits containing credential-shaped strings —
+  scanning the STAGED blob (`git show :file`), not the working tree, because
+  the staged bytes are what would enter history. Findings are masked in the
+  error; never echo a whole secret into logs or exceptions.
 
 ## Query-layer invariants (silent-corruption-prone)
 
