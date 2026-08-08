@@ -87,6 +87,41 @@ format by default.
   `AtomicFile.VerifyOnDisk` (reopen + byte-compare). This vault has a
   documented history of writes that reported success without landing.
 
+## MCP-layer invariants (silent-corruption-prone)
+
+- **`ToolSurface.Resolve` must stay typed `IEnumerable<Type>`.** The SDK has
+  both `WithTools(IEnumerable<Type>)` and a generic
+  `WithTools<TToolType>(TToolType singleToolInstance)`; for an argument
+  statically typed `IReadOnlyList<Type>` C# picks the GENERIC overload
+  (identity beats implicit conversion), which registers the list itself as
+  one tool object with zero `[McpServerTool]` methods — and the server
+  silently exposes NO tools while every test that doesn't hit the wire stays
+  green. Happened here; the wire tests are what caught it.
+- **Every tool attribute sets `UseStructuredContent = true`.** The SDK's
+  default puts results only in text content; structured content is the
+  client contract the tests pin. A new tool that forgets the flag ships
+  differently-shaped responses without any compile-time complaint.
+- **Tool errors lead with the bracketed code** (`[PreconditionFailed] …`) via
+  `ToolSupport.Run` — agents parse that prefix to decide "re-read and
+  rebuild" vs "give up". New tools go through `Run`; a bare exception would
+  reach clients as an unstructured message with no code.
+- **The locked tool table (`ToolSurface.All`) and the
+  `[McpServerTool(Name=…)]` attributes are held in lockstep by a test.**
+  Tool names are a client-facing contract; renames are version bumps, not
+  refactors. There is no unconditional-write tool in the table and never
+  will be.
+- **Startup fail-closed checks live in Program.cs singleton factories** and
+  are forced at boot (`GetRequiredService` before Run): missing vault root /
+  lock dir / audit path, lock dir or audit path INSIDE the vault — all
+  refuse startup rather than surfacing on the first tool call. Access
+  misconfiguration refuses startup; signing keys are fetched at boot (lazy
+  retrieval fails into an EventSource nobody hears while the server 401s
+  everyone — Mailvec shipped that once).
+- **/health is loopback-only and detailed; /up is boolean-only.** /up's body
+  discloses no paths, no conflict filenames, no generation counter — a test
+  pins the exact property set. The status-code parity between the two is
+  what monitors alert on.
+
 ## Mutation-layer invariants (silent-corruption-prone)
 
 - **`VaultMutationService` is the only mutation surface, and every operation

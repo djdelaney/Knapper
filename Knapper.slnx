@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Knapper.Core/Knapper.Core.csproj" />
+    <Project Path="src/Knapper.Mcp/Knapper.Mcp.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Knapper.LockProbe/Knapper.LockProbe.csproj" />
@@ -8,5 +9,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Knapper.Core.Tests/Knapper.Core.Tests.csproj" />
+    <Project Path="tests/Knapper.Mcp.Tests/Knapper.Mcp.Tests.csproj" />
   </Folder>
 </Solution>

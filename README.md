@@ -32,7 +32,7 @@ contract):
 | Path | What |
 |---|---|
 | `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch — with conflict/sync gates and a JSONL audit log) |
-| `src/Knapper.Mcp` | (upcoming) ASP.NET Core MCP server — tools, auth, health |
+| `src/Knapper.Mcp` | ASP.NET Core MCP server: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation, DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
 | `src/Knapper.Cli` | (upcoming) admin binary: git commit job, status, doctor |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |
 | `tools/Knapper.MutationProbe` | child-process probe for two-process stale-edit / simultaneous-create races |
