@@ -46,5 +46,15 @@ dotnet build Knapper.slnx
 dotnet test Knapper.slnx
 ```
 
-Requires .NET 10 SDK. Linux/macOS only — the locking and atomic-commit
-semantics are POSIX by design.
+Requires .NET 10 SDK, plus `ripgrep` and `git` on PATH. Linux/macOS only —
+the locking and atomic-commit semantics are POSIX by design.
+
+## Docs
+
+| Doc | What |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Project structure, the query + transaction layers, locking model, gates, security model |
+| [docs/usage.md](docs/usage.md) | Running/configuring, connecting clients, the 13-tool reference, error codes, monitoring |
+| [docs/extending.md](docs/extending.md) | Adding tools/queries/mutations without breaking the contracts; test + build conventions |
+| [ops/ct106-runbook.md](ops/ct106-runbook.md) | Production deployment on the Proxmox LXC |
+| [CLAUDE.md](CLAUDE.md) | The silent invariants — what a change must not break even though nothing would fail loudly |

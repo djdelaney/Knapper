@@ -1,0 +1,146 @@
+# Architecture
+
+Knapper turns a distributed agent-concurrency problem (many agents editing
+one Obsidian Sync vault from many machines) into one server-side transaction
+problem: a single always-on MCP server is the only interface agents have,
+and every write it performs is conditional, locked, atomic, and verified.
+
+```
+Human Obsidian clients ◄──► Obsidian Sync cloud ◄──► obsidian-headless (ob sync --continuous)
+                                                              │
+                                                              ▼
+Agents (claude.ai / Desktop / Code) ──► cloudflared ──► Knapper.Mcp ──► /vault
+                                        (Cloudflare        │ SHA preconditions + flock locks
+                                         Access = auth)    ├── audit JSONL (outside /vault)
+                                                           └── conflict + sync-health gates
+                                                              │
+                                        knapper commit  ◄─────┘  (systemd timer, vault-wide lock)
+                                        = git history, local-only
+```
+
+## Projects
+
+| Project | Kind | Purpose |
+|---|---|---|
+| `Knapper.Core` | library | Everything that touches vault bytes: path containment, hashing, atomic commits, locks, query services, mutation service, gates, audit, git job. No ASP.NET, no MCP types. |
+| `Knapper.Mcp` | web app | The MCP host: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. |
+| `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`. Shares Core, so the commit job uses the *same* lock implementation as mutations. |
+| `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
+| `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |
+| `tests/Knapper.Core.Tests` | tests | Unit + differential + multi-process race tests (167). |
+| `tests/Knapper.Mcp.Tests` | tests | Wire-level tests through the SDK's own `McpClient` (24). |
+
+Dependency direction is strictly `Mcp`/`Cli` → `Core`. Core's only NuGet
+dependency is YamlDotNet; the Mcp host adds the MCP SDK and JwtBearer.
+Everything is Unix-only by design (`SupportedOSPlatform` linux+macos,
+asserted repo-wide): the guarantees stand on flock(2), link(2), rename(2),
+and Unix file modes.
+
+## Knapper.Core layout
+
+```
+Core/
+  KnapperException.cs      VaultErrorCode + the one exception type crossing layers
+  Interop/Posix.cs         flock / link / creat / fsync-dir / realpath (LibraryImport)
+  Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions (POCOs)
+  Vault/
+    VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/banned-dir)
+    VaultPath.cs           proof-of-validation record (internal ctor)
+    VaultHash.cs           SHA-256 lowercase hex — the precondition currency
+    AtomicFile.cs          THE writer: temp+fsync → last-instant SHA check → rename/link → verify
+  Locking/
+    VaultLockManager.cs    cross-process flock: per-path EX + vault-wide commit lock (SH/EX)
+  Generation/
+    VaultGenerationCounter.cs  monotonic counter + filesystem watcher (control dirs filtered)
+  Query/
+    RipgrepRunner.cs       rg subprocess, structured args only, budget/timeout enforcement
+    VaultSearchService.cs  vault_search: matches / files-only / counts, streaming rg --json
+    VaultFileLister.cs     vault_files: native walk, differential-tested against rg --files
+    VaultReadService.cs    vault_read / vault_batch_read / vault_stat
+    FrontmatterSearchService.cs  vault_search_frontmatter (YamlDotNet)
+    Globbing.cs            rg/gitignore-style glob → regex (lister side of the equivalence)
+    QueryCursor.cs         fingerprint-bound continuation cursors
+    QueryModels.cs         QueryEnvelope<T> + all query/response records
+  Mutation/
+    VaultMutationService.cs  THE mutation surface: edit/append/create/mkdir/move/delete/batch
+    ConflictDetector.cs      Sync conflict-file gate
+    SyncGate.cs / FileAgeSyncGate.cs  ISyncGate: mutations fail closed on unhealthy sync
+    AuditLog.cs              append-only fsynced JSONL, outside the vault
+    MutationModels.cs        EditSpec, BatchItem, results, AuditContext
+  Git/
+    GitCommitJob.cs        the vault's only committer (vault-wide lock, staged secret scan)
+    SecretScanner.cs       credential-shaped-content tripwire
+```
+
+## The two layers, and their contracts
+
+**Query layer** (brief §6). Replaces the local `rg`/`find`/ranged-read
+agents lose at cutover. Search shells out to ripgrep with `ArgumentList`
+(never a shell) and always passes `--no-config --no-ignore --no-follow
+--sort=path`; the file lister is a native walk so mtime/size filters don't
+need a second stat pass. Both hide dotfiles at every depth — a differential
+test against real `rg --files` keeps them agreeing. Every list/search
+response wears the **completeness envelope**: `items`, `truncated`,
+`nextCursor` (fingerprint-bound to the query's filters), `scannedFiles`,
+`totalMatches` (explicit null when unknown — never guessed), and the
+generation span (`generationStart/End`, `changedDuringQuery`).
+
+**Transaction layer** (brief §7, semantics ported from
+`vault-edit.reference.py`). Every mutation of an existing file requires
+`expect_sha256` and runs the fixed critical section:
+
+```
+lock → fresh read → SHA check → transform → validate guards
+     → hidden same-dir temp + fsync → final SHA check → atomic replace
+     → reopen and byte-compare → unlock
+```
+
+Anchored edits demand exact occurrence counts; guards must exist before and
+survive after; create is hard-link no-clobber; move is link-then-unlink
+(rename would silently replace); delete is soft, into `.trash/`. Batch
+validates every item under sorted-order locks before the first write.
+Verification is by content, never by receipt — the vault has a documented
+history of writes that reported success without landing.
+
+## Locking model
+
+flock(2) advisory locks in a directory outside the vault (lock files must
+never sync), chosen over lock-file-existence schemes because flock releases
+on process death — a crashed holder can't wedge the vault.
+
+- **Mutation**: vault-wide lock SHARED, then per-path lock EXCLUSIVE.
+  Different paths proceed concurrently.
+- **Git snapshot** (`knapper commit`): vault-wide lock EXCLUSIVE — drains
+  in-flight mutations, blocks new ones, can never capture a
+  prepared-but-unverified write.
+- **Multi-path** (batch/move): global shared once, then per-path locks in
+  sorted order. Fixed ordering + the commit job taking no path locks =
+  no cycle in the lock graph = deadlock structurally impossible.
+
+The locks are cross-PROCESS (the CLI committer is a separate process), and
+proven by tests that spawn real second processes (`LockProbe`,
+`MutationProbe`), not just tasks.
+
+## Gates (fail closed, brief §8)
+
+- **Conflict gate**: a `Name (Conflicted copy ...).md` sibling blocks
+  mutations to both the original and the sibling until a human reconciles.
+  Agents never resolve conflicts.
+- **Sync gate**: in production (`Sync:Mode=heartbeat`) mutations require the
+  heartbeat file — touched every minute by a probe that checks the
+  obsidian-headless unit — to be fresh. Missing or stale = mutations
+  blocked. Reads stay up.
+- **Startup**: missing/misplaced vault root, lock dir, or audit path; bad
+  Access config; unfetchable signing keys — all refuse startup rather than
+  degrade.
+
+## Security model (brief §9, B2)
+
+The Cloudflare tunnel is the only network path; Cloudflare Access is the
+auth gate (Managed OAuth for claude.ai/Desktop/iOS, service token for
+Claude Code). The origin additionally validates Access's
+`Cf-Access-Jwt-Assertion` (issuer, audience, signature against the team's
+JWKS) so an edge misconfiguration can't silently expose the vault. A
+separate path-scoped monitoring audience is accepted on `/up` only.
+HostGuard pins Host/Origin headers against DNS-rebinding. The caller's
+identity (email / service-token common name) flows into every audit entry.

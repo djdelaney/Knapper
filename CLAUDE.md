@@ -30,6 +30,20 @@ transaction problem.
   locked tool surface, typed errors, `/health` vs `/up` split, silent-invariant
   CLAUDE.md.
 
+Developer docs (read on demand; this file stays invariants-only):
+
+- [`docs/architecture.md`](docs/architecture.md) — project/library structure,
+  the two layers, the locking model, gates, security model.
+- [`docs/usage.md`](docs/usage.md) — running it, the full configuration
+  reference, the 13-tool surface with the agent write loop, error-code table,
+  health/monitoring.
+- [`docs/extending.md`](docs/extending.md) — how to add a tool / query
+  capability / mutation / error code / config knob without breaking the
+  contracts; testing and build conventions; scoped-but-unbuilt ideas.
+- [`ops/ct106-runbook.md`](ops/ct106-runbook.md) — production deployment.
+  Runbooks describe how to VERIFY live state, never what it was (house rule):
+  date and mark anything observed.
+
 ## Common commands
 
 ```sh
