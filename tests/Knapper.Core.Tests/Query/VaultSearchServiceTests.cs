@@ -1,0 +1,251 @@
+using Knapper.Core.Query;
+
+namespace Knapper.Core.Tests.Query;
+
+public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
+{
+    private readonly FixtureVault _vault;
+
+    public VaultSearchServiceTests(FixtureVault vault) => _vault = vault;
+
+    private static VaultSearchQuery Q(string pattern) => new() { Pattern = pattern };
+
+    [Fact]
+    public void Literal_search_finds_expected_matches_with_line_and_column()
+    {
+        var result = _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "TODO alpha",
+            Literal = true,
+            Case = CaseMode.Sensitive,
+        });
+
+        var match = result.Items.ShouldHaveSingleItem();
+        match.Path.ShouldBe("Notes/Daily.md");
+        match.Line.ShouldBe(2);
+        match.Column.ShouldBe(1);
+        match.Text.ShouldBe("TODO alpha task");
+        result.Truncated.ShouldBeFalse();
+        result.TotalMatches.ShouldBe(1);
+        result.ScannedFiles.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Smart_case_is_insensitive_for_lowercase_and_sensitive_for_mixed()
+    {
+        // lowercase pattern → matches TODO, todo, and 'wrap TODO up'
+        _vault.Search.SearchMatches(Q("todo")).Items.Count.ShouldBe(3);
+        // uppercase in pattern → sensitive → TODO lines only
+        _vault.Search.SearchMatches(Q("TODO")).Items.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Whole_word_excludes_substring_hits()
+    {
+        _vault.Search.SearchMatches(new VaultSearchQuery { Pattern = "need", WholeWord = true })
+            .Items.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Regex_and_multiline_work()
+    {
+        _vault.Search.SearchMatches(Q(@"al\w+a")).Items
+            .ShouldContain(m => m.Path == "Notes/Daily.md" && m.Text.Contains("alpha"));
+
+        var multiline = _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = @"deep content\nneedle",
+            Multiline = true,
+        });
+        var m = multiline.Items.ShouldHaveSingleItem();
+        m.Path.ShouldBe("Notes/Sub/Deep.md");
+        m.Line.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Unicode_pattern_matches_in_unicode_paths()
+    {
+        var result = _vault.Search.SearchMatches(Q("käse"));
+        result.Items.Select(m => m.Path).Order(StringComparer.Ordinal).ShouldBe(
+            ["Projects/pröject.md", "with spaces/nöte – ünïcode.md"]);
+    }
+
+    [Fact]
+    public void Hidden_and_control_dirs_are_invisible_to_search()
+    {
+        var paths = _vault.Search.SearchMatches(Q("needle")).Items.Select(m => m.Path).Distinct().ToList();
+        paths.ShouldNotContain(p => p.StartsWith('.') || p.Contains("/."));
+    }
+
+    [Fact]
+    public void Binary_files_are_excluded_but_lossy_text_is_searched()
+    {
+        var paths = _vault.Search.SearchMatches(Q("needle")).Items.Select(m => m.Path).Distinct().ToList();
+        paths.ShouldNotContain("raw/blob.bin");
+        // Non-UTF-8 TEXT is still searched (rg replaces invalid bytes) —
+        // exclusion is for binary, not for imperfect encodings.
+        paths.ShouldContain("latin1/legacy.md");
+    }
+
+    [Fact]
+    public void Prefix_and_globs_scope_the_search()
+    {
+        _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "needle",
+            PathPrefixes = ["Notes"],
+        }).Items.ShouldAllBe(m => m.Path.StartsWith("Notes/"));
+
+        _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "needle",
+            Extensions = ["sh"],
+        }).Items.ShouldAllBe(m => m.Path.EndsWith(".sh"));
+
+        _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "needle",
+            IncludeGlobs = ["many/*.md"],
+            ExcludeGlobs = ["*-3.md"],
+        }).Items.Select(m => m.Path).Distinct().Order(StringComparer.Ordinal).ShouldBe(
+            ["many/needles-0.md", "many/needles-1.md", "many/needles-2.md"]);
+    }
+
+    [Fact]
+    public void Overlapping_prefixes_are_rejected()
+    {
+        Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "x",
+            PathPrefixes = ["Notes", "Notes/Sub"],
+        })).Code.ShouldBe(VaultErrorCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void Context_lines_are_attached()
+    {
+        var result = _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "Done gamma",
+            ContextBefore = 2,
+            ContextAfter = 1,
+        });
+        var match = result.Items.ShouldHaveSingleItem();
+        match.ContextBefore.ShouldBe(["TODO alpha task", "todo beta task"]);
+        match.ContextAfter.ShouldBe(["wrap TODO up"]);
+    }
+
+    [Fact]
+    public void Sixty_matches_paginate_with_no_duplicates_no_omissions_stable_order()
+    {
+        var query = new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["many"], MaxResults = 25 };
+        var all = new List<SearchMatch>();
+        string? cursor = null;
+        var pages = 0;
+        while (true)
+        {
+            var page = _vault.Search.SearchMatches(query with { Cursor = cursor });
+            all.AddRange(page.Items);
+            pages++;
+            if (!page.Truncated)
+                break;
+            page.NextCursor.ShouldNotBeNull();
+            cursor = page.NextCursor;
+            pages.ShouldBeLessThan(10);
+        }
+
+        pages.ShouldBe(3); // 25 + 25 + 10
+        all.Count.ShouldBe(60);
+        all.Select(m => (m.Path, m.Line, m.Column)).Distinct().Count().ShouldBe(60);
+        // Recombined pages equal the single-page result, in the same order.
+        var single = _vault.Search.SearchMatches(query with { MaxResults = 200 });
+        single.Items.Select(m => (m.Path, m.Line)).ShouldBe(all.Select(m => (m.Path, m.Line)));
+        single.TotalMatches.ShouldBe(60);
+    }
+
+    [Fact]
+    public void No_match_is_an_empty_untruncated_envelope_with_scan_evidence()
+    {
+        var result = _vault.Search.SearchMatches(Q("zzz_does_not_exist_zzz"));
+        result.Items.ShouldBeEmpty();
+        result.Truncated.ShouldBeFalse();
+        result.TotalMatches.ShouldBe(0);
+        // "No match" claims the scope was exhaustively searched — the summary
+        // stats prove files were actually visited.
+        result.ScannedFiles.ShouldNotBeNull();
+        result.ScannedFiles!.Value.ShouldBeGreaterThan(5);
+    }
+
+    [Fact]
+    public void Files_only_mode_returns_sorted_paths()
+    {
+        var result = _vault.Search.SearchFilesOnly(new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["many"] });
+        result.Items.ShouldBe(
+            ["many/needles-0.md", "many/needles-1.md", "many/needles-2.md", "many/needles-3.md"]);
+        result.Truncated.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Counts_mode_reports_per_file_and_total()
+    {
+        var result = _vault.Search.SearchCounts(new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["many"] });
+        result.Items.Count.ShouldBe(4);
+        result.Items.ShouldAllBe(c => c.Count == 15);
+        result.TotalMatches.ShouldBe(60);
+    }
+
+    [Fact]
+    public void Invalid_regex_is_a_typed_error_with_rg_diagnostics()
+    {
+        var ex = Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(Q("unclosed(")));
+        ex.Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        ex.Message.ShouldContain("ripgrep rejected");
+    }
+
+    [Fact]
+    public void Cursor_from_a_different_query_is_rejected()
+    {
+        var page = _vault.Search.SearchMatches(new VaultSearchQuery { Pattern = "needle", MaxResults = 5 });
+        page.NextCursor.ShouldNotBeNull();
+
+        Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "different",
+            Cursor = page.NextCursor,
+        })).Code.ShouldBe(VaultErrorCode.InvalidCursor);
+    }
+
+    [Fact]
+    public void Precancelled_token_surfaces_as_cancellation_not_empty_result()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Should.Throw<OperationCanceledException>(() =>
+            _vault.Search.SearchMatches(Q("needle"), cts.Token));
+    }
+
+    [Fact]
+    public void Missing_ripgrep_binary_is_a_typed_error_with_a_hint()
+    {
+        var broken = new VaultSearchService(_vault.Resolver, _vault.Generation,
+            new Knapper.Core.Options.VaultOptions { RipgrepPath = "/nonexistent/rg" });
+        var ex = Should.Throw<KnapperException>(() => broken.SearchMatches(Q("x")));
+        ex.Code.ShouldBe(VaultErrorCode.IoError);
+        ex.Message.ShouldContain("is ripgrep installed");
+    }
+
+    [Fact]
+    public void A_mutation_during_the_query_is_reported()
+    {
+        var service = new VaultSearchService(_vault.Resolver, _vault.Generation, _vault.Options)
+        {
+            OnQueryStarted = () => _vault.Generation.Increment(),
+        };
+        var result = service.SearchMatches(Q("needle"));
+        result.ChangedDuringQuery.ShouldBeTrue();
+        result.GenerationEnd.ShouldBe(result.GenerationStart + 1);
+
+        // ...and a quiet query reports stability.
+        _vault.Search.SearchMatches(Q("needle")).ChangedDuringQuery.ShouldBeFalse();
+    }
+}

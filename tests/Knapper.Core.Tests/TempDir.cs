@@ -1,7 +1,7 @@
 namespace Knapper.Core.Tests;
 
 /// <summary>Disposable scratch directory; recursively deleted best-effort.</summary>
-internal sealed class TempDir : IDisposable
+public sealed class TempDir : IDisposable
 {
     public string Path { get; } =
         Directory.CreateTempSubdirectory("knapper-test-").FullName;

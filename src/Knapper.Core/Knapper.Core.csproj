@@ -6,6 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Knapper.Core.Tests" />
     <!-- The two-process lock probe builds VaultPath records directly: it
          exercises the lock protocol, not path validation. -->

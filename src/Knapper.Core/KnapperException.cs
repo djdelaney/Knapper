@@ -48,6 +48,18 @@ public enum VaultErrorCode
     /// <summary>Mutations are blocked: a Sync conflict file exists for this note, or sync is unhealthy.</summary>
     MutationBlocked,
 
+    /// <summary>Malformed query argument: bad regex, bad glob, bad line range, overlapping prefixes.</summary>
+    InvalidArgument,
+
+    /// <summary>Cursor is unparseable or belongs to a different query. Pages never silently restart.</summary>
+    InvalidCursor,
+
+    /// <summary>The time budget elapsed before any result could be produced. Distinct from an empty result.</summary>
+    QueryTimeout,
+
+    /// <summary>File exceeds the configured read cap. Explicit rejection — never a silently truncated "complete" file.</summary>
+    TooLarge,
+
     /// <summary>Underlying filesystem or OS failure.</summary>
     IoError,
 }
