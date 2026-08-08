@@ -33,4 +33,10 @@ public sealed class VaultOptions
 
     /// <summary>Max paths per vault_batch_read request.</summary>
     public int MaxBatchItems { get; set; } = 50;
+
+    /// <summary>How long a mutation waits for its advisory locks before failing LockTimeout.</summary>
+    public int LockTimeoutMs { get; set; } = 10_000;
+
+    /// <summary>Append-only JSONL audit log — OUTSIDE the vault, always.</summary>
+    public string AuditLogPath { get; set; } = "";
 }

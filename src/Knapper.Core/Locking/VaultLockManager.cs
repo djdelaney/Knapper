@@ -70,6 +70,45 @@ public sealed class VaultLockManager
     }
 
     /// <summary>
+    /// Acquire mutation locks for SEVERAL paths (batch/move): the vault-wide
+    /// lock shared once, then each per-path lock exclusively in sorted order
+    /// — the fixed order is what makes two concurrent batches unable to
+    /// deadlock. Duplicate paths are rejected: flock is per open descriptor,
+    /// so a second acquisition of the same path would self-deadlock.
+    /// </summary>
+    public IDisposable AcquirePathLocks(IReadOnlyList<VaultPath> paths, TimeSpan timeout)
+    {
+        var sorted = paths.OrderBy(p => p.Relative, StringComparer.Ordinal).ToList();
+        for (var i = 1; i < sorted.Count; i++)
+        {
+            if (sorted[i].Relative == sorted[i - 1].Relative)
+            {
+                throw new KnapperException(VaultErrorCode.InvalidArgument,
+                    $"'{sorted[i].Relative}' appears more than once — a batch may touch each path only once");
+            }
+        }
+        var deadline = Deadline(timeout);
+        var held = new Stack<IDisposable>();
+        try
+        {
+            held.Push(Acquire(CommitLockName, Posix.LOCK_SH, deadline,
+                "vault-wide lock (is a git commit snapshot in progress?)"));
+            foreach (var path in sorted)
+            {
+                held.Push(Acquire(LockFileName(path.Relative), Posix.LOCK_EX, deadline,
+                    $"path lock for '{path.Relative}'"));
+            }
+            return new StackLock(held);
+        }
+        catch
+        {
+            while (held.Count > 0)
+                held.Pop().Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Acquire the vault-wide lock exclusively (the git commit job). Waits for
     /// in-flight mutations to drain; blocks new ones from starting.
     /// </summary>
@@ -131,6 +170,15 @@ public sealed class VaultLockManager
             // Reverse acquisition order.
             perPath.Dispose();
             global.Dispose();
+        }
+    }
+
+    private sealed class StackLock(Stack<IDisposable> held) : IDisposable
+    {
+        public void Dispose()
+        {
+            while (held.Count > 0)
+                held.Pop().Dispose(); // reverse acquisition order
         }
     }
 }

@@ -20,9 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Knapper.Core\Knapper.Core.csproj" />
-    <!-- Referenced so the probe binary lands in this project's output dir;
-         CrossProcessLockTests spawns it with `dotnet exec`. -->
+    <!-- Referenced so the probe binaries land in this project's output dir;
+         CrossProcessLockTests / TwoProcessMutationTests spawn them with `dotnet exec`. -->
     <ProjectReference Include="..\..\tools\Knapper.LockProbe\Knapper.LockProbe.csproj" />
+    <ProjectReference Include="..\..\tools\Knapper.MutationProbe\Knapper.MutationProbe.csproj" />
   </ItemGroup>
 
 </Project>

@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Knapper.LockProbe/Knapper.LockProbe.csproj" />
+    <Project Path="tools/Knapper.MutationProbe/Knapper.MutationProbe.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Knapper.Core.Tests/Knapper.Core.Tests.csproj" />

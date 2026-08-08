@@ -14,6 +14,7 @@
     <!-- The two-process lock probe builds VaultPath records directly: it
          exercises the lock protocol, not path validation. -->
     <InternalsVisibleTo Include="Knapper.LockProbe" />
+    <InternalsVisibleTo Include="Knapper.MutationProbe" />
   </ItemGroup>
 
 </Project>

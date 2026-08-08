@@ -87,6 +87,40 @@ format by default.
   `AtomicFile.VerifyOnDisk` (reopen + byte-compare). This vault has a
   documented history of writes that reported success without landing.
 
+## Mutation-layer invariants (silent-corruption-prone)
+
+- **`VaultMutationService` is the only mutation surface, and every operation
+  on an existing file demands `expect_sha256`.** There is no unconditional
+  write anywhere in the codebase and none may ever be added — not even as an
+  internal helper "for tests" (a safe wrapper BESIDE an unsafe original is an
+  exposed bypass; brief §7 forbids exactly that).
+- **The critical section order is fixed**: lock → fresh read → SHA check →
+  transform → validate guards → hidden temp + fsync → final SHA check →
+  atomic replace → reopen and byte-compare → unlock. `Mutate()` embodies it;
+  new operations go THROUGH it or replicate it exactly (move/delete do).
+- **Move and delete are link-then-unlink, not rename.** rename(2) silently
+  replaces an existing destination; link(2) cannot. Same inode means no data
+  copy and no window where content could diverge. Deletes are SOFT — into
+  `.trash/` with structure preserved, collisions timestamped, never
+  overwriting an earlier trash copy.
+- **Batch validates EVERYTHING under the locks before the first write.** A
+  bad hash/anchor/guard anywhere fails the whole batch untouched. The apply
+  phase is not cross-file atomic (documented; git history is recovery), and
+  duplicate paths are rejected because flock is per-descriptor — a second
+  acquisition of the same path would self-deadlock.
+- **Multi-path locks acquire in sorted order** (`AcquirePathLocks`), global
+  shared first — the fixed order is the deadlock-freedom proof. New lock
+  users slot into this hierarchy.
+- **Rejections are audited, not just successes.** A stale-write rejection is
+  signal (someone raced, or an agent is retrying a stale base). Audit writes
+  are fsynced and live OUTSIDE the vault; vault content must never reach the
+  audit path.
+- **Conflict gate: agents never resolve Sync conflict files.** A
+  `* (Conflicted copy ...)*` sibling blocks mutations to both the original
+  and the sibling until a human reconciles. The sync gate (`ISyncGate`)
+  fails mutations closed when continuous sync is unhealthy — no local
+  fallback, ever.
+
 ## Query-layer invariants (silent-corruption-prone)
 
 - **`RipgrepRunner.BaselineArgs` are load-bearing, every one.** `--no-config`
