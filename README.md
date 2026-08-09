@@ -53,20 +53,20 @@ the locking and atomic-commit semantics are POSIX by design.
 ## Status
 
 Code-complete through the brief's §13 definition of done as far as a repo
-can take it: four review rounds are closed (implementation, remediation,
-pre-deployment, security — each verdict reconciled in-repo or in commit
-history), the black-box acceptance tier (real server processes, real HTTP,
-two-process races, fault injection) passes, and transcript mining of real
-local sessions validated the client-fit half of the contract. Helios
-cutover is gated on the live CT 106 sequence — the §8b behavioral smoke
-test, tunnel fail-closed checks, alert-path exercises, backup acceptance,
-and explicit sign-off. The most recent dated per-finding status is
-[SECURITY-REVIEW.md](SECURITY-REVIEW.md) (banner); the review history is
-[IMPLEMENTATION-REVIEW.md](IMPLEMENTATION-REVIEW.md) →
-[REMEDIATION-REVIEW.md](REMEDIATION-REVIEW.md) → those banners; the live
-sequence is [ops/ct106-runbook.md](ops/ct106-runbook.md) §§8b–9. This
-paragraph intentionally stays vague enough not to rot — trust those, not
-this.
+can take it: five review rounds are closed (implementation → remediation →
+pre-deployment → security → independent verification), every finding fixed,
+refuted, or recorded as a deliberate non-fix; the black-box acceptance tier
+(real server processes, real HTTP, two-process races, fault injection)
+passes; and transcript mining of real local sessions validated the
+client-fit half of the contract. The full per-finding review record lives
+in git history (the review documents and their dated remediation banners
+were committed before being retired — search the log for "review"). Open
+decisions and deliberately-closed questions are consolidated in
+[docs/extending.md](docs/extending.md). Helios cutover is gated on the
+live CT 106 sequence — the §8b behavioral smoke test, tunnel fail-closed
+checks, alert-path exercises, backup acceptance, and explicit sign-off:
+[ops/ct106-runbook.md](ops/ct106-runbook.md) §§8b–9. This paragraph
+intentionally stays vague enough not to rot — trust those, not this.
 
 ## Docs
 
