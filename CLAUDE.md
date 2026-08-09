@@ -90,6 +90,10 @@ format by default.
   `KNAPPER_FAULT_SHORT_WRITE` env hook inside it is a fault INJECTOR for the
   acceptance suite (it can only break a write so `VerifyOnDisk` must catch
   it) — it is not, and must never become, a way to land unverified bytes.
+  ONE sanctioned exception: `CaseSensitivityProbe` creates+deletes a
+  zero-byte temp-prefixed probe in the vault root — raw create/delete IS
+  its measurement, so it cannot go through AtomicFile. Nothing else may
+  join it.
 - **`VaultPathResolver` is the only gate between agent-supplied path strings
   and the filesystem.** Nothing else may combine user input with the vault
   root. `VaultPath`'s constructor is internal so an API taking one is stating
@@ -189,7 +193,10 @@ format by default.
 - **Multi-path locks acquire in sorted order** (`AcquirePathLocks`), global
   shared first — the fixed order is the deadlock-freedom proof. New lock
   users slot into this hierarchy.
-- **Rejections are audited, not just successes.** A stale-write rejection is
+- **Rejections are audited, not just successes** — from the resolver gate
+  onward: a path that never resolves to a vault path (`InvalidPath`,
+  `BannedPath`) is refused before the audited region, deliberately — there
+  is no vault object for the entry to be about. A stale-write rejection is
   signal (someone raced, or an agent is retrying a stale base). Audit writes
   are fsynced and live OUTSIDE the vault; vault content must never reach the
   audit path — which is why the audit `Detail` field never carries an

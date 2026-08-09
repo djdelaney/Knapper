@@ -129,6 +129,13 @@ int Doctor()
         p!.WaitForExit(5000);
         return p.ExitCode == 0;
     });
+    Check("git repo is LOCAL-ONLY — no remote (brief §10, hard prohibition)", () =>
+        string.IsNullOrWhiteSpace(vaultOptions.RootPath)
+        || string.IsNullOrWhiteSpace(vaultOptions.LockDirectory)
+        || !Directory.Exists(Path.Combine(vaultOptions.RootPath, ".git"))
+        || !new GitCommitJob(
+                new VaultPathResolver(vaultOptions.RootPath),
+                new VaultLockManager(vaultOptions.LockDirectory)).HasRemote());
     Check("git runs", () =>
     {
         var psi = new System.Diagnostics.ProcessStartInfo { FileName = "git", RedirectStandardOutput = true };

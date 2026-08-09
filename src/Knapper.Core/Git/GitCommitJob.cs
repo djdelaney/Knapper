@@ -40,6 +40,13 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
     public bool RepoExists => Directory.Exists(Path.Combine(resolver.Root, ".git"));
 
+    /// <summary>
+    /// Brief §10: the vault repo is LOCAL-ONLY until the credential sweep
+    /// closes. Enforcement was previously by absence — nothing noticed a
+    /// human adding a remote after init. `knapper doctor` fails loud on it.
+    /// </summary>
+    public bool HasRemote() => RepoExists && Run("remote").Trim().Length > 0;
+
     /// <summary>git init + .gitignore + identity. A deliberate act: once .git exists, PBS backups are the only protection for history.</summary>
     public void Init()
     {
@@ -48,7 +55,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         Run("init");
         var gitignore = Path.Combine(resolver.Root, ".gitignore");
         if (!File.Exists(gitignore))
-            File.WriteAllText(gitignore, GitIgnore + "\n");
+            AtomicFile.CreateNew(gitignore, Encoding.UTF8.GetBytes(GitIgnore + "\n"));
         Run("config", "user.name", "Knapper");
         Run("config", "user.email", "knapper@localhost");
     }

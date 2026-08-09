@@ -110,6 +110,23 @@ public sealed class GitCommitJobTests : IDisposable
     }
 
     [Fact]
+    public void A_remote_appearing_on_the_local_only_repo_is_detected()
+    {
+        // Brief §10 is a hard prohibition enforced, until now, by absence.
+        _job.HasRemote().ShouldBeFalse(); // no repo at all
+        _job.Init();
+        _job.HasRemote().ShouldBeFalse(); // fresh local-only repo
+
+        var psi = new System.Diagnostics.ProcessStartInfo { FileName = "git" };
+        foreach (var a in new[] { "-C", _v.VaultDir.Path, "remote", "add", "origin", "https://example.invalid/repo.git" })
+            psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit(10_000).ShouldBeTrue();
+
+        _job.HasRemote().ShouldBeTrue("a remote on the vault repo must be loudly detectable (doctor fails on it)");
+    }
+
+    [Fact]
     public void A_staged_deletion_still_commits_without_tripping_the_scan()
     {
         _job.Init();
