@@ -27,6 +27,17 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
     public sealed record CommitOutcome(bool Committed, string? CommitSha, string Message);
 
+    /// <summary>
+    /// Blobs above this are not text-scanned. The scanner is a tripwire for
+    /// credential-shaped TEXT in notes; anything this large is
+    /// attachment-class (Sync deliberately delivers image/audio/video/pdf —
+    /// brief §5), and cat-file'ing it would materialize every synced photo
+    /// into a string on every commit run. A DOCUMENTED limitation like the
+    /// scanner's line-based matching — not a silent skip: the size check
+    /// itself failing still refuses the commit.
+    /// </summary>
+    public const long MaxScanBlobBytes = 4_000_000;
+
     public bool RepoExists => Directory.Exists(Path.Combine(resolver.Root, ".git"));
 
     /// <summary>git init + .gitignore + identity. A deliberate act: once .git exists, PBS backups are the only protection for history.</summary>
@@ -176,9 +187,14 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
             string content;
             try
             {
+                // Size first (cat-file -s is metadata-only): attachment-class
+                // blobs are skipped per MaxScanBlobBytes, never materialized.
+                var size = long.Parse(Run("cat-file", "-s", newBlobSha).Trim());
+                if (size > MaxScanBlobBytes)
+                    continue;
                 content = Run("cat-file", "blob", newBlobSha);
             }
-            catch (KnapperException e)
+            catch (Exception e) when (e is KnapperException or FormatException or OverflowException)
             {
                 throw new KnapperException(VaultErrorCode.IoError,
                     $"cannot read the staged blob for '{path}' — refusing to commit unscanned content (fail closed)", e);

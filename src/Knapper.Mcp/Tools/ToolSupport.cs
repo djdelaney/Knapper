@@ -54,10 +54,15 @@ public sealed class ToolSupport(
         {
             // Query-layer filesystem failures don't pass through Core's
             // mutation-boundary normalization — map them here so every
-            // MCP-visible failure leads with a stable bracketed code.
+            // MCP-visible failure leads with a stable bracketed code. Static
+            // wire text, detail server-side (mirroring [Internal]): raw OS
+            // messages embed ABSOLUTE paths, operational metadata the wire
+            // otherwise never discloses.
             metrics.RecordToolOutcome(VaultErrorCode.IoError.ToString());
             Log(tool, VaultErrorCode.IoError.ToString(), started);
-            throw new McpException($"[{VaultErrorCode.IoError}] filesystem failure: {e.Message}");
+            logger.LogError(e, "tool {Tool} filesystem failure", tool);
+            throw new McpException(
+                $"[{VaultErrorCode.IoError}] filesystem failure — transient or environmental; details in the server log");
         }
         catch (Exception e) when (e is not McpException)
         {

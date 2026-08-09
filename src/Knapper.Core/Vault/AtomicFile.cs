@@ -114,6 +114,9 @@ public static class AtomicFile
     /// <see cref="VerifyOnDisk"/> is what must notice. This is an injector,
     /// not a bypass: it can only BREAK a write that would otherwise verify;
     /// there is no way to use it to land unverified content as success.
+    /// Inherent limit: a ZERO-byte write cannot be shortened, so the
+    /// injector is inert for empty content — there is no short-write
+    /// failure mode for zero bytes to simulate.
     /// </summary>
     private static byte[] MaybeInjectShortWrite(string absolutePath, byte[] data)
     {

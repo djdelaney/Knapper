@@ -87,6 +87,29 @@ public sealed class GitCommitJobTests : IDisposable
     }
 
     [Fact]
+    public void Attachment_class_blobs_are_size_skipped_while_note_secrets_still_refuse()
+    {
+        _job.Init();
+        // A synced attachment above the scan cap — even one containing a
+        // credential-shaped string (documented tripwire limitation: the
+        // scanner covers text notes, not blobs) — must not block or slow
+        // the snapshot.
+        var big = new byte[GitCommitJob.MaxScanBlobBytes + 1024];
+        var secret = System.Text.Encoding.UTF8.GetBytes("AKIAIOSFODNN7EXAMPLE");
+        secret.CopyTo(big, 4096);
+        File.WriteAllBytes(Path.Combine(_v.VaultDir.Path, "attachment.pdf"), big);
+        _v.Write("Notes/a.md", "plain note\n");
+
+        _job.Commit(Ample).Committed.ShouldBeTrue();
+
+        // The same secret in a NOTE still refuses — the cap didn't blunt
+        // the tripwire where it matters.
+        _v.Write("Notes/oops.md", "my key is AKIAIOSFODNN7EXAMPLE\n");
+        Should.Throw<KnapperException>(() => _job.Commit(Ample))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+    }
+
+    [Fact]
     public void A_staged_deletion_still_commits_without_tripping_the_scan()
     {
         _job.Init();

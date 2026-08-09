@@ -22,8 +22,14 @@ internal static class QueryCursor
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
     }
 
+    /// <summary>Far above any real cursor (fingerprint + path + ints); a bound before base64 decode.</summary>
+    private const int MaxCursorLength = 4096;
+
     internal static (string Path, int Line, int Column) Decode(string cursor, string expectedFingerprint)
     {
+        if (cursor.Length > MaxCursorLength)
+            throw new KnapperException(VaultErrorCode.InvalidCursor,
+                $"cursor is implausibly long ({cursor.Length} chars; cap {MaxCursorLength})");
         Payload? payload;
         try
         {

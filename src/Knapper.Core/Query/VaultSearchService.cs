@@ -59,14 +59,27 @@ public sealed class VaultSearchService(
         {
             if (line.Length == 0)
                 return true;
-            if (!File.Exists(Path.Combine(resolver.Root, line)))
+            // Through the FULL resolver gate, not a bare Path.Combine —
+            // rg output is trusted-adjacent, but every string that becomes a
+            // filesystem path goes through the one gate (defense in depth).
+            // An entry that doesn't resolve to a real vault file means a
+            // newline-bearing filename broke -l's line framing (or the file
+            // vanished mid-query); reporting fragments would be wrong twice.
+            string absolute;
+            try
             {
-                // -l output is newline-framed; an entry that doesn't resolve
-                // to a real vault file means a filename with a newline broke
-                // the framing (or the file vanished mid-query). Either way,
-                // reporting the fragments as results would be wrong twice.
+                absolute = resolver.Resolve(line).Absolute;
+            }
+            catch (KnapperException e)
+            {
                 throw new KnapperException(VaultErrorCode.IoError,
-                    $"ripgrep filename-list entry does not resolve to a vault file — a filename may " +
+                    "ripgrep filename-list entry failed path validation — a filename may contain a " +
+                    "newline or other hostile characters (rename it)", e);
+            }
+            if (!File.Exists(absolute))
+            {
+                throw new KnapperException(VaultErrorCode.IoError,
+                    "ripgrep filename-list entry does not resolve to a vault file — a filename may " +
                     "contain a newline (rename it), or the vault changed mid-query (re-run)");
             }
             var pos = (line, 0, 0);
@@ -237,6 +250,14 @@ public sealed class VaultSearchService(
     {
         if (prefixes is null || prefixes.Count == 0)
             return [];
+        if (prefixes.Count > 64)
+        {
+            // Each prefix costs a resolve + stat; unbounded lists are a
+            // cheap request-amplification lever. Nothing legitimate scopes
+            // to dozens of directories at once.
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"{prefixes.Count} path prefixes; the cap is 64 — scope with fewer, broader prefixes");
+        }
         var resolved = prefixes.Select(p => resolver.Resolve(p)).ToList();
         foreach (var vp in resolved.Where(vp => !Directory.Exists(vp.Absolute)))
         {

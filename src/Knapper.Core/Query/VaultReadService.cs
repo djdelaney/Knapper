@@ -94,9 +94,11 @@ public sealed class VaultReadService(
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 // One transiently-unreadable file (Sync mid-replace, disk
-                // hiccup) must never hide the other items' results.
+                // hiccup) must never hide the other items' results. The
+                // caller gets the RELATIVE path only — OS messages embed the
+                // absolute vault prefix.
                 results.Add(new VaultBatchReadItem(request.Path, null, VaultErrorCode.IoError,
-                    $"filesystem failure reading {request.Path}: {e.Message}"));
+                    $"filesystem failure reading {request.Path} — transient or environmental; retry"));
             }
         }
         var generationEnd = generation.Current;

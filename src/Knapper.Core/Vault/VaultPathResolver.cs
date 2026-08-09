@@ -18,9 +18,6 @@ namespace Knapper.Core.Vault;
 /// </summary>
 public sealed class VaultPathResolver
 {
-    private static readonly HashSet<string> BannedSegments =
-        new(StringComparer.Ordinal) { ".git", ".obsidian", ".trash" };
-
     /// <summary>Canonical vault root: realpath-resolved, no trailing separator.</summary>
     public string Root { get; }
 
@@ -58,18 +55,14 @@ public sealed class VaultPathResolver
                 // on this one. Queries never enumerate dot-entries, so an
                 // agent that could still create/read/edit them would operate
                 // where nothing can observe it (and a synced .env would be
-                // readable by direct addressing). The control dirs below stay
-                // for their sharper error messages.
+                // readable by direct addressing). This ONE check subsumes the
+                // control dirs (.git/.obsidian/.trash) and Knapper temp
+                // files — they are all dot-prefixed; do not re-add separate
+                // checks "for sharper messages", they'd be dead code.
                 throw new KnapperException(VaultErrorCode.BannedPath,
-                    $"hidden path segment '{segment}' — dot-entries are invisible to queries and " +
-                    "unaddressable by design");
+                    $"hidden path segment '{segment}' — dot-entries (including .git/.obsidian/.trash and " +
+                    "Knapper temp files) are invisible to queries and unaddressable by design");
             }
-            if (BannedSegments.Contains(segment))
-                throw new KnapperException(VaultErrorCode.BannedPath,
-                    $"'{segment}/' is a control directory and is never accessible through this service: {relativePath}");
-            if (segment.StartsWith(AtomicFile.TempPrefix, StringComparison.Ordinal))
-                throw new KnapperException(VaultErrorCode.BannedPath,
-                    $"Knapper temp files are not addressable: {relativePath}");
             segments.Add(segment);
         }
 

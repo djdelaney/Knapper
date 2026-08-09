@@ -31,11 +31,14 @@ public class ToolSupportTests
     }
 
     [Fact]
-    public void Raw_filesystem_exceptions_become_IoError()
+    public void Raw_filesystem_exceptions_become_IoError_without_leaking_os_detail()
     {
+        // OS messages embed absolute paths — wire text is static, detail
+        // stays in the server log (same pattern as [Internal]).
         var ex = Should.Throw<McpException>(() => NewSupport().Run<int>("t",
-            () => throw new IOException("disk full")));
+            () => throw new IOException("disk full at /var/lib/secret-place")));
         ex.Message.ShouldStartWith("[IoError]");
+        ex.Message.ShouldNotContain("/var/lib/secret-place");
 
         var ex2 = Should.Throw<McpException>(() => NewSupport().Run<int>("t",
             () => throw new UnauthorizedAccessException("denied")));

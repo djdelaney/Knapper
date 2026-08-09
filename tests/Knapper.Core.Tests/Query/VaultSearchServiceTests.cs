@@ -350,6 +350,18 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Oversize_cursor_and_prefix_flood_are_typed_refusals()
+    {
+        Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(
+            Q("needle") with { Cursor = new string('A', 5000) }))
+            .Code.ShouldBe(VaultErrorCode.InvalidCursor);
+
+        Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(
+            Q("needle") with { PathPrefixes = [.. Enumerable.Range(0, 65).Select(i => $"p{i}")] }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+    }
+
+    [Fact]
     public void Missing_ripgrep_binary_is_a_typed_error_with_a_hint()
     {
         var broken = new VaultSearchService(_vault.Resolver, _vault.Generation,
