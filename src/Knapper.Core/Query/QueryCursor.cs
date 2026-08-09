@@ -53,11 +53,25 @@ internal static class QueryCursor
                 _ => p.ToString(),
             }))));
 
-    /// <summary>Order matches stream in: path (ordinal), then line, then column.</summary>
+    /// <summary>
+    /// THE path order of the whole query surface: raw UTF-8 byte order,
+    /// because that is what rg's <c>--sort=path</c> emits. It is NOT
+    /// <c>string.CompareOrdinal</c> (UTF-16 code units): the two diverge
+    /// exactly when a non-BMP name (emoji — common in Obsidian) meets
+    /// U+E000..U+FFFF — surrogates sort low in UTF-16 while their UTF-8
+    /// encoding sorts high. A cursor compared in the wrong order silently
+    /// skips records on every later page while the final page still claims
+    /// <c>truncated: false</c>. Every sort and cursor filter over paths
+    /// (search stream, lister, frontmatter) must use this method.
+    /// </summary>
+    internal static int ComparePathUtf8(string a, string b) =>
+        Encoding.UTF8.GetBytes(a).AsSpan().SequenceCompareTo(Encoding.UTF8.GetBytes(b));
+
+    /// <summary>Order matches stream in: path (UTF-8 bytes, like rg), then line, then column.</summary>
     internal static int ComparePosition(
         (string Path, int Line, int Column) a, (string Path, int Line, int Column) b)
     {
-        var byPath = string.CompareOrdinal(a.Path, b.Path);
+        var byPath = ComparePathUtf8(a.Path, b.Path);
         if (byPath != 0)
             return byPath;
         var byLine = a.Line.CompareTo(b.Line);

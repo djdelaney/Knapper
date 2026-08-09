@@ -52,6 +52,18 @@ public sealed class VaultPathResolver
                 throw Invalid($"path traversal ('..') is not allowed: {relativePath}");
             if (segment == "~" && segments.Count == 0)
                 throw Invalid($"'~' is not expanded here — pass a vault-relative path: {relativePath}");
+            if (segment.StartsWith('.'))
+            {
+                // Hidden means invisible on BOTH surfaces — and unaddressable
+                // on this one. Queries never enumerate dot-entries, so an
+                // agent that could still create/read/edit them would operate
+                // where nothing can observe it (and a synced .env would be
+                // readable by direct addressing). The control dirs below stay
+                // for their sharper error messages.
+                throw new KnapperException(VaultErrorCode.BannedPath,
+                    $"hidden path segment '{segment}' — dot-entries are invisible to queries and " +
+                    "unaddressable by design");
+            }
             if (BannedSegments.Contains(segment))
                 throw new KnapperException(VaultErrorCode.BannedPath,
                     $"'{segment}/' is a control directory and is never accessible through this service: {relativePath}");

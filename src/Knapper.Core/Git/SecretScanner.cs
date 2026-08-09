@@ -60,6 +60,13 @@ public static partial class SecretScanner
     }
 
     /// <summary>Enough to locate the hit, never enough to reconstruct it.</summary>
+    /// <summary>
+    /// Enough to IDENTIFY the finding (which token type, roughly where),
+    /// never enough to reconstruct it: 4 leading chars — which for most
+    /// token formats is just the recognizable prefix (AKIA, ghp_, xoxb) —
+    /// plus the length. The old 8+2 shape leaked 10 of 13 chars of a short
+    /// secret to anyone who could read the refusal message.
+    /// </summary>
     private static string Mask(string value) =>
-        value.Length <= 12 ? value[..Math.Min(6, value.Length)] + "…" : value[..8] + "…" + value[^2..];
+        $"{value[..Math.Min(4, value.Length)]}… ({value.Length} chars)";
 }

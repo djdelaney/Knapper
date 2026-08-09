@@ -67,6 +67,10 @@ internal static class AccessAuth
                     ValidateIssuerSigningKey = true,
                     RequireSignedTokens = true,
                     RequireExpirationTime = true,
+                    // Cloudflare Access signs RS256 only. Pinning shuts the
+                    // algorithm-confusion class (e.g. an HS256 token keyed on
+                    // public material) — defense in depth, one line.
+                    ValidAlgorithms = ["RS256"],
                     // Assertions are minted seconds before use by an edge whose
                     // clock is not ours to doubt; a long skew only extends
                     // replayed-token life.

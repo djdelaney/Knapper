@@ -30,7 +30,10 @@ public sealed class ExternalWriterRaceTests : IDisposable
         var sha = _v.Write("Notes/a.md", "agent base\n");
         _v.Service.BeforeLinkTestHook = src => ExternalReplace(src, "sync won\n");
 
-        Should.Throw<KnapperException>(() => _v.Service.Move("Notes/a.md", "Notes/b.md", sha));
+        // PreconditionFailed, not VerifyFailed: "re-read and retry" is the
+        // correct agent guidance for an external-writer race.
+        Should.Throw<KnapperException>(() => _v.Service.Move("Notes/a.md", "Notes/b.md", sha))
+            .Code.ShouldBe(VaultErrorCode.PreconditionFailed);
 
         File.Exists(Path.Combine(_v.VaultDir.Path, "Notes/b.md"))
             .ShouldBeFalse("a failed move must leave no destination behind");
@@ -58,7 +61,8 @@ public sealed class ExternalWriterRaceTests : IDisposable
         var sha = _v.Write("Notes/a.md", "agent base\n");
         _v.Service.BeforeLinkTestHook = src => ExternalReplace(src, "sync won\n");
 
-        Should.Throw<KnapperException>(() => _v.Service.Delete("Notes/a.md", sha));
+        Should.Throw<KnapperException>(() => _v.Service.Delete("Notes/a.md", sha))
+            .Code.ShouldBe(VaultErrorCode.PreconditionFailed);
 
         // No trash FILE may remain (an empty directory skeleton is invisible
         // to queries and gets reused by later deletes — not residue).

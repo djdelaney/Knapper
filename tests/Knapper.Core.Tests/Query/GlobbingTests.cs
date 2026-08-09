@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Knapper.Core.Query;
 
 namespace Knapper.Core.Tests.Query;
@@ -49,4 +50,22 @@ public sealed class GlobbingTests
     public void Malformed_globs_are_typed_errors(string glob) =>
         Should.Throw<KnapperException>(() => Globbing.Translate(glob))
             .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+
+    [Fact]
+    public void A_regex_bomb_glob_is_refused_or_bounded_never_a_hang()
+    {
+        // The classic shape: nested unbounded quantifiers against a long
+        // failing path. Pre-fix this hung the request thread indefinitely.
+        var bomb = "{" + string.Join(',', Enumerable.Repeat("**", 30)) + "}z";
+        Should.Throw<KnapperException>(() => Globbing.Translate(bomb))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument); // complexity cap
+
+        // Under the cap, matching stays linear-time: a smaller stack of
+        // '**' against a long non-matching path must return promptly.
+        var nasty = Globbing.Translate("{**,**,**,**}z");
+        var longPath = string.Join('/', Enumerable.Repeat("aaaaaaaaaa", 60));
+        var started = Stopwatch.GetTimestamp();
+        Globbing.IsMatch(nasty, longPath).ShouldBeFalse();
+        Stopwatch.GetElapsedTime(started).ShouldBeLessThan(TimeSpan.FromSeconds(2));
+    }
 }

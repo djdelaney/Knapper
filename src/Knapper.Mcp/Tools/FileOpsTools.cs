@@ -54,8 +54,10 @@ public sealed class VaultBatchTool(VaultMutationService mutations, ToolSupport s
         [Description("The operations (each path at most once)")] BatchOp[] items) =>
         support.Run("vault_batch", () => mutations.Batch(
             [.. items.Select(i => new BatchItem(
-                i.Kind.ToLowerInvariant() switch
+                i.Kind?.ToLowerInvariant() switch
                 {
+                    null => throw new KnapperException(VaultErrorCode.InvalidArgument,
+                        $"batch item for '{i.Path}' has no kind — use 'edit', 'append', or 'create'"),
                     "edit" => BatchItemKind.Edit,
                     "append" => BatchItemKind.Append,
                     "create" => BatchItemKind.Create,

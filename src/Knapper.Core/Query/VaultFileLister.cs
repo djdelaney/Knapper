@@ -75,11 +75,11 @@ public sealed class VaultFileLister(
             matched.Add((relative, info));
         }
 
-        matched.Sort(static (a, b) => string.CompareOrdinal(a.Relative, b.Relative));
+        matched.Sort(static (a, b) => QueryCursor.ComparePathUtf8(a.Relative, b.Relative));
 
         var afterCursor = cursorPath is null
             ? matched
-            : matched.Where(m => string.CompareOrdinal(m.Relative, cursorPath) > 0).ToList();
+            : matched.Where(m => QueryCursor.ComparePathUtf8(m.Relative, cursorPath) > 0).ToList();
         var page = afterCursor.Take(pageSize).ToList();
         var truncated = afterCursor.Count > page.Count;
 
@@ -117,7 +117,7 @@ public sealed class VaultFileLister(
             .Where(e => e.Info is FileInfo && filter(e.Relative))
             .Select(e => (e.Relative, e.Info.FullName))
             .ToList();
-        files.Sort(static (a, b) => string.CompareOrdinal(a.Relative, b.Relative));
+        files.Sort(static (a, b) => QueryCursor.ComparePathUtf8(a.Relative, b.Relative));
         return files;
     }
 
@@ -169,8 +169,18 @@ public sealed class VaultFileLister(
 
     private static string Sha256Of(string absolutePath)
     {
-        using var stream = File.OpenRead(absolutePath);
-        return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+        try
+        {
+            using var stream = File.OpenRead(absolutePath);
+            return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Typed and NAMED: a raw IOException here failed the whole
+            // listing with no indication of which file broke it.
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"cannot hash '{absolutePath}' for include_sha: {e.Message}", e);
+        }
     }
 
     private static IReadOnlyList<string> NormalizeExtensions(IReadOnlyList<string>? extensions) =>

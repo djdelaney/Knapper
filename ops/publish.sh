@@ -8,6 +8,17 @@ set -eu
 cd "$(dirname "$0")/.."
 
 VERSION=$(sed -n 's/.*<Version>\(.*\)<\/Version>.*/\1/p' Directory.Build.props)
+# An absent or malformed <Version> would ship "knapper--linux-x64.tar.gz"
+# and the manifest gate below would still pass — validate the shape here.
+case "$VERSION" in
+    [0-9]*.[0-9]*) ;;
+    *) echo "publish FAILED: could not extract a valid <Version> from Directory.Build.props (got '$VERSION')" >&2
+       exit 1 ;;
+esac
+[ "$(printf '%s' "$VERSION" | wc -l)" -eq 0 ] || {
+    echo "publish FAILED: <Version> extraction produced multiple lines" >&2
+    exit 1
+}
 STAGE=artifacts/stage
 rm -rf "$STAGE"
 mkdir -p "$STAGE/ops"

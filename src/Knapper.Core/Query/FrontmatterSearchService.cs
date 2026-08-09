@@ -52,7 +52,7 @@ public sealed class FrontmatterSearchService(
         foreach (var (relative, absolute) in candidates)
         {
             ct.ThrowIfCancellationRequested();
-            if (cursorPath is not null && string.CompareOrdinal(relative, cursorPath) <= 0)
+            if (cursorPath is not null && QueryCursor.ComparePathUtf8(relative, cursorPath) <= 0)
                 continue;
             if (items.Count == pageSize || Environment.TickCount64 >= deadline)
             {

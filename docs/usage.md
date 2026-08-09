@@ -9,13 +9,15 @@ agents see. Deployment to the production LXC is `ops/ct106-runbook.md`.
 export Vault__RootPath=$HOME/dev-vault          # any directory of notes
 export Vault__LockDirectory=/tmp/knapper/locks  # OUTSIDE the vault
 export Vault__AuditLogPath=/tmp/knapper/audit.jsonl
+export Sync__Mode=open                          # EXPLICIT dev opt-out of the sync gate
 dotnet run --project src/Knapper.Mcp            # http://127.0.0.1:3535
 curl -s 127.0.0.1:3535/health | jq .status      # "ok"
 ```
 
-Prereqs: .NET 10 SDK, `ripgrep`, `git` on PATH. The sync gate defaults to
-`open` in dev (mutations not gated; the server logs a warning). The CLI
-reads the same settings:
+Prereqs: .NET 10 SDK, `ripgrep`, `git` on PATH. The sync gate DEFAULTS to
+`heartbeat` (fail closed: without a heartbeat path the server refuses to
+start) — `Sync__Mode=open` is the deliberate dev opt-out, and the server
+logs a warning while it's active. The CLI reads the same settings:
 
 ```sh
 dotnet run --project src/Knapper.Cli -- doctor
@@ -63,7 +65,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 
 | Key | Default | Meaning |
 |---|---|---|
-| `Mode` | `open` | `open` (dev: no gate, logged warning) or `heartbeat` (production). |
+| `Mode` | `heartbeat` | `heartbeat` (production default — refuses startup without `HeartbeatPath`, so a forgotten env line fails closed) or `open` (dev-only explicit opt-out, logged warning). |
 | `HeartbeatPath` | — | File the sync probe touches; mutations require it fresh. |
 | `MaxAgeSeconds` | 300 | Staleness threshold. Missing file = blocked (fail closed). |
 

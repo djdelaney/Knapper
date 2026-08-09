@@ -21,6 +21,7 @@ public sealed class AuditLog
     private readonly string _path;
     private readonly Lock _writeLock = new();
     private readonly KnapperMetrics? _metrics;
+    private bool _direntDurable;
 
     public AuditLog(string path, KnapperMetrics? metrics = null)
     {
@@ -67,6 +68,15 @@ public sealed class AuditLog
                 });
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
+                if (!_direntDurable)
+                {
+                    // First append may have CREATED the file: per-line fsync
+                    // makes the bytes durable but not the directory entry — a
+                    // crash could lose the whole log's name. Once per process
+                    // is enough (inside the lock, so exactly once).
+                    Interop.Posix.FsyncDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
+                    _direntDurable = true;
+                }
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

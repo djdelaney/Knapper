@@ -29,6 +29,16 @@ internal sealed class RipgrepRunner(string ripgrepPath)
     internal sealed record Outcome(bool Completed, bool TimedOut, bool StoppedEarly, int ExitCode, string StdErr);
 
     /// <summary>
+    /// Per-line materialization cap. One pathological matching line (a log
+    /// export, minified JSON) would otherwise be built into a string in full
+    /// before any downstream byte budget can apply. Exceeding it is a TYPED
+    /// refusal — never a silent truncation that would forge completeness.
+    /// Far above any real note line; the JSON envelope of a match roughly
+    /// doubles the content, so this bounds memory at a few MiB.
+    /// </summary>
+    private const int MaxLineChars = 2 * 1024 * 1024;
+
+    /// <summary>
     /// Run rg in <paramref name="workingDirectory"/>. <paramref name="onLine"/>
     /// returns false to stop early (budget filled) — the process is killed and
     /// the outcome reports <c>StoppedEarly</c>. Exit code 2 without early stop
@@ -76,9 +86,10 @@ internal sealed class RipgrepRunner(string ripgrepPath)
             timeoutCts.CancelAfter(timeout);
             using var killOnCancel = timeoutCts.Token.Register(() => TryKill(process));
 
+            var sinkThrew = true;
             try
             {
-                while (process.StandardOutput.ReadLine() is { } line)
+                while (ReadLineBounded(process.StandardOutput, process) is { } line)
                 {
                     if (!onLine(line))
                     {
@@ -87,12 +98,30 @@ internal sealed class RipgrepRunner(string ripgrepPath)
                         break;
                     }
                 }
+                sinkThrew = false;
             }
             catch (IOException)
             {
                 // Stream torn down by the kill — the flags below say which.
+                sinkThrew = false;
             }
-            process.WaitForExit();
+            finally
+            {
+                // A sink (onLine) exception must not leave rg alive until
+                // SIGPIPE, and the wait must be bounded — an unkillable rg
+                // must surface as an error, not a hung request thread.
+                if (sinkThrew)
+                    TryKill(process);
+                if (!process.WaitForExit(10_000))
+                {
+                    TryKill(process);
+                    if (!process.WaitForExit(5_000) && !sinkThrew)
+                    {
+                        throw new KnapperException(VaultErrorCode.IoError,
+                            "ripgrep did not exit after being killed — refusing to report a result for a query still running");
+                    }
+                }
+            }
             ct.ThrowIfCancellationRequested(); // caller cancellation surfaces as OCE
 
             var timedOut = timeoutCts.IsCancellationRequested && !stoppedEarly;
@@ -109,6 +138,37 @@ internal sealed class RipgrepRunner(string ripgrepPath)
                 ExitCode: process.HasExited ? process.ExitCode : -1,
                 StdErr: stderr);
         }
+    }
+
+    /// <summary>
+    /// ReadLine with the materialization cap: kills rg and throws typed
+    /// TooLarge instead of building an unbounded string. '\n' terminates;
+    /// one trailing '\r' is stripped (rg on Unix emits none, but a note's
+    /// own CRLF content can reach -l/count output paths).
+    /// </summary>
+    private static string? ReadLineBounded(StreamReader reader, Process process)
+    {
+        var sb = new StringBuilder(256);
+        int ci;
+        while ((ci = reader.Read()) >= 0)
+        {
+            var c = (char)ci;
+            if (c == '\n')
+            {
+                if (sb.Length > 0 && sb[^1] == '\r')
+                    sb.Length--;
+                return sb.ToString();
+            }
+            sb.Append(c);
+            if (sb.Length > MaxLineChars)
+            {
+                TryKill(process);
+                throw new KnapperException(VaultErrorCode.TooLarge,
+                    $"a matching line exceeds the per-line cap ({MaxLineChars} chars) — the file is not " +
+                    "note-shaped (log export? minified blob?); narrow the pattern or exclude the file");
+            }
+        }
+        return sb.Length > 0 ? sb.ToString() : null;
     }
 
     private static void TryKill(Process process)

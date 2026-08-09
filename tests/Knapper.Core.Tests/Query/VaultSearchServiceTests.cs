@@ -268,6 +268,41 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Non_bmp_and_pua_filenames_paginate_without_omission()
+    {
+        // U+1F600 (emoji) is surrogate pairs in UTF-16 (D83D DE00 — sorts
+        // BELOW U+E000) but F0 9F 98 80 in UTF-8 (sorts ABOVE U+E000's
+        // EE 80 80). rg emits UTF-8 byte order; a UTF-16-ordinal cursor
+        // filter would skip the emoji file on page 2 forever while claiming
+        // truncated:false — the completeness lie this test pins shut.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        dir.File("\U0001F600 emoji.md", "needle in emoji file\n");
+        dir.File(" pua.md", "needle in pua file\n");
+        var search = new VaultSearchService(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions());
+        var query = new VaultSearchQuery { Pattern = "needle", MaxResults = 1 };
+
+        var first = search.SearchMatches(query);
+        first.Items.ShouldHaveSingleItem().Path.ShouldBe(" pua.md"); // UTF-8 order: EE.. < F0..
+        first.Truncated.ShouldBeTrue();
+
+        var second = search.SearchMatches(query with { Cursor = first.NextCursor.ShouldNotBeNull() });
+        second.Items.ShouldHaveSingleItem().Path.ShouldBe("\U0001F600 emoji.md");
+        second.Truncated.ShouldBeFalse(); // exhaustive — and nothing was omitted
+
+        // The lister paginates the same names in the same order.
+        var lister = new VaultFileLister(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions { RootPath = dir.Path });
+        var page1 = lister.List(new VaultFilesQuery { MaxResults = 1 });
+        page1.Items.ShouldHaveSingleItem().Path.ShouldBe(" pua.md");
+        var page2 = lister.List(new VaultFilesQuery { MaxResults = 1, Cursor = page1.NextCursor });
+        page2.Items.ShouldHaveSingleItem().Path.ShouldBe("\U0001F600 emoji.md");
+    }
+
+    [Fact]
     public void Trailing_after_context_crossing_the_budget_at_eof_is_still_a_complete_result()
     {
         // After-context alone crosses the limit and nothing follows: the

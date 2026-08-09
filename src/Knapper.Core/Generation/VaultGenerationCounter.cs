@@ -71,9 +71,13 @@ public sealed class VaultGenerationCounter : IDisposable
     {
         foreach (var segment in relativePath.Split('/'))
         {
-            if (segment is ".git" or ".obsidian" or ".trash")
-                return true;
-            if (segment.StartsWith(AtomicFile.TempPrefix, StringComparison.Ordinal))
+            // ANY dot-segment, matching the visibility contract: queries
+            // cannot see hidden entries at any depth, so their churn
+            // (.DS_Store on macOS, .obsidian workspace saves, git objects)
+            // must not flip changed_during_query — constant over-reporting
+            // erodes the signal agents are told to re-run on. Knapper temps
+            // are dot-prefixed too, so this covers them.
+            if (segment.StartsWith('.'))
                 return true;
         }
         return false;

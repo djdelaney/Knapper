@@ -175,6 +175,18 @@ public sealed class HealthService(
         var probePath = $"{vaultOptions.Value.AuditLogPath}.health-probe-{Guid.NewGuid():N}";
         try
         {
+            // Sweep leftovers first: unique names mean a persistently
+            // failing delete would otherwise accumulate one file per check.
+            var directory = Path.GetDirectoryName(Path.GetFullPath(vaultOptions.Value.AuditLogPath))!;
+            foreach (var stale in Directory.EnumerateFiles(directory, "*.health-probe-*"))
+            {
+                try
+                {
+                    File.Delete(stale);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
             using (var stream = new FileStream(probePath, new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,

@@ -67,11 +67,16 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         {
             Run("add", "-A");
 
-            var staged = Run("diff", "--cached", "--name-only").Trim();
+            // --raw -z: NUL-delimited entries carrying each change's NEW BLOB
+            // SHA and status letter. Names split on '\n' (or any pathspec use
+            // with agent/Sync-controlled filenames) would let a hostile or
+            // merely unusual filename slip a file past the scan — the blob
+            // SHA route never interprets a filename at all.
+            var staged = Run("diff", "--cached", "--raw", "-z", "--no-renames");
             if (staged.Length == 0)
                 return Stamped(new CommitOutcome(false, null, "nothing to commit"), successStampPath);
 
-            var findings = ScanStaged(staged.Split('\n'));
+            var findings = ScanStaged(staged);
             if (findings.Count > 0)
             {
                 // Unstage so a later hand inspection sees the working tree
@@ -138,22 +143,47 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         }
     }
 
-    private List<SecretScanner.Finding> ScanStaged(string[] stagedFiles)
+    /// <summary>
+    /// Scan every staged blob, FAIL CLOSED. Input is `diff --cached --raw -z`
+    /// output: ":oldmode newmode oldsha newsha status\0path\0" per entry.
+    /// Deletions (status D) are the ONLY skip — nothing of theirs enters
+    /// history. Everything else is fetched by its blob SHA via cat-file (the
+    /// STAGED bytes, and no filename is ever interpreted as a pathspec or
+    /// rev), and ANY fetch failure refuses the whole commit: a scan that
+    /// cannot run must never be mistaken for a scan that found nothing.
+    /// </summary>
+    private List<SecretScanner.Finding> ScanStaged(string rawZ)
     {
         var findings = new List<SecretScanner.Finding>();
-        foreach (var file in stagedFiles.Where(f => f.Length > 0))
+        var tokens = rawZ.Split('\0');
+        for (var i = 0; i + 1 < tokens.Length; i += 2)
         {
+            var meta = tokens[i];
+            var path = tokens[i + 1];
+            if (meta.Length == 0)
+                break; // trailing NUL
+            var fields = meta.TrimStart(':').Split(' ');
+            if (fields.Length < 5)
+            {
+                throw new KnapperException(VaultErrorCode.IoError,
+                    "unparseable `git diff --cached --raw -z` entry — refusing to commit unscanned content");
+            }
+            var newBlobSha = fields[3];
+            var status = fields[4];
+            if (status.StartsWith('D'))
+                continue; // deletion: no new content can enter history
+
             string content;
             try
             {
-                // The STAGED blob, not the working tree — what would enter history.
-                content = Run("show", $":{file}");
+                content = Run("cat-file", "blob", newBlobSha);
             }
-            catch (KnapperException)
+            catch (KnapperException e)
             {
-                continue; // deleted in this change set
+                throw new KnapperException(VaultErrorCode.IoError,
+                    $"cannot read the staged blob for '{path}' — refusing to commit unscanned content (fail closed)", e);
             }
-            findings.AddRange(SecretScanner.Scan(file, content));
+            findings.AddRange(SecretScanner.Scan(path, content));
         }
         return findings;
     }

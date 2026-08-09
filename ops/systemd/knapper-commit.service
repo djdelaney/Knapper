@@ -16,3 +16,14 @@ Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
 # successful run including "nothing to commit" — last-commit age can't tell
 # a quiet vault from a dead timer.
 Environment=Vault__CommitStampPath=/var/lib/knapper/commit-stamp
+
+# Hardening, mirroring knapper.service: this unit runs git with WRITE access
+# to the vault — it gets no more filesystem than that.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/vault /var/lib/knapper
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true

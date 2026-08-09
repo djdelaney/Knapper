@@ -49,6 +49,13 @@ esac
 #   MAILTO           default alerts@example.com
 #   CURL_TIMEOUT     seconds; default 20
 [ -r "$CONFIG" ] || { echo "knapper-monitor: config $CONFIG not readable" >&2; exit 2; }
+# A monitor whose mailer is missing is the exact "alert path silently dead"
+# condition this script exists to prevent. Checked up front, loudly: the
+# systemd unit fails and the journal names the cause.
+command -v mail >/dev/null 2>&1 || {
+    echo "knapper-monitor: 'mail' is not installed — alerts CANNOT be delivered; install a mailer (msmtp + mailutils)" >&2
+    exit 2
+}
 # shellcheck disable=SC1090
 . "$CONFIG"
 

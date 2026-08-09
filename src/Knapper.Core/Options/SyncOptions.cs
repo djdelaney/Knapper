@@ -9,12 +9,15 @@ public sealed class SyncOptions
     public const string SectionName = "Sync";
 
     /// <summary>
-    /// "heartbeat" (production): mutations require <see cref="HeartbeatPath"/>
-    /// to be fresher than <see cref="MaxAgeSeconds"/> — the obsidian-headless
-    /// unit's watchdog touches it while `ob sync --continuous` is healthy.
-    /// "open" (dev/tests only): no gate; the server logs a warning at startup.
+    /// "heartbeat" (production, and the DEFAULT): mutations require
+    /// <see cref="HeartbeatPath"/> to be fresher than
+    /// <see cref="MaxAgeSeconds"/> — the obsidian-headless unit's watchdog
+    /// touches it while `ob sync --continuous` is healthy. "open"
+    /// (dev/tests only) is an EXPLICIT opt-out that logs a startup warning.
+    /// The default fails closed on purpose: a forgotten env line must refuse
+    /// startup (heartbeat with no path), never silently ungate mutations.
     /// </summary>
-    public string Mode { get; set; } = "open";
+    public string Mode { get; set; } = "heartbeat";
 
     public string HeartbeatPath { get; set; } = "";
 

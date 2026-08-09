@@ -47,7 +47,9 @@ chown -R knapper:knapper /vault /var/lib/knapper
 ```
 
 `/vault` on the CT's local rootfs — **NEVER NFS** (house policy; watchers
-and locking misbehave).
+and locking misbehave), and **only on a case-SENSITIVE filesystem** (ext4
+is; per-path lock identity and duplicate detection assume distinct strings
+are distinct files — `knapper doctor` fails otherwise).
 
 ## 4. Obsidian Sync (brief §5 — both flags load-bearing)
 
@@ -87,7 +89,12 @@ cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
 # edit knapper.service env if paths differ; then:
 systemctl daemon-reload
 systemctl enable --now knapper-heartbeat.timer knapper.service knapper-commit.timer
-sudo -u knapper /opt/knapper/cli/knapper doctor   # must be all-ok
+# doctor reads env, not the service unit — pass the SAME config the service runs with:
+sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
+  Vault__AuditLogPath=/var/lib/knapper/audit.jsonl Vault__MetricsPath=/var/lib/knapper/metrics.json \
+  Vault__CommitStampPath=/var/lib/knapper/commit-stamp \
+  Sync__Mode=heartbeat Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat \
+  /opt/knapper/cli/knapper doctor                 # must be all-ok
 curl -s 127.0.0.1:3535/health | jq .status        # "ok"
 ```
 

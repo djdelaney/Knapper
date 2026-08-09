@@ -71,6 +71,14 @@ format by default.
   repo-wide in `Directory.Build.props`): the mutation contract stands on
   flock(2), link(2), rename(2), and Unix file modes. Don't add Windows guards
   or a Windows code path.
+- **A case-SENSITIVE vault filesystem is a hard production requirement.**
+  Per-path lock identity is SHA-256 of the path STRING; batch duplicate
+  rejection, move same-path checks, and search prefixes are string compares —
+  on a case-insensitive FS (macOS dev default) two spellings alias one file
+  and per-path serialization silently voids. `knapper doctor` FAILS on it;
+  the server startup only warns (dev vaults are fixtures). Do NOT "fix" this
+  by case-folding: ext4 legitimately hosts names differing only by case, and
+  folding would falsely reject valid batches in production.
 
 ## Core invariants (silent-corruption-prone)
 

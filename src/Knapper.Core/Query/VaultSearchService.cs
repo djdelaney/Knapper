@@ -59,6 +59,16 @@ public sealed class VaultSearchService(
         {
             if (line.Length == 0)
                 return true;
+            if (!File.Exists(Path.Combine(resolver.Root, line)))
+            {
+                // -l output is newline-framed; an entry that doesn't resolve
+                // to a real vault file means a filename with a newline broke
+                // the framing (or the file vanished mid-query). Either way,
+                // reporting the fragments as results would be wrong twice.
+                throw new KnapperException(VaultErrorCode.IoError,
+                    $"ripgrep filename-list entry does not resolve to a vault file — a filename may " +
+                    "contain a newline (rename it), or the vault changed mid-query (re-run)");
+            }
             var pos = (line, 0, 0);
             if (plan.CursorPosition is { } cur && QueryCursor.ComparePosition(pos, cur) <= 0)
                 return true;
@@ -88,9 +98,17 @@ public sealed class VaultSearchService(
         long sum = 0;
         var outcome = RunWithHook(args, plan, ct, line =>
         {
+            if (line.Length == 0)
+                return true;
             var nul = line.IndexOf('\0');
             if (nul <= 0 || !long.TryParse(line[(nul + 1)..], out var count))
-                return true;
+            {
+                // Silent parse-drops forge completeness. The realistic cause
+                // is a filename containing a newline breaking line framing.
+                throw new KnapperException(VaultErrorCode.IoError,
+                    "unparseable ripgrep --count-matches output — a vault filename may contain a " +
+                    "newline (rename it); refusing to report a possibly-incomplete count");
+            }
             var path = line[..nul];
             sum += count;
             var pos = (path, 0, 0);
@@ -161,8 +179,13 @@ public sealed class VaultSearchService(
             args.Add("--glob=" + glob);
         foreach (var glob in query.ExcludeGlobs ?? [])
             args.Add("--glob=!" + glob);
+        // --iglob, not --glob: the extension parameter is OUR sugar on both
+        // surfaces, and the native lister compares extensions
+        // case-insensitively — the differential contract requires the two
+        // to agree (user-supplied include/exclude globs above stay
+        // case-sensitive: those are raw rg semantics).
         foreach (var ext in NormalizeExtensions(query.Extensions))
-            args.Add("--glob=*." + ext);
+            args.Add("--iglob=*." + ext);
         args.Add("-e");
         args.Add(query.Pattern);
         args.Add("--");
@@ -331,7 +354,17 @@ public sealed class VaultSearchService(
                 {
                     var data = root.GetProperty("data");
                     if (!data.GetProperty("path").TryGetProperty("text", out var pathProp))
-                        return true; // non-UTF-8 filename: cannot address it, skip
+                    {
+                        // A match in a file the server cannot even NAME. A
+                        // silent skip would forge "exhaustively searched" —
+                        // the same lie UnparseableFiles exists to prevent on
+                        // the frontmatter surface. Loud beats omitted: one
+                        // broken filename blocking searches is a signal for
+                        // the human to rename it.
+                        throw new KnapperException(VaultErrorCode.IoError,
+                            "a matching file's name is not valid UTF-8 — the server cannot address it and " +
+                            "will not silently omit it; rename the file (it is visible to `ls`, not to agents)");
+                    }
                     var path = pathProp.GetString()!;
                     var lineNumber = data.GetProperty("line_number").GetInt32();
                     var text = TrimNewline(GetLinesText(root));

@@ -20,7 +20,11 @@ public sealed class GenerationCounterTests
     [InlineData("Notes/.knapper-tmp-abc", true)]
     [InlineData(".knapper-tmp-abc", true)]
     [InlineData("Notes/Daily.md", false)]
-    [InlineData("Notes/.hidden.md", false)] // hidden but not control: Sync delivers it, count it
+    // ANY dot-segment is filtered, matching visibility: queries can't see
+    // hidden entries, so their churn (.DS_Store, workspace saves) must not
+    // flip changed_during_query for results that can't contain them.
+    [InlineData("Notes/.hidden.md", true)]
+    [InlineData(".DS_Store", true)]
     public void Control_paths_are_filtered(string path, bool control) =>
         VaultGenerationCounter.IsControlPath(path).ShouldBe(control);
 

@@ -70,6 +70,83 @@ public sealed class GitCommitJobTests : IDisposable
         File.Exists(stamp).ShouldBeFalse("a refused run must NOT stamp — the monitor exists to notice it");
     }
 
+    [Theory]
+    [InlineData("Notes/evil\nname.md")]      // newline: breaks '\n'-split name lists
+    [InlineData("(icase)note.md")]           // pathspec-magic shape: breaks `git show :path`
+    [InlineData(":odd:name.md")]             // rev-syntax shape
+    public void Unusual_staged_filenames_cannot_slip_a_secret_past_the_scan(string name)
+    {
+        _job.Init();
+        _v.Write(name, "my key is AKIAIOSFODNN7EXAMPLE\n");
+
+        // The blob-SHA scan route never interprets the filename: the secret
+        // must be found and the commit refused, exactly as for a plain name.
+        Should.Throw<KnapperException>(() => _job.Commit(Ample))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        _job.LastCommitAgeSeconds().ShouldBeNull("nothing may have entered history");
+    }
+
+    [Fact]
+    public void A_staged_deletion_still_commits_without_tripping_the_scan()
+    {
+        _job.Init();
+        _v.Write("Notes/a.md", "plain content\n");
+        _job.Commit(Ample).Committed.ShouldBeTrue();
+
+        File.Delete(Path.Combine(_v.VaultDir.Path, "Notes/a.md"));
+        var outcome = _job.Commit(Ample);
+        outcome.Committed.ShouldBeTrue("a deletion has no new content to scan and must commit");
+    }
+
+    [Fact]
+    public void An_unreadable_staged_blob_refuses_the_commit_instead_of_skipping_the_scan()
+    {
+        // A scan that cannot run must never pass as a scan that found
+        // nothing. Make the staged blob's loose object unreadable so
+        // cat-file fails (deleting it wouldn't work: the add -A inside
+        // Commit would simply re-create the object from the working tree,
+        // while an EXISTING object is never rewritten).
+        _job.Init();
+        const string content = "content whose object will be unreadable\n";
+        _v.Write("Notes/a.md", content);
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            RedirectStandardOutput = true,
+            RedirectStandardInput = true,
+        };
+        foreach (var a in new[] { "-C", _v.VaultDir.Path, "hash-object", "--stdin" })
+            psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.StandardInput.Write(content);
+        p.StandardInput.Close();
+        var sha = p.StandardOutput.ReadToEnd().Trim();
+        p.WaitForExit(10_000).ShouldBeTrue();
+
+        // First commit attempt writes the object (and would succeed) — but
+        // we only let it run `add` indirectly by staging here ourselves:
+        using var add = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git", ArgumentList = { "-C", _v.VaultDir.Path, "add", "-A" },
+        })!;
+        add.WaitForExit(10_000).ShouldBeTrue();
+
+        var objectPath = Path.Combine(_v.VaultDir.Path, ".git", "objects", sha[..2], sha[2..]);
+        File.Exists(objectPath).ShouldBeTrue("expected a loose object for the staged blob");
+        File.SetUnixFileMode(objectPath, UnixFileMode.None);
+        try
+        {
+            Should.Throw<KnapperException>(() => _job.Commit(Ample))
+                .Code.ShouldBe(VaultErrorCode.IoError);
+            _job.LastCommitAgeSeconds().ShouldBeNull("nothing may have been committed unscanned");
+        }
+        finally
+        {
+            File.SetUnixFileMode(objectPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
     [Fact]
     public void An_in_vault_stamp_path_is_refused_before_any_stamp_is_written()
     {

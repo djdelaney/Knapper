@@ -91,6 +91,13 @@ public sealed class VaultReadService(
             {
                 results.Add(new VaultBatchReadItem(request.Path, null, e.Code, e.Message));
             }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // One transiently-unreadable file (Sync mid-replace, disk
+                // hiccup) must never hide the other items' results.
+                results.Add(new VaultBatchReadItem(request.Path, null, VaultErrorCode.IoError,
+                    $"filesystem failure reading {request.Path}: {e.Message}"));
+            }
         }
         var generationEnd = generation.Current;
         return new VaultBatchReadResult(results, generationStart, generationEnd, generationEnd != generationStart);
@@ -171,7 +178,19 @@ public sealed class VaultReadService(
                 $"{vp.Relative} is {info.Length} bytes; the read cap is {options.MaxReadBytes}. " +
                 "This vault's notes should never approach the cap — if this file is legitimate, raise Vault:MaxReadBytes.");
         }
-        return File.ReadAllBytes(vp.Absolute);
+        // Bounded read, not ReadAllBytes: an external writer can grow the
+        // file between the stat above and the read (TOCTOU) — the buffer is
+        // sized from the stat, and one extra probe byte detects growth
+        // instead of materializing it.
+        using var stream = File.OpenRead(vp.Absolute);
+        var buffer = new byte[info.Length + 1];
+        var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+        if (read == buffer.Length)
+        {
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"{vp.Relative} grew while being read (external writer) — re-run the read");
+        }
+        return buffer[..read];
     }
 
     /// <summary>

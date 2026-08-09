@@ -214,14 +214,29 @@ public sealed class VaultMutationService(
                     // external writer (Sync, a human shell — nothing that
                     // honors our locks) replaced the source before the link,
                     // the linked inode carries THEIR bytes and this fails —
-                    // the stray link is rolled back below.
-                    AtomicFile.VerifyOnDisk(destination.Absolute, data);
+                    // the stray link is rolled back below. Surfaced as
+                    // PreconditionFailed, not VerifyFailed: "re-read and
+                    // retry" is the correct agent guidance for a race.
+                    try
+                    {
+                        AtomicFile.VerifyOnDisk(destination.Absolute, data);
+                    }
+                    catch (KnapperException e) when (e.Code == VaultErrorCode.VerifyFailed)
+                    {
+                        throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                            $"{source.Relative} changed between read and link (external writer) — " +
+                            "move rolled back; re-read and retry", e);
+                    }
                     // And the link→unlink window: unlinking must not destroy
                     // an external replacement that landed after the link.
                     RequireStillOurBytes(source, data,
                         "changed during the move — move rolled back, nothing was removed");
                     File.Delete(source.Absolute);
                     sourceUnlinked = true;
+                    // Documented window: a failure in THIS fsync reports the
+                    // move as failed although it landed (content is at the
+                    // destination; nothing is lost). The receipt errs in the
+                    // safe direction — an agent re-reads and finds the truth.
                     Posix.FsyncDirectory(Path.GetDirectoryName(source.Absolute)!);
                 }
                 catch when (!sourceUnlinked)
@@ -265,6 +280,10 @@ public sealed class VaultMutationService(
             {
                 var data = ReadExisting(vp);
                 RequireSha(expectSha256, data, vp);
+                // Intent BEFORE the first filesystem side effect — the trash
+                // directory mkdir below is already a change no audit line
+                // would explain if the sink were down.
+                RequireAuditIntent("delete", vp.Relative, ctx);
 
                 // Trash paths are built from the ALREADY-VALIDATED relative
                 // path — .trash/ is deliberately unreachable via the resolver.
@@ -284,7 +303,6 @@ public sealed class VaultMutationService(
                 Directory.CreateDirectory(Path.GetDirectoryName(trashAbsolute)!);
 
                 var trashDir = Path.GetDirectoryName(trashAbsolute)!;
-                RequireAuditIntent("delete", vp.Relative, ctx);
                 BeforeLinkTestHook?.Invoke(vp.Absolute);
                 Posix.Link(vp.Absolute, trashAbsolute);
                 var sourceUnlinked = false;
@@ -295,7 +313,16 @@ public sealed class VaultMutationService(
                     // Same two-window protection as move: a verify failure
                     // here means an external writer replaced the file before
                     // the link (the trash link holds THEIR bytes)...
-                    AtomicFile.VerifyOnDisk(trashAbsolute, data);
+                    try
+                    {
+                        AtomicFile.VerifyOnDisk(trashAbsolute, data);
+                    }
+                    catch (KnapperException e) when (e.Code == VaultErrorCode.VerifyFailed)
+                    {
+                        throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                            $"{vp.Relative} changed between read and link (external writer) — " +
+                            "delete rolled back; re-read and retry", e);
+                    }
                     // ...and this one means they replaced it after — either
                     // way the delete is stale and must not remove their write.
                     RequireStillOurBytes(vp, data,
@@ -608,8 +635,17 @@ public sealed class VaultMutationService(
             throw new KnapperException(VaultErrorCode.InvalidArgument, "edits[] is required and must be non-empty");
         for (var i = 0; i < edits.Count; i++)
         {
+            // Explicit null checks: Core owes its own typed [InvalidArgument]
+            // for every malformed shape — a null slipping through binds as a
+            // NullReferenceException and reaches agents as [Internal], which
+            // they treat as a server bug, not a fixable request.
+            if (edits[i] is null)
+                throw new KnapperException(VaultErrorCode.InvalidArgument, $"edit[{i}] is null");
             if (string.IsNullOrEmpty(edits[i].Old))
                 throw new KnapperException(VaultErrorCode.InvalidArgument, $"edit[{i}]: 'old' must be non-empty");
+            if (edits[i].New is null)
+                throw new KnapperException(VaultErrorCode.InvalidArgument,
+                    $"edit[{i}]: 'new' is required (use \"\" to delete the anchored text)");
             if (edits[i].Old == edits[i].New)
                 throw new KnapperException(VaultErrorCode.InvalidArgument, $"edit[{i}]: old == new");
             if (edits[i].Count < 1)

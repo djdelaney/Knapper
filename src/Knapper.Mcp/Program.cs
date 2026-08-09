@@ -130,6 +130,19 @@ var resolvedSyncOpts = app.Services.GetRequiredService<IOptions<SyncOptions>>().
 if (resolvedMcpOpts.Access.Validate() is { } accessConfigError)
     throw new InvalidOperationException(accessConfigError);
 
+if (CaseSensitivityProbe.IsCaseInsensitive(app.Services.GetRequiredService<VaultPathResolver>().Root))
+{
+    // Warning, not refusal: macOS dev boxes are legitimately case-insensitive
+    // and the vaults there are fixtures. Production (`knapper doctor`, which
+    // FAILS on this) must never run on one: per-path lock identity, batch
+    // duplicate rejection, and prefix scoping all assume distinct strings
+    // mean distinct files.
+    startupLogger.LogWarning(
+        "The vault filesystem is CASE-INSENSITIVE. Per-path serialization guarantees are void " +
+        "when two spellings alias one file. Acceptable for dev only; production requires ext4 " +
+        "or another case-sensitive filesystem (knapper doctor enforces this).");
+}
+
 if (resolvedSyncOpts.Mode.Equals("open", StringComparison.OrdinalIgnoreCase))
 {
     startupLogger.LogWarning(
@@ -205,13 +218,18 @@ if (accessEnabled)
     // EventSource nobody hears while the server 401s every real caller.
     await AccessAuth.VerifySigningKeysAsync(app.Services, startupLogger).ConfigureAwait(false);
 }
-else if (!HostGuard.IsLoopbackBind(mcpOpts.BindAddress))
+else
 {
+    // ALWAYS loud, loopback bind included — production fronts this port with
+    // cloudflared on the same box, so "loopback" is exactly where a
+    // mispointed tunnel would deliver the internet with no server-side
+    // signal. Resolved options, not the builder-time snapshot: security
+    // decisions read from the authoritative source (rule above).
     startupLogger.LogWarning(
-        "MCP is bound to {Bind} with NO origin authentication (Mcp:Access:Enabled=false). " +
-        "Anything that can reach this port can read and MUTATE the whole vault. " +
-        "This is safe ONLY if an external gate (Cloudflare Access) is the sole ingress.",
-        mcpOpts.BindAddress);
+        "Cloudflare Access origin validation is DISABLED (Mcp:Access:Enabled=false; bind {Bind}). " +
+        "Anything that can reach this port — including a mispointed tunnel — can read and MUTATE " +
+        "the whole vault, silently. Dev only; production sets Mcp__Access__Enabled=true.",
+        resolvedMcpOpts.BindAddress);
 }
 
 await app.RunAsync().ConfigureAwait(false);

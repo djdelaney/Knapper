@@ -90,7 +90,9 @@ int Status()
     Console.WriteLine($"conflicts:  {(conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
     Console.WriteLine($"git:        {(job.RepoExists ? $"repo present, last commit {Describe(job.LastCommitAgeSeconds())}" : "NO repo (knapper git-init)")}");
     Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (syncOptions.Mode == "heartbeat"
-        ? $" — heartbeat {Describe(new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds())} (max {syncOptions.MaxAgeSeconds}s)"
+        ? string.IsNullOrWhiteSpace(syncOptions.HeartbeatPath)
+            ? " — NO heartbeat path configured (mutations would be blocked; set Sync__HeartbeatPath)"
+            : $" — heartbeat {Describe(new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds())} (max {syncOptions.MaxAgeSeconds}s)"
         : " (mutations NOT gated — dev only)"));
     return conflicts.Count == 0 ? 0 : 1;
 
@@ -109,6 +111,10 @@ int Doctor()
     Check("Vault:AuditLogPath configured, outside the vault",
         () => !string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath)
               && !PathContainment.IsInsideOrEqual(vaultOptions.AuditLogPath, vaultOptions.RootPath));
+    Check("vault filesystem is case-SENSITIVE (hard production requirement)",
+        () => !string.IsNullOrWhiteSpace(vaultOptions.RootPath)
+              && Directory.Exists(vaultOptions.RootPath)
+              && !CaseSensitivityProbe.IsCaseInsensitive(vaultOptions.RootPath));
     Check("Vault:CommitStampPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.CommitStampPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.CommitStampPath, vaultOptions.RootPath));

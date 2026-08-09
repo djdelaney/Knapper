@@ -38,8 +38,12 @@ public sealed class FileAgeSyncGate(SyncOptions options) : ISyncGate
                 return null;
             return (DateTime.UtcNow - info.LastWriteTimeUtc).TotalSeconds;
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {
+            // Null = "can't tell" = mutations blocked (fail closed) with the
+            // typed MutationBlocked shape. A raw UnauthorizedAccessException
+            // (or ArgumentException from a blank path) previously escaped as
+            // [Internal] — right outcome, wrong code for agents to branch on.
             return null;
         }
     }

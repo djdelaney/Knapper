@@ -13,10 +13,27 @@ namespace Knapper.Core.Query;
 /// </summary>
 internal static class Globbing
 {
+    /// <summary>Bounds on agent-supplied globs — generous for real use, hostile to regex bombs.</summary>
+    private const int MaxGlobLength = 256;
+    private const int MaxWildcards = 32;
+
     internal static Regex Translate(string glob)
     {
         if (string.IsNullOrEmpty(glob))
             throw new KnapperException(VaultErrorCode.InvalidArgument, "glob is empty");
+        // This is .NET regex, not rg's linear-time engine: stacked '**' and
+        // '{...}' alternations translate to nested unbounded quantifiers,
+        // and a backtracking match against a long failing path goes
+        // super-polynomial — an agent-suppliable request-thread hang. The
+        // complexity cap bounds construction cost, NonBacktracking (below)
+        // makes matching linear-time like rg's own engine.
+        var wildcards = glob.Count(ch => ch is '*' or '?' or '{');
+        if (glob.Length > MaxGlobLength || wildcards > MaxWildcards)
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"glob is too complex ({glob.Length} chars, {wildcards} wildcards — " +
+                $"caps are {MaxGlobLength} and {MaxWildcards})");
+        }
 
         var sb = new StringBuilder(glob.Contains('/') ? "^" : "(?:^|/)");
         var braceDepth = 0;
@@ -72,12 +89,28 @@ internal static class Globbing
         if (braceDepth != 0)
             throw new KnapperException(VaultErrorCode.InvalidArgument, $"unbalanced '{{' in glob: {glob}");
         sb.Append('$');
-        return new Regex(sb.ToString(), RegexOptions.CultureInvariant);
+        // NonBacktracking = linear-time matching (the guarantee rg's Rust
+        // regex gives); the timeout is belt-and-suspenders should the
+        // pattern ever pick up a construct that forces the backtracking
+        // engine. Both must stay.
+        return new Regex(sb.ToString(),
+            RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
+            TimeSpan.FromMilliseconds(250));
     }
 
     /// <summary>Matches a normalized vault-relative path against a translated glob.</summary>
-    internal static bool IsMatch(Regex translated, string relativePath) =>
-        translated.IsMatch(relativePath);
+    internal static bool IsMatch(Regex translated, string relativePath)
+    {
+        try
+        {
+            return translated.IsMatch(relativePath);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                "glob match timed out — the pattern is pathological; simplify it");
+        }
+    }
 
     private static int TranslateClass(string glob, int start, StringBuilder sb)
     {
