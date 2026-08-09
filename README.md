@@ -31,23 +31,37 @@ contract):
 
 | Path | What |
 |---|---|
-| `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch — with conflict/sync gates and a JSONL audit log) |
-| `src/Knapper.Mcp` | ASP.NET Core MCP server: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation, DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
-| `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan) / `status` / `doctor` / `audit-tail` |
-| `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), publish script, CT 106 deployment runbook |
+| `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch — with conflict/sync gates, a write-ahead JSONL audit log, and a durable metrics snapshot for the external monitor) |
+| `src/Knapper.Mcp` | ASP.NET Core MCP server: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
+| `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan + monitor freshness stamp) / `status` / `doctor` / `audit-tail` |
+| `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), the Proxmox-host monitor kit (`ops/monitor/`: silent-on-success alerting over `/up` + commit-stamp age + metrics deltas), self-verifying publish script, CT 106 deployment runbook |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |
 | `tools/Knapper.MutationProbe` | child-process probe for two-process stale-edit / simultaneous-create races |
-| `tests/` | xunit suites, including real multi-process lock races |
+| `tests/` | three tiers: `Knapper.Core.Tests` (semantics, including real multi-process lock and mutation races), `Knapper.Mcp.Tests` (the wire envelope in-process, including the Cloudflare Access topology), and `Knapper.AcceptanceTests` (the brief §13 black box: REAL server processes spawned over real HTTP — two-process transport races, fault injection, ripgrep-oracle equivalence) |
 
 ## Build
 
 ```sh
 dotnet build Knapper.slnx
-dotnet test Knapper.slnx
+dotnet test Knapper.slnx                    # all three tiers, incl. black-box acceptance
+dotnet test tests/Knapper.AcceptanceTests   # just the real-process acceptance tier
 ```
 
 Requires .NET 10 SDK, plus `ripgrep` and `git` on PATH. Linux/macOS only —
 the locking and atomic-commit semantics are POSIX by design.
+
+## Status
+
+Code-complete through the brief's §13 definition of done as far as a repo
+can take it: two external review rounds are closed and the black-box
+acceptance tier (real server processes, real HTTP, two-process races, fault
+injection) passes. Helios cutover is gated on the live CT 106 sequence —
+tunnel fail-closed checks, alert-path exercises, backup acceptance, and
+explicit sign-off. The authoritative, dated status lives in
+[REMEDIATION-REVIEW.md](REMEDIATION-REVIEW.md) (top section); the live
+sequence is [ops/ct106-runbook.md](ops/ct106-runbook.md) §§8–9. This
+paragraph intentionally stays vague enough not to rot — trust those two,
+not this.
 
 ## Docs
 
