@@ -12,10 +12,14 @@ Human Obsidian clients ◄──► Obsidian Sync cloud ◄──► obsidian-he
 Agents (claude.ai / Desktop / Code) ──► cloudflared ──► Knapper.Mcp ──► /vault
                                         (Cloudflare        │ SHA preconditions + flock locks
                                          Access = auth)    ├── audit JSONL (outside /vault)
+                                                           ├── metrics snapshot (outside /vault)
                                                            └── conflict + sync-health gates
                                                               │
                                         knapper commit  ◄─────┘  (systemd timer, vault-wide lock)
-                                        = git history, local-only
+                                        = git history, local-only + fsynced success stamp
+
+Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + metrics
+              deltas (pct exec) ──► silent-on-success mail to alerts@
 ```
 
 ## Projects
@@ -27,8 +31,9 @@ Agents (claude.ai / Desktop / Code) ──► cloudflared ──► Knapper.Mcp 
 | `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`. Shares Core, so the commit job uses the *same* lock implementation as mutations. |
 | `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
 | `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |
-| `tests/Knapper.Core.Tests` | tests | Unit + differential + multi-process race tests (167). |
-| `tests/Knapper.Mcp.Tests` | tests | Wire-level tests through the SDK's own `McpClient` (24). |
+| `tests/Knapper.Core.Tests` | tests | Unit + differential + multi-process race tests. |
+| `tests/Knapper.Mcp.Tests` | tests | Wire-level tests through the SDK's own `McpClient` against an in-process host, incl. the Cloudflare Access topology. |
+| `tests/Knapper.AcceptanceTests` | tests | The brief-§13 black box: REAL server processes spawned over real HTTP — two-process transport races, short-write fault injection, rg-oracle equivalence. Loads no Knapper types in-process by design. |
 
 Dependency direction is strictly `Mcp`/`Cli` → `Core`. Core's only NuGet
 dependency is YamlDotNet; the Mcp host adds the MCP SDK and JwtBearer.
@@ -41,13 +46,16 @@ and Unix file modes.
 ```
 Core/
   KnapperException.cs      VaultErrorCode + the one exception type crossing layers
+  KnapperMetrics.cs        bounded counters → atomic JSON snapshot (the monitor's rate signals)
   Interop/Posix.cs         flock / link / creat / fsync-dir / realpath (LibraryImport)
   Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions (POCOs)
   Vault/
-    VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/banned-dir)
+    VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/dot-segments)
     VaultPath.cs           proof-of-validation record (internal ctor)
     VaultHash.cs           SHA-256 lowercase hex — the precondition currency
     AtomicFile.cs          THE writer: temp+fsync → last-instant SHA check → rename/link → verify
+    PathContainment.cs     realpath-canonicalized "is this inside the vault" for startup checks
+    CaseSensitivityProbe.cs  detects case-insensitive vault FS (doctor fails; server warns)
   Locking/
     VaultLockManager.cs    cross-process flock: per-path EX + vault-wide commit lock (SH/EX)
   Generation/
@@ -78,12 +86,17 @@ Core/
 agents lose at cutover. Search shells out to ripgrep with `ArgumentList`
 (never a shell) and always passes `--no-config --no-ignore --no-follow
 --sort=path`; the file lister is a native walk so mtime/size filters don't
-need a second stat pass. Both hide dotfiles at every depth — a differential
-test against real `rg --files` keeps them agreeing. Every list/search
-response wears the **completeness envelope**: `items`, `truncated`,
-`nextCursor` (fingerprint-bound to the query's filters), `scannedFiles`,
-`totalMatches` (explicit null when unknown — never guessed), and the
-generation span (`generationStart/End`, `changedDuringQuery`).
+need a second stat pass. Hidden means invisible on BOTH surfaces: dotfiles
+are skipped at every depth by queries AND unaddressable through the
+resolver — a differential test against real `rg --files` keeps the two
+query implementations agreeing, and path ordering is raw UTF-8 bytes
+everywhere (rg's `--sort=path` order). Every list/search response wears
+the **completeness envelope**: `items`, `truncated`, `nextCursor`
+(fingerprint-bound to the query's filters), `scannedFiles`, `totalMatches`
+(explicit null when unknown — never guessed), and the generation span
+(`generationStart/End`, `changedDuringQuery`); read/stat/batch-read
+responses carry the same span (freshness signal only — the SHA remains
+the precondition).
 
 **Transaction layer** (brief §7, semantics ported from
 `vault-edit.reference.py`). Every mutation of an existing file requires
@@ -91,16 +104,24 @@ generation span (`generationStart/End`, `changedDuringQuery`).
 
 ```
 lock → fresh read → SHA check → transform → validate guards
+     → AUDIT INTENT (fsynced, before the first byte)
      → hidden same-dir temp + fsync → final SHA check → atomic replace
      → reopen and byte-compare → unlock
 ```
 
-Anchored edits demand exact occurrence counts; guards must exist before and
-survive after; create is hard-link no-clobber; move is link-then-unlink
-(rename would silently replace); delete is soft, into `.trash/`. Batch
-validates every item under sorted-order locks before the first write.
-Verification is by content, never by receipt — the vault has a documented
-history of writes that reported success without landing.
+The write-ahead audit intent means no change can exist that no audit line
+explains: if the audit sink is down, the mutation is refused BEFORE any
+write (fail closed); a post-write audit failure keeps the success receipt
+and surfaces through the durable audit-failure metric instead. Anchored
+edits demand exact occurrence counts; guards must exist before and survive
+after; create is hard-link no-clobber; move is link-then-unlink (rename
+would silently replace), with the just-created link rolled back on any
+failure before the source unlink and the source re-verified BY CONTENT
+immediately before unlinking — an external writer's replacement is never
+destroyed; delete is soft, into `.trash/`, with the same two-window
+protection. Batch validates every item under sorted-order locks before the
+first write. Verification is by content, never by receipt — the vault has
+a documented history of writes that reported success without landing.
 
 ## Locking model
 
@@ -130,17 +151,33 @@ proven by tests that spawn real second processes (`LockProbe`,
   heartbeat file — touched every minute by a probe that checks the
   obsidian-headless unit — to be fresh. Missing or stale = mutations
   blocked. Reads stay up.
-- **Startup**: missing/misplaced vault root, lock dir, or audit path; bad
-  Access config; unfetchable signing keys — all refuse startup rather than
-  degrade.
+- **Startup**: missing vault root; lock dir, audit path, or metrics path
+  equal to or inside the vault (realpath-canonicalized, symlinked ancestors
+  included); bad Access config; unfetchable signing keys; invalid sync
+  mode — all refuse startup rather than degrade. `Sync:Mode` DEFAULTS to
+  `heartbeat`, so a forgotten config line refuses startup instead of
+  silently ungating mutations. A case-insensitive vault filesystem fails
+  `knapper doctor` (production gate) and warns at server startup (dev).
+- **Monitoring** (brief §8, outside the CT): `KnapperMetrics` snapshots
+  bounded counters — tool outcomes, query timeouts, stale-write
+  rejections, truncation, generation-changed responses, audit-append
+  failures — to an atomic JSON file; the Proxmox-host monitor evaluates
+  per-window deltas alongside `/up` and the commit job's fsynced success
+  stamp (which distinguishes a quiet vault from a dead timer), mailing
+  silent-on-success alerts.
 
 ## Security model (brief §9, B2)
 
 The Cloudflare tunnel is the only network path; Cloudflare Access is the
 auth gate (Managed OAuth for claude.ai/Desktop/iOS, service token for
 Claude Code). The origin additionally validates Access's
-`Cf-Access-Jwt-Assertion` (issuer, audience, signature against the team's
-JWKS) so an edge misconfiguration can't silently expose the vault. A
-separate path-scoped monitoring audience is accepted on `/up` only.
-HostGuard pins Host/Origin headers against DNS-rebinding. The caller's
-identity (email / service-token common name) flows into every audit entry.
+`Cf-Access-Jwt-Assertion` (issuer, audience, RS256-pinned signature
+against the team's JWKS) so an edge misconfiguration can't silently expose
+the vault. The local-caller exemption requires a loopback TCP peer AND a
+loopback Host header — cloudflared delivers every tunneled internet
+request from 127.0.0.1, so the peer alone proves nothing (this was the
+P0 of the first review round; `AccessTopologyTests` pins it). A separate
+path-scoped monitoring audience is accepted on `/up` only. HostGuard pins
+Host/Origin headers against DNS-rebinding. The caller's identity (email /
+service-token common name) flows into every audit entry, and Access being
+disabled warns loudly at startup on every bind.

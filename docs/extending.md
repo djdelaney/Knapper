@@ -139,15 +139,53 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
 
 ## Ideas already scoped (not yet built)
 
-- **Transport-level §13 acceptance runner**: a `knapper verify` subcommand
-  running the equivalence + race suites against a LIVE server URL, for the
-  pre-cutover check on CT 106.
+- **Live-server §13 acceptance runner**: the repo-runnable half exists
+  (`Knapper.AcceptanceTests` spawns real server processes); what remains
+  is a `knapper verify --url` variant that drives the SAME scenarios
+  against the DEPLOYED CT 106 service for the runbook §5 pre-ingress
+  check.
 - **Read-only deployment profile**: `Mcp:DisabledTools` with the seven
   mutation tools listed, as a documented one-liner.
 - **Per-client credentials** (brief §8 "where practical"): Access already
   distinguishes identities in the audit log; separate Access apps per agent
   surface would let Cloudflare policy differ per client.
+- **Opt-in tool-argument logging** (`Mcp:LogToolArguments`, JSONL outside
+  the vault): considered for client-behavior validation, superseded by
+  transcript mining for now — revisit if the §8b smoke test needs
+  finer-grained evidence than tool names + audit + metrics give.
 - **`vault_search` context in files/counts modes** is intentionally absent;
   matches mode covers the need.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
+
+## Open decisions (owners, and what re-opens them)
+
+Consolidated from five review rounds so they are decided once, here — not
+re-litigated per review.
+
+- **Git remote for the vault repo** — Dan's call, blocked on the
+  credential sweep closing (brief §10). Until then the repo is local-only;
+  `knapper doctor` fails loud if a remote appears. Nothing in this repo
+  should add push/remote support before that decision.
+- **Monitor thresholds** (`MAX_QUERY_TIMEOUTS` etc. in
+  `knapper-monitor.conf`) — shipped as educated guesses, explicitly to be
+  tuned after observing real traffic post-cutover.
+- **Cursor HMAC** — deferred twice (round 3 + security review agree):
+  cursors are forgeable only within the same query and only self-harming.
+  Re-opens ONLY if the threat model ever includes hostile MCP clients.
+- **B1 server-native OAuth** — the brief's original ingress, superseded by
+  B2 (Cloudflare Access) per the sanctioned deviation. Re-opens only if
+  Access becomes a limitation (e.g. a client surface that can't do
+  Managed OAuth or service tokens).
+- **§8b re-run cadence** — the behavioral smoke test re-runs after major
+  Claude model updates (steering drifts); failures fix descriptions and
+  instructions, never the contract.
+
+Decided and CLOSED (do not re-open without new evidence): no case-folding
+of paths (ext4 legitimately distinguishes; the requirement is a
+case-sensitive FS); dot-paths unaddressable on the mutation surface
+(hidden on BOTH surfaces); multiline `-U` column semantics past the first
+line (accuracy nit, documented); the batch-read worst-case memory ceiling
+(designed scale); `CreateDirectory` holding no per-path lock (no content
+involved); resolver-gate rejections staying unaudited (no vault object to
+audit).

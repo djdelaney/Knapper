@@ -39,7 +39,9 @@ Developer docs (read on demand; this file stays invariants-only):
   health/monitoring.
 - [`docs/extending.md`](docs/extending.md) — how to add a tool / query
   capability / mutation / error code / config knob without breaking the
-  contracts; testing and build conventions; scoped-but-unbuilt ideas.
+  contracts; testing and build conventions; scoped-but-unbuilt ideas; the
+  OPEN DECISIONS list (and the closed ones — check it before re-litigating
+  anything a review already settled).
 - [`ops/ct106-runbook.md`](ops/ct106-runbook.md) — production deployment.
   Runbooks describe how to VERIFY live state, never what it was (house rule):
   date and mark anything observed.

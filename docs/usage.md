@@ -91,11 +91,11 @@ searched, and `totalMatches` is null rather than guessed.
 
 | Tool | Essentials |
 |---|---|
-| `vault_read` | `path`, optional `startLine`/`endLine` (1-based inclusive; end clamps, echoed back). Returns content + **whole-file** `sha256` — the mutation precondition. |
-| `vault_batch_read` | `items: [{path, startLine?, endLine?}]`. Per-item results; one bad file never hides the rest. |
-| `vault_stat` | Existence/type/size/mtime/encoding/lines/sha without the body. |
+| `vault_read` | `path`, optional `startLine`/`endLine` (1-based inclusive; end clamps, echoed back). Returns content + **whole-file** `sha256` — the mutation precondition — plus the generation span (freshness signal only). |
+| `vault_batch_read` | `items: [{path, startLine?, endLine?}]`. Envelope with a batch-wide generation span; per-item results (each with its own span); one bad file never hides the rest. |
+| `vault_stat` | Existence/type/size/mtime/encoding/lines/sha (streamed past the read cap — large attachments still hash) without the body; generation span included. |
 | `vault_files` | `pathPrefix`, `glob`, `extensions`, `kind`, `mtimeAfter/Before`, `minSize/maxSize`, `includeSha`, paging. |
-| `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes`, `includeGlobs`/`excludeGlobs`, `extensions`, `contextBefore/After`, `mode` matches/files/counts, paging. |
+| `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. |
 | `vault_search_frontmatter` | `field`, `op` exists/equals/contains, `value`, `pathPrefix`. Response lists `unparseableFiles` — check it before trusting "no match". |
 
 ### Mutations (all conditional; no unconditional write exists)
@@ -122,7 +122,7 @@ Tool errors are structured MCP errors whose message leads with the code:
 
 | Code | Meaning / agent action |
 |---|---|
-| `InvalidPath`, `PathOutsideVault`, `SymlinkRejected`, `BannedPath` | Bad path argument. Fix the path; `.git`/`.obsidian`/`.trash` are never accessible. |
+| `InvalidPath`, `PathOutsideVault`, `SymlinkRejected`, `BannedPath` | Bad path argument. Fix the path; ALL dot-entries (`.git`, `.obsidian`, `.trash`, `.env`, any hidden segment at any depth) are unaddressable — hidden means invisible on both surfaces. |
 | `NotFound` | Missing file, or missing parent for create/move. |
 | `AlreadyExists` | No-clobber create/move found the target present. |
 | `PreconditionFailed` | Stale `expect_sha256`. Re-read, rebuild, retry with the new hash. |
