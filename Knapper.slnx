@@ -9,6 +9,7 @@
     <Project Path="tools/Knapper.MutationProbe/Knapper.MutationProbe.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Knapper.AcceptanceTests/Knapper.AcceptanceTests.csproj" />
     <Project Path="tests/Knapper.Core.Tests/Knapper.Core.Tests.csproj" />
     <Project Path="tests/Knapper.Mcp.Tests/Knapper.Mcp.Tests.csproj" />
   </Folder>

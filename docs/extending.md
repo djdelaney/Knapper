@@ -113,6 +113,19 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   `RemoteIpStartupFilter` declares which caller the factory simulates
   (loopback vs off-box); without it every loopback-sensitive control fails
   closed on TestServer's null remote address.
+- **The acceptance tier (`Knapper.AcceptanceTests`) is the black box** —
+  brief §13's definition of done. `AcceptanceServer` spawns the REAL
+  `Knapper.Mcp` binary as separate processes (`dotnet exec`, ephemeral
+  ports, env-var config) and talks to them over real sockets; two servers
+  over one vault + lock dir are the two-process topology. The project must
+  never load Knapper types in-process — if a scenario needs server-side
+  state, add a config knob or read the disk, don't reach into the process.
+  Deterministic faults go through env-gated injectors
+  (`KNAPPER_FAULT_SHORT_WRITE`): an injector may only BREAK an operation
+  the contract must then catch; it must never create a path around a
+  contract. What this tier cannot cover stays in the live CT 106 sequence
+  (runbook §§8–9): cloudflared, alert delivery, vzdump/PBS, fail-closed
+  service stops.
 
 ## Build conventions
 

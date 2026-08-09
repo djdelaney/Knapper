@@ -48,7 +48,8 @@ Developer docs (read on demand; this file stays invariants-only):
 
 ```sh
 dotnet build Knapper.slnx
-dotnet test Knapper.slnx
+dotnet test Knapper.slnx                            # includes the black-box acceptance tier
+dotnet test tests/Knapper.AcceptanceTests           # REAL server processes over real HTTP (brief §13)
 dotnet test tests/Knapper.Core.Tests --filter "FullyQualifiedName~CrossProcessLockTests"
 dotnet run --project src/Knapper.Cli -- doctor      # config/dependency checks (env: Vault__RootPath etc.)
 ops/publish.sh                                      # linux-x64 tarball for CT 106
@@ -77,7 +78,10 @@ format by default.
   same-directory temp (`.knapper-tmp-`) → fsync → last-instant SHA re-check →
   rename/hard-link → directory fsync, temps cleaned on every failure path.
   A write path that bypasses it loses atomicity, mode preservation, or the
-  no-clobber guarantee without any test necessarily noticing.
+  no-clobber guarantee without any test necessarily noticing. The
+  `KNAPPER_FAULT_SHORT_WRITE` env hook inside it is a fault INJECTOR for the
+  acceptance suite (it can only break a write so `VerifyOnDisk` must catch
+  it) — it is not, and must never become, a way to land unverified bytes.
 - **`VaultPathResolver` is the only gate between agent-supplied path strings
   and the filesystem.** Nothing else may combine user input with the vault
   root. `VaultPath`'s constructor is internal so an API taking one is stating

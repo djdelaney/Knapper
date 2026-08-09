@@ -40,7 +40,7 @@ public static class AtomicFile
             throw new KnapperException(VaultErrorCode.NotFound, $"no such file: {absolutePath}");
         }
 
-        var temp = WriteTemp(directory, data, mode);
+        var temp = WriteTemp(directory, MaybeInjectShortWrite(absolutePath, data), mode);
         var committed = false;
         try
         {
@@ -103,6 +103,24 @@ public static class AtomicFile
                 "post-write verification failed: bytes on disk differ from what was written " +
                 $"(concurrent write landed?) — sha on disk {VaultHash.Sha256Hex(onDisk)}");
         }
+    }
+
+    /// <summary>
+    /// Deterministic short-write FAULT INJECTOR for the acceptance suite
+    /// (brief §13: an induced short write must be caught by the post-write
+    /// reopen/byte-compare). Inert unless the KNAPPER_FAULT_SHORT_WRITE env
+    /// var names a substring of the target path; then the temp receives only
+    /// half the bytes while every success signal proceeds normally —
+    /// <see cref="VerifyOnDisk"/> is what must notice. This is an injector,
+    /// not a bypass: it can only BREAK a write that would otherwise verify;
+    /// there is no way to use it to land unverified content as success.
+    /// </summary>
+    private static byte[] MaybeInjectShortWrite(string absolutePath, byte[] data)
+    {
+        var trigger = Environment.GetEnvironmentVariable("KNAPPER_FAULT_SHORT_WRITE");
+        if (string.IsNullOrEmpty(trigger) || !absolutePath.Contains(trigger, StringComparison.Ordinal))
+            return data;
+        return data[..(data.Length / 2)];
     }
 
     /// <summary>Complete, fsynced hidden temp in the target's own directory; deleted on any failure.</summary>
