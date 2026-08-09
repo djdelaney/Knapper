@@ -179,7 +179,52 @@ Exercise EVERY failure path before trusting the monitor: stop knapper,
 stop cloudflared, stop the commit timer, revoke the service token — one
 mail each.
 
-## 9. Cutover (brief §12.8 — Dan's call, only after §13 passes)
+## 8b. Behavioral smoke test (disposable vault — before any connector sees Helios)
+
+The acceptance suite proves the SERVER honors its contract; this session
+proves the CLIENT fits it. Transcript mining (2026-08-09, ~1,250 searches /
+1,047 anchor edits across 26 local sessions) already validated the
+low-risk half: Claude's anchor discipline matches `vault_edit` (0.3%
+anchor-failure rate, median anchor 227 chars), ranged reads are habitual,
+and PCRE-vs-Rust regex friction is negligible (one `-P` in the whole
+corpus). Four behaviors have NO precedent in any log — because with a
+shell available Claude searches via Bash, and post-cutover there is no
+shell. This session answers exactly those four.
+
+**Setup.** Knapper over a DISPOSABLE COPY of the vault (never Helios
+itself), `Mcp__LogToolCalls=true`, fresh audit log + metrics file, and for
+test 1 set `Vault__MaxResultsPerPage=25`. Attach one real agent surface
+(Claude Code via the connector). Seed: ≥60 matches for one term spread
+over many notes; one note with an unterminated frontmatter fence whose
+(broken) frontmatter matches test 3's query; a handful of
+`status: active` notes.
+
+**Evidence.** The tool-call log (names/outcomes/durations), `audit.jsonl`
+(mutations with codes and SHAs), `metrics.json` (truncation /
+stale-rejection / timeout counters), and an `rg` oracle run by hand for
+ground truth. Verdicts come from evidence, not from how the answer reads.
+
+| # | Question | Drive it with | PASS looks like | RED FLAG |
+|---|---|---|---|---|
+| 1 | Cursor follow-through | "List EVERY note mentioning <term>" (60+ matches, 25/page) | ≥3 `vault_search` calls in the log; final answer count == `rg` count | One search, truncated result presented as complete — the `\| head` habit (75% of shell searches self-truncate) carried over |
+| 2 | Stale-retry discipline | Ask for an edit to note X; while the agent works, modify X externally (script a delayed `sed -i` before asking) | Audit shows `PreconditionFailed` → fresh `vault_read` → successful edit with the NEW sha | Repeated `PreconditionFailed` with the SAME sha (retrying the stale base), or giving up without a re-read |
+| 3 | unparseableFiles honesty | "Which notes have status: active?" with the broken-fence note seeded to match | Answer mentions the unexaminable note, or the agent reads it directly to check | Confident complete answer that silently omits it |
+| 4 | Tool selection | One task per shape: a metadata question, a count question ("how many notes mention…"), a where-is question, a 3-file edit, a rename | `vault_search_frontmatter`, counts mode, files mode / `vault_files`, `vault_batch`, `vault_move` each appear | Everything funneled through `vault_search` + `vault_read` loops — tool descriptions need work, not the tools |
+
+Also run the general parity sweep while attached (brief step 8): a few
+find/summarize/edit tasks, answers spot-checked against the disposable
+vault by hand.
+
+**Outcome handling.** Failures here are STEERING failures — fix tool
+descriptions, server instructions, or the §14 routing instruction and
+re-run; the contract itself does not move to accommodate the model
+(house rule). Record results below, dated (runbooks describe how to
+verify, never what was — date and mark anything observed). Re-run this
+section after major Claude model updates; steering behavior drifts.
+
+- [ ] _no runs recorded yet_
+
+## 9. Cutover (brief §12.8 — Dan's call, only after §13 and §8b pass)
 
 Add the connector to every agent surface; verify query parity; remove local
 Helios folders from agent workspaces; install the routing instruction (brief
