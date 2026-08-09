@@ -25,6 +25,17 @@ public sealed class HealthService(
     IOptions<SyncOptions> syncOptions)
 {
     private string? _ripgrepVersion;
+    private long _ripgrepCheckedAt; // Stopwatch timestamp; 0 = never probed
+
+    /// <summary>
+    /// Success is cached only briefly — a permanently cached probe leaves
+    /// /up healthy forever after rg is removed or broken. Internal so tests
+    /// can collapse the TTL; production keeps the default.
+    /// </summary>
+    internal TimeSpan RipgrepTtl = TimeSpan.FromSeconds(30);
+
+    /// <summary>Probe bound. A hung rg must degrade health, not hang /up.</summary>
+    internal int RipgrepTimeoutMs = 5_000;
 
     public sealed record Report(
         string Status,
@@ -105,40 +116,74 @@ public sealed class HealthService(
 
     private string? RipgrepVersion()
     {
-        if (_ripgrepVersion is not null)
+        // A cached SUCCESS is honored only within the TTL; a failure is
+        // never cached — "unknown" must re-probe, not report the last good
+        // answer indefinitely.
+        if (_ripgrepVersion is not null
+            && _ripgrepCheckedAt != 0
+            && Stopwatch.GetElapsedTime(_ripgrepCheckedAt) < RipgrepTtl)
+        {
             return _ripgrepVersion;
+        }
         try
         {
             var psi = new ProcessStartInfo
             {
                 FileName = vaultOptions.Value.RipgrepPath,
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             psi.ArgumentList.Add("--version");
             using var process = Process.Start(psi)!;
-            var firstLine = process.StandardOutput.ReadLine();
-            process.WaitForExit(5_000);
-            return _ripgrepVersion = firstLine;
+            // Wait BEFORE reading: --version output fits the pipe buffer, and
+            // reading first would block forever on a hung process.
+            if (!process.WaitForExit(RipgrepTimeoutMs))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException) { } // exited in the race window
+                process.WaitForExit(2_000);
+                return CacheRipgrep(null);
+            }
+            return CacheRipgrep(process.ExitCode == 0 ? process.StandardOutput.ReadLine() : null);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return null;
+            return CacheRipgrep(null);
         }
+    }
+
+    private string? CacheRipgrep(string? version)
+    {
+        _ripgrepCheckedAt = Stopwatch.GetTimestamp();
+        return _ripgrepVersion = version;
     }
 
     private bool AuditWritable()
     {
+        // A REPRESENTATIVE probe: write + fsync + delete a sibling probe file
+        // in the audit directory. Merely opening the existing audit file can
+        // succeed on a filesystem that no longer accepts a durable write
+        // (full, read-only remount) — and a mutation whose audit append then
+        // fails is exactly the failure this signal exists to surface. The
+        // probe never touches the audit trail itself.
+        var probePath = vaultOptions.Value.AuditLogPath + ".health-probe";
         try
         {
-            // Open-append-close without writing: proves permissions without
-            // polluting the audit trail.
-            using var _ = new FileStream(vaultOptions.Value.AuditLogPath, new FileStreamOptions
+            using (var stream = new FileStream(probePath, new FileStreamOptions
             {
-                Mode = FileMode.Append,
+                Mode = FileMode.Create,
                 Access = FileAccess.Write,
-                Share = FileShare.Read,
+                Share = FileShare.None,
                 UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-            });
+            }))
+            {
+                stream.Write("knapper-health-probe\n"u8);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Delete(probePath);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)

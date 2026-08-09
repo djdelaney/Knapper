@@ -39,4 +39,12 @@ public sealed class VaultOptions
 
     /// <summary>Append-only JSONL audit log — OUTSIDE the vault, always.</summary>
     public string AuditLogPath { get; set; } = "";
+
+    /// <summary>
+    /// Durably touched by `knapper commit` on every SUCCESSFUL run,
+    /// including "nothing to commit" — the external monitor's git-freshness
+    /// signal (last-commit age can't tell a quiet vault from a dead timer).
+    /// Empty = no stamp. Outside the vault, like every operational file.
+    /// </summary>
+    public string CommitStampPath { get; set; } = "";
 }

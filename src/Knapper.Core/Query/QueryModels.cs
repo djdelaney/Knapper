@@ -122,13 +122,29 @@ public sealed record VaultReadResult(
     string Encoding,
     int TotalLines,
     int? RangeStart,
-    int? RangeEnd);
+    int? RangeEnd,
+    /// <summary>Freshness signal only (brief §6) — the SHA remains the mutation precondition.</summary>
+    long GenerationStart,
+    long GenerationEnd,
+    bool ChangedDuringRead);
 
 public sealed record VaultBatchReadItem(
     string Path,
     VaultReadResult? Result,
     VaultErrorCode? ErrorCode,
     string? ErrorMessage);
+
+/// <summary>
+/// Batch envelope: the span brackets the WHOLE batch, while each successful
+/// item's embedded result carries its own per-file span. Changed=true means
+/// the vault moved while the batch was being read — items read before the
+/// change may be mutually inconsistent with items read after it.
+/// </summary>
+public sealed record VaultBatchReadResult(
+    IReadOnlyList<VaultBatchReadItem> Items,
+    long GenerationStart,
+    long GenerationEnd,
+    bool ChangedDuringRead);
 
 public sealed record VaultReadRequest(string Path, int? StartLine = null, int? EndLine = null);
 
@@ -141,9 +157,18 @@ public sealed record VaultStatResult(
     /// <summary>"utf-8", "utf-8-bom", or "binary". Null for directories/missing.</summary>
     string? Encoding,
     bool? IsText,
-    /// <summary>Null for directories, missing files, and files beyond MaxReadBytes.</summary>
+    /// <summary>
+    /// Null for directories and missing files ONLY. Files beyond MaxReadBytes
+    /// still hash (streamed): the SHA is the move/soft-delete precondition,
+    /// and omitting it would strand large synced attachments. Their
+    /// TotalLines is null and text detection is bounded to a prefix.
+    /// </summary>
     string? Sha256,
-    int? TotalLines);
+    int? TotalLines,
+    /// <summary>Freshness signal only — the SHA remains the mutation precondition.</summary>
+    long GenerationStart,
+    long GenerationEnd,
+    bool ChangedDuringRead);
 
 public enum FrontmatterOp
 {

@@ -14,9 +14,9 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
         var result = _vault.Frontmatter.Search(new FrontmatterQuery { Field = "status" });
         result.Envelope.Items.Select(m => m.Path).ShouldBe(["fm/a.md", "fm/b.md"]);
         // Anything whose frontmatter could not be examined is REPORTED — it
-        // could be hiding a match: broken YAML, and equally a non-UTF-8 .md
-        // whose text can't even be decoded.
-        result.UnparseableFiles.ShouldBe(["fm/broken.md", "latin1/legacy.md"]);
+        // could be hiding a match: broken YAML, an unterminated fence, and
+        // equally a non-UTF-8 .md whose text can't even be decoded.
+        result.UnparseableFiles.ShouldBe(["fm/broken.md", "fm/unterminated.md", "latin1/legacy.md"]);
         result.Envelope.Truncated.ShouldBeFalse();
         result.Envelope.ScannedFiles.ShouldNotBeNull();
     }
@@ -80,11 +80,19 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
     [Fact]
     public void Frontmatter_block_extraction_is_strict()
     {
-        FrontmatterSearchService.ExtractFrontmatterBlock("---\na: 1\n---\nbody").ShouldBe("a: 1");
-        FrontmatterSearchService.ExtractFrontmatterBlock("---\na: 1\n...\n").ShouldBe("a: 1");
-        FrontmatterSearchService.ExtractFrontmatterBlock("no fences").ShouldBeNull();
-        FrontmatterSearchService.ExtractFrontmatterBlock("\n---\na: 1\n---\n").ShouldBeNull(); // must be line 1
-        FrontmatterSearchService.ExtractFrontmatterBlock("---\nunterminated: yes\n").ShouldBeNull();
-        FrontmatterSearchService.ExtractFrontmatterBlock("").ShouldBeNull();
+        FrontmatterSearchService.ExtractFrontmatterBlock("---\na: 1\n---\nbody")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.Present, "a: 1"));
+        FrontmatterSearchService.ExtractFrontmatterBlock("---\na: 1\n...\n")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.Present, "a: 1"));
+        FrontmatterSearchService.ExtractFrontmatterBlock("no fences")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.None, null));
+        FrontmatterSearchService.ExtractFrontmatterBlock("\n---\na: 1\n---\n")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.None, null)); // must be line 1
+        // An opening fence with no close is MALFORMED, not absent — it could
+        // be hiding a match and must reach UnparseableFiles.
+        FrontmatterSearchService.ExtractFrontmatterBlock("---\nunterminated: yes\n")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.Malformed, null));
+        FrontmatterSearchService.ExtractFrontmatterBlock("")
+            .ShouldBe((FrontmatterSearchService.FrontmatterShape.None, null));
     }
 }

@@ -1,0 +1,8 @@
+# Proxmox-host unit for the Knapper external monitor (brief §8).
+# Silent on success; mails alerts@example.com on failure.
+[Unit]
+Description=Knapper external monitor (/up via tunnel + commit-stamp freshness)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/knapper-monitor.sh

@@ -1,0 +1,10 @@
+# /etc/knapper-monitor.conf — knapper-monitor.sh configuration (Proxmox host).
+# chmod 600: CF_CLIENT_SECRET is a credential.
+UP_URL="https://mcp.example.com/up"
+CF_CLIENT_ID="<monitoring-service-token>.access"
+CF_CLIENT_SECRET="<monitoring-service-token-secret>"
+CT_ID=106
+STAMP_PATH=/var/lib/knapper/commit-stamp
+MAX_STAMP_AGE=3900
+MAILTO=alerts@example.com
+CURL_TIMEOUT=20

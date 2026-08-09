@@ -29,6 +29,18 @@ public sealed class VaultMutationService(
 {
     private TimeSpan LockTimeout => TimeSpan.FromMilliseconds(options.LockTimeoutMs);
 
+    /// <summary>
+    /// Test seams for the move/delete link–unlink window. The per-path lock
+    /// only binds cooperating Knapper writers — Sync and human shells honor
+    /// no locks — so the external-writer race cannot be reproduced from a
+    /// second process on demand; these run inside the critical section
+    /// immediately before/after the destination hard link is created, and a
+    /// test uses them to stand in for that external writer. Never set
+    /// outside tests.
+    /// </summary>
+    internal Action<string>? BeforeLinkTestHook;
+    internal Action<string>? AfterLinkTestHook;
+
     // ---- vault_edit ----------------------------------------------------
 
     public MutationResult Edit(
@@ -115,10 +127,13 @@ public sealed class VaultMutationService(
             Audit("create", vp.Relative, "ok", ctx, before: null, after: sha);
             return new MutationResult(vp.Relative, null, sha, 0, written.Length, true, gen);
         }
-        catch (KnapperException e)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
-            Audit("create", vp.Relative, e.Code.ToString(), ctx, null, null, e.Message);
-            throw;
+            var ke = NormalizeIo(e, "create", vp.Relative);
+            Audit("create", vp.Relative, ke.Code.ToString(), ctx);
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
         }
     }
 
@@ -144,10 +159,13 @@ public sealed class VaultMutationService(
             generation.Increment();
             Audit("mkdir", vp.Relative, "ok", ctx);
         }
-        catch (KnapperException e)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
-            Audit("mkdir", vp.Relative, e.Code.ToString(), ctx, null, null, e.Message);
-            throw;
+            var ke = NormalizeIo(e, "mkdir", vp.Relative);
+            Audit("mkdir", vp.Relative, ke.Code.ToString(), ctx);
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
         }
     }
 
@@ -182,11 +200,35 @@ public sealed class VaultMutationService(
                 // link-then-unlink, not rename: rename(2) silently replaces an
                 // existing destination; link(2) cannot. Same inode → no data
                 // copy, mode/mtime ride along, content can't diverge mid-move.
+                BeforeLinkTestHook?.Invoke(source.Absolute);
                 Posix.Link(source.Absolute, destination.Absolute);
-                Posix.FsyncDirectory(destinationDir);
-                AtomicFile.VerifyOnDisk(destination.Absolute, data);
-                File.Delete(source.Absolute);
-                Posix.FsyncDirectory(Path.GetDirectoryName(source.Absolute)!);
+                var sourceUnlinked = false;
+                try
+                {
+                    AfterLinkTestHook?.Invoke(source.Absolute);
+                    Posix.FsyncDirectory(destinationDir);
+                    // Also the freshness check for the read→link window: if an
+                    // external writer (Sync, a human shell — nothing that
+                    // honors our locks) replaced the source before the link,
+                    // the linked inode carries THEIR bytes and this fails —
+                    // the stray link is rolled back below.
+                    AtomicFile.VerifyOnDisk(destination.Absolute, data);
+                    // And the link→unlink window: unlinking must not destroy
+                    // an external replacement that landed after the link.
+                    RequireStillOurBytes(source, data,
+                        "changed during the move — move rolled back, nothing was removed");
+                    File.Delete(source.Absolute);
+                    sourceUnlinked = true;
+                    Posix.FsyncDirectory(Path.GetDirectoryName(source.Absolute)!);
+                }
+                catch when (!sourceUnlinked)
+                {
+                    // The move did not complete and the source still exists
+                    // (possibly as an external writer's replacement): a failed
+                    // operation must leave no new pathname behind.
+                    TryRemoveStrayLink(destination.Absolute, destinationDir);
+                    throw;
+                }
 
                 var gen = generation.Increment();
                 var sha = VaultHash.Sha256Hex(data);
@@ -195,11 +237,14 @@ public sealed class VaultMutationService(
                 return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen);
             }
         }
-        catch (KnapperException e)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
-            Audit("move", source.Relative, e.Code.ToString(), ctx, null, null,
-                $"→ {destination.Relative}: {e.Message}");
-            throw;
+            var ke = NormalizeIo(e, "move", source.Relative);
+            Audit("move", source.Relative, ke.Code.ToString(), ctx, null, null,
+                "→ " + destination.Relative);
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
         }
     }
 
@@ -235,11 +280,32 @@ public sealed class VaultMutationService(
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(trashAbsolute)!);
 
+                var trashDir = Path.GetDirectoryName(trashAbsolute)!;
+                BeforeLinkTestHook?.Invoke(vp.Absolute);
                 Posix.Link(vp.Absolute, trashAbsolute);
-                Posix.FsyncDirectory(Path.GetDirectoryName(trashAbsolute)!);
-                AtomicFile.VerifyOnDisk(trashAbsolute, data);
-                File.Delete(vp.Absolute);
-                Posix.FsyncDirectory(Path.GetDirectoryName(vp.Absolute)!);
+                var sourceUnlinked = false;
+                try
+                {
+                    AfterLinkTestHook?.Invoke(vp.Absolute);
+                    Posix.FsyncDirectory(trashDir);
+                    // Same two-window protection as move: a verify failure
+                    // here means an external writer replaced the file before
+                    // the link (the trash link holds THEIR bytes)...
+                    AtomicFile.VerifyOnDisk(trashAbsolute, data);
+                    // ...and this one means they replaced it after — either
+                    // way the delete is stale and must not remove their write.
+                    RequireStillOurBytes(vp, data,
+                        "changed during the delete — delete rolled back, nothing was removed");
+                    File.Delete(vp.Absolute);
+                    sourceUnlinked = true;
+                    Posix.FsyncDirectory(Path.GetDirectoryName(vp.Absolute)!);
+                }
+                catch when (!sourceUnlinked)
+                {
+                    // Failed delete leaves no new .trash entry behind.
+                    TryRemoveStrayLink(trashAbsolute, trashDir);
+                    throw;
+                }
 
                 var gen = generation.Increment();
                 var sha = VaultHash.Sha256Hex(data);
@@ -247,10 +313,13 @@ public sealed class VaultMutationService(
                 return new DeleteResult(vp.Relative, trashRelative, sha, gen);
             }
         }
-        catch (KnapperException e)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
-            Audit("delete", vp.Relative, e.Code.ToString(), ctx, null, null, e.Message);
-            throw;
+            var ke = NormalizeIo(e, "delete", vp.Relative);
+            Audit("delete", vp.Relative, ke.Code.ToString(), ctx);
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
         }
     }
 
@@ -296,11 +365,12 @@ public sealed class VaultMutationService(
                         _ => throw new KnapperException(VaultErrorCode.InvalidArgument, $"unknown batch kind {item.Kind}"),
                     });
                 }
-                catch (KnapperException e)
+                catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
                 {
-                    Audit("batch-validate", vp.Relative, e.Code.ToString(), ctx, null, null, e.Message);
-                    throw new KnapperException(e.Code,
-                        $"batch item {i} ({vp.Relative}) failed validation — nothing was mutated: {e.Message}", e);
+                    var ke = NormalizeIo(e, "batch-validate", vp.Relative);
+                    Audit("batch-validate", vp.Relative, ke.Code.ToString(), ctx);
+                    throw new KnapperException(ke.Code,
+                        $"batch item {i} ({vp.Relative}) failed validation — nothing was mutated: {ke.Message}", ke);
                 }
             }
 
@@ -328,11 +398,14 @@ public sealed class VaultMutationService(
                         before is null ? null : VaultHash.Sha256Hex(before), sha);
                     results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Applied, sha, null, null));
                 }
-                catch (KnapperException e)
+                catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
                 {
-                    Audit("batch-" + item.Kind.ToString().ToLowerInvariant(), vp.Relative, e.Code.ToString(), ctx,
-                        null, null, e.Message);
-                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, e.Code, e.Message));
+                    // A raw I/O failure mid-apply must NOT abort the MCP call:
+                    // the caller is owed the Applied/Failed/NotAttempted
+                    // receipt for the items that already landed.
+                    var ke = NormalizeIo(e, "batch-apply", vp.Relative);
+                    Audit("batch-" + item.Kind.ToString().ToLowerInvariant(), vp.Relative, ke.Code.ToString(), ctx);
+                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message));
                     failedAt = i;
                 }
             }
@@ -413,15 +486,72 @@ public sealed class VaultMutationService(
                 return new MutationResult(vp.Relative, beforeSha, afterSha, before.Length, after.Length, true, gen);
             }
         }
-        catch (KnapperException e)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             // Rejections are audited too — a stale-write rejection is signal.
-            Audit(op, vp.Relative, e.Code.ToString(), ctx, null, null, e.Message);
-            throw;
+            var ke = NormalizeIo(e, op, vp.Relative);
+            Audit(op, vp.Relative, ke.Code.ToString(), ctx);
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
         }
     }
 
     // ---- helpers -------------------------------------------------------
+
+    /// <summary>
+    /// Nothing above Core should need to catch raw <see cref="IOException"/>
+    /// to know what went wrong: filesystem/OS failures normalize to a typed
+    /// IoError at each operation boundary, so the failure is audited and
+    /// reaches the client with a stable bracketed code instead of aborting
+    /// the MCP call shapeless. OS messages carry paths, never note content.
+    /// </summary>
+    private static KnapperException NormalizeIo(Exception e, string op, string relative) =>
+        e as KnapperException ?? new KnapperException(VaultErrorCode.IoError,
+            $"filesystem failure during {op} on {relative}: {e.Message}", e);
+
+    /// <summary>
+    /// The link→unlink freshness check, by content (house rule: verification
+    /// is by content, never by receipt — and byte-comparing sidesteps
+    /// platform-specific stat interop for inode identity). An irreducible
+    /// window remains between this read and the unlink; it is vastly
+    /// narrower than read→unlink and carries no lost-update risk beyond
+    /// what rename-based moves would have.
+    /// </summary>
+    private static void RequireStillOurBytes(VaultPath vp, byte[] expected, string whatHappened)
+    {
+        bool same;
+        try
+        {
+            same = File.Exists(vp.Absolute) && File.ReadAllBytes(vp.Absolute).AsSpan().SequenceEqual(expected);
+        }
+        catch (IOException)
+        {
+            same = false;
+        }
+        if (!same)
+        {
+            throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                $"{vp.Relative} {whatHappened}; an external writer (Sync or a human) raced this " +
+                "operation — re-read and retry against current content");
+        }
+    }
+
+    /// <summary>
+    /// Best-effort removal of a link created by an operation that then
+    /// failed. Best-effort is acceptable: the primary error still propagates,
+    /// and the same cleanup pattern guards AtomicFile's temp files.
+    /// </summary>
+    private static void TryRemoveStrayLink(string absolutePath, string directory)
+    {
+        try
+        {
+            File.Delete(absolutePath);
+            Posix.FsyncDirectory(directory);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 
     private static byte[] ReadExisting(VaultPath vp)
     {
@@ -503,6 +633,14 @@ public sealed class VaultMutationService(
 
     private static string Snip(string s) => s.Length <= 120 ? s : s[..120] + "…";
 
+    /// <summary>
+    /// The audit log lives OUTSIDE the vault and vault content must never
+    /// reach it (CLAUDE.md invariant). <paramref name="detail"/> therefore
+    /// takes only path/checksum-derived strings — NEVER an exception
+    /// message: anchor and guard failures embed up to 120 chars of note
+    /// text in theirs. The error CODE is the audit signal; the
+    /// content-bearing diagnostics stay on the immediate MCP response.
+    /// </summary>
     private void Audit(
         string op, string relative, string outcome, AuditContext? ctx,
         string? before = null, string? after = null, string? detail = null)

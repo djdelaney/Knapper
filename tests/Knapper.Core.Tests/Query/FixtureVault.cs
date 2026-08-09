@@ -34,6 +34,7 @@ public sealed class FixtureVault : IDisposable
         "fm/b.md",
         "fm/broken.md",
         "fm/none.md",
+        "fm/unterminated.md",
         "latin1/legacy.md",
         "many/needles-0.md",
         "many/needles-1.md",
@@ -54,6 +55,8 @@ public sealed class FixtureVault : IDisposable
         Dir.File("fm/b.md", "---\nstatus: Archived\ntitle: \"B note\"\n---\nbody b\n");
         Dir.File("fm/broken.md", "---\nstatus: [unclosed\n---\nbody broken\n");
         Dir.File("fm/none.md", "no frontmatter here\n");
+        // Opening fence, no closing fence: malformed, must reach UnparseableFiles.
+        Dir.File("fm/unterminated.md", "---\nstatus: hidden\nbody without a closing fence\n");
         Dir.File("scripts/backup.sh", "#!/bin/sh\necho needle backup\n");
         Dir.File("with spaces/nöte – ünïcode.md", "Ünïcode käse\nneedle ünïcode\n");
         // 4 files x 15 matching lines = 60 'needle' matches → multi-page.
@@ -82,7 +85,7 @@ public sealed class FixtureVault : IDisposable
         Options = new VaultOptions { RootPath = Resolver.Root };
         Search = new VaultSearchService(Resolver, Generation, Options);
         Lister = new VaultFileLister(Resolver, Generation, Options);
-        Reader = new VaultReadService(Resolver, Options);
+        Reader = new VaultReadService(Resolver, Options, Generation);
         Frontmatter = new FrontmatterSearchService(Resolver, Lister, Reader, Generation, Options);
     }
 

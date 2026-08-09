@@ -67,10 +67,17 @@ public sealed class FrontmatterSearchService(
             {
                 var bytes = reader.ReadBytesChecked(resolver.Resolve(relative));
                 var (content, _) = VaultReadService.DecodeStrict(bytes, relative);
-                var block = ExtractFrontmatterBlock(content);
-                if (block is null)
+                var (shape, block) = ExtractFrontmatterBlock(content);
+                if (shape == FrontmatterShape.None)
                     continue; // no frontmatter — scanned, honestly no match
-                frontmatter = Yaml.Deserialize<Dictionary<string, object?>>(block);
+                if (shape == FrontmatterShape.Malformed)
+                {
+                    // An unterminated fence could be hiding a match; treating
+                    // it as "no frontmatter" would forge an exhaustive no.
+                    unparseable.Add(relative);
+                    continue;
+                }
+                frontmatter = Yaml.Deserialize<Dictionary<string, object?>>(block!);
             }
             catch (Exception e) when (e is KnapperException or YamlDotNet.Core.YamlException)
             {
@@ -120,23 +127,37 @@ public sealed class FrontmatterSearchService(
         long? CountBehindCursor(string? cursor) => cursor is null ? 0 : null;
     }
 
+    internal enum FrontmatterShape
+    {
+        /// <summary>No opening fence on line 1 — honestly no frontmatter.</summary>
+        None,
+        /// <summary>A fenced block was found; Block carries its YAML.</summary>
+        Present,
+        /// <summary>
+        /// An opening fence with no closing fence. NOT "no frontmatter": the
+        /// file intended frontmatter and it could be hiding a match, so the
+        /// caller must report it in UnparseableFiles — "no match" claims the
+        /// scope was exhaustively searched.
+        /// </summary>
+        Malformed,
+    }
+
     /// <summary>
     /// The YAML between a leading "---" line and the next "---"/"..." line.
-    /// Null when the file has no frontmatter; empty-block files parse to an
-    /// empty map.
+    /// Empty-block files parse to an empty map.
     /// </summary>
-    internal static string? ExtractFrontmatterBlock(string content)
+    internal static (FrontmatterShape Shape, string? Block) ExtractFrontmatterBlock(string content)
     {
         var lines = VaultReadService.SplitLines(content);
         if (lines.Count == 0 || lines[0].TrimEnd('\r') != "---")
-            return null;
+            return (FrontmatterShape.None, null);
         for (var i = 1; i < lines.Count; i++)
         {
             var line = lines[i].TrimEnd('\r');
             if (line is "---" or "...")
-                return string.Join('\n', lines.Skip(1).Take(i - 1));
+                return (FrontmatterShape.Present, string.Join('\n', lines.Skip(1).Take(i - 1)));
         }
-        return null; // unterminated fence = no frontmatter
+        return (FrontmatterShape.Malformed, null);
     }
 
     /// <summary>Scalar → itself; list → each element. Nested maps don't match value ops.</summary>

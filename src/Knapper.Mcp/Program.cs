@@ -30,9 +30,11 @@ builder.Services.AddSingleton(sp =>
     if (string.IsNullOrWhiteSpace(vault.LockDirectory))
         throw new InvalidOperationException("Vault:LockDirectory is not configured.");
     var root = sp.GetRequiredService<VaultPathResolver>().Root;
-    if (Path.GetFullPath(vault.LockDirectory).StartsWith(root + '/', StringComparison.Ordinal))
+    // Canonicalized (realpath) containment: catches equality with the root
+    // and symlinked ancestors, which a lexical prefix check would miss.
+    if (PathContainment.IsInsideOrEqual(vault.LockDirectory, root))
         throw new InvalidOperationException(
-            $"Vault:LockDirectory ('{vault.LockDirectory}') is INSIDE the vault — lock files must never sync.");
+            $"Vault:LockDirectory ('{vault.LockDirectory}') is the vault or INSIDE it — lock files must never sync.");
     return new VaultLockManager(vault.LockDirectory);
 });
 builder.Services.AddSingleton(sp =>
@@ -44,10 +46,10 @@ builder.Services.AddSingleton(sp =>
     if (string.IsNullOrWhiteSpace(vault.AuditLogPath))
         throw new InvalidOperationException("Vault:AuditLogPath is not configured — mutations must be audited.");
     var root = sp.GetRequiredService<VaultPathResolver>().Root;
-    if (Path.GetFullPath(vault.AuditLogPath).StartsWith(root + '/', StringComparison.Ordinal))
+    if (PathContainment.IsInsideOrEqual(vault.AuditLogPath, root))
         throw new InvalidOperationException(
-            $"Vault:AuditLogPath ('{vault.AuditLogPath}') is INSIDE the vault — the audit log must never sync " +
-            "and vault content must never be able to touch it.");
+            $"Vault:AuditLogPath ('{vault.AuditLogPath}') is the vault or INSIDE it — the audit log must never " +
+            "sync and vault content must never be able to touch it.");
     return new AuditLog(vault.AuditLogPath);
 });
 builder.Services.AddSingleton<ISyncGate>(sp =>
@@ -155,9 +157,10 @@ if (resolvedMcpOpts.RestrictHealthToLoopback)
 {
     healthEndpoint.AddEndpointFilter(async (ctx, next) =>
     {
-        var remote = ctx.HttpContext.Connection.RemoteIpAddress;
-        // Null = can't tell. Fail closed; 404 so the endpoint's existence isn't confirmed.
-        return remote is not null && System.Net.IPAddress.IsLoopback(remote)
+        // Loopback peer AND loopback Host — cloudflared delivers internet
+        // requests from 127.0.0.1, so the peer alone proves nothing. 404 so
+        // the endpoint's existence isn't confirmed; fail closed on null peer.
+        return HostGuard.IsLocalRequest(ctx.HttpContext)
             ? await next(ctx).ConfigureAwait(false)
             : Results.NotFound();
     });

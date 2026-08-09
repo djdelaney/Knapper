@@ -29,8 +29,11 @@ public sealed class AccessOptions
     public string MonitoringAudience { get; set; } = "";
 
     /// <summary>
-    /// Exempt loopback callers (health checks, doctor probes on the same box).
-    /// Safe because nothing off-box can originate from the CT's loopback.
+    /// Exempt genuinely local callers (health checks, doctor probes on the
+    /// same box). Local requires BOTH a loopback TCP peer AND a loopback Host
+    /// header: cloudflared proxies every tunneled internet request from
+    /// 127.0.0.1, so the peer alone must never satisfy authorization — a
+    /// tunneled request keeps its public hostname and is validated normally.
     /// </summary>
     public bool AllowLoopback { get; set; } = true;
 

@@ -1,0 +1,11 @@
+# Installs on the PROXMOX HOST (not the CT — a monitor inside the CT dies
+# with the CT). Pairs with knapper-monitor.service.
+[Unit]
+Description=Run the Knapper external monitor every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

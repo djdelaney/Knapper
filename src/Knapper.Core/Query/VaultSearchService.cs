@@ -273,7 +273,10 @@ public sealed class VaultSearchService(
         public int ScannedFiles;
         public int? SummaryScanned;
 
-        private readonly Queue<string> _before = new();
+        // Cached UTF-8 sizes: the budget is MaxOutputBYTES, and .NET string
+        // Length is UTF-16 code units — counting Length lets Unicode-heavy
+        // pages blow past the configured budget.
+        private readonly Queue<(string Text, int Bytes)> _before = new();
         private readonly List<(List<string> Sink, int Remaining)> _afterNeeds = [];
         private long _outputBytes;
         private bool _budgetHit;
@@ -293,10 +296,15 @@ public sealed class VaultSearchService(
                 case "context":
                 {
                     var text = TrimNewline(GetLinesText(root));
+                    var bytes = System.Text.Encoding.UTF8.GetByteCount(text);
                     for (var i = _afterNeeds.Count - 1; i >= 0; i--)
                     {
                         var (sink, remaining) = _afterNeeds[i];
                         sink.Add(text);
+                        // Counted per DELIVERY: only lines that reach an
+                        // emitted match's context are output; a line that
+                        // feeds two matches is emitted twice.
+                        _outputBytes += bytes;
                         if (remaining == 1)
                             _afterNeeds.RemoveAt(i);
                         else
@@ -304,11 +312,11 @@ public sealed class VaultSearchService(
                     }
                     if (query.ContextBefore > 0)
                     {
-                        _before.Enqueue(text);
+                        // Speculative until a match copies it — counted then.
+                        _before.Enqueue((text, bytes));
                         while (_before.Count > query.ContextBefore)
                             _before.Dequeue();
                     }
-                    _outputBytes += text.Length;
                     return true;
                 }
 
@@ -320,12 +328,15 @@ public sealed class VaultSearchService(
                     var path = pathProp.GetString()!;
                     var lineNumber = data.GetProperty("line_number").GetInt32();
                     var text = TrimNewline(GetLinesText(root));
+                    var textBytes = System.Text.Encoding.UTF8.GetByteCount(text);
 
                     foreach (var sub in data.GetProperty("submatches").EnumerateArray())
                     {
                         var column = sub.GetProperty("start").GetInt32() + 1;
                         TotalSeen++;
                         var pos = (path, lineNumber, column);
+                        // Pre-cursor records were emitted on an EARLIER page;
+                        // skipping them must not consume this page's budget.
                         if (plan.CursorPosition is { } cur && QueryCursor.ComparePosition(pos, cur) <= 0)
                             continue;
                         if (Items.Count == plan.PageSize || _budgetHit)
@@ -336,13 +347,16 @@ public sealed class VaultSearchService(
                             after = [];
                             _afterNeeds.Add((after, query.ContextAfter));
                         }
-                        Items.Add(new SearchMatch(
-                            path, lineNumber, column, text,
-                            query.ContextBefore > 0 ? _before.ToArray() : null,
-                            after));
+                        string[]? before = null;
+                        if (query.ContextBefore > 0)
+                        {
+                            before = [.. _before.Select(b => b.Text)];
+                            _outputBytes += _before.Sum(b => b.Bytes); // this match's own copy
+                        }
+                        Items.Add(new SearchMatch(path, lineNumber, column, text, before, after));
+                        _outputBytes += textBytes; // per emitted record — each carries the line
                         LastPosition = pos;
                     }
-                    _outputBytes += text.Length;
                     // Byte budget closes the page at the NEXT match, so a page
                     // always makes progress even when one line exceeds it.
                     if (_outputBytes > OutputBudget && Items.Count > 0)

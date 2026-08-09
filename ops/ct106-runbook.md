@@ -55,10 +55,16 @@ As the knapper user (interactive, needs Dan's Obsidian credentials):
 
 ```sh
 ob login
-ob sync-setup --vault Helios --device-name obsidian-mcp
-ob sync-config --conflict-strategy conflict --file-types image,audio,video,pdf,unsupported
-ob sync-status --json    # verify before proceeding
+ob sync-setup --path /vault --vault Helios --device-name obsidian-mcp
+ob sync-config --path /vault --conflict-strategy conflict --file-types image,audio,video,pdf,unsupported
+ob sync-status --path /vault --json    # verify before proceeding
 ```
+
+Every `ob` command defaults to the **current directory** — pass
+`--path /vault` on all of them, always. Run the verification with the
+service's own user and environment
+(`sudo -u knapper env HOME=/home/knapper ob sync-status --path /vault`),
+not just from an interactive root shell.
 
 - `--conflict-strategy conflict`: conflict FILES, never auto-merge — the
   MCP's conflict gate depends on it.
@@ -94,7 +100,10 @@ sync → mutation blocked; stop knapper → hard failure, no fallback).
 
 1. `cloudflared` via Cloudflare's apt repo; tunnel route
    `mcp.example.com → http://127.0.0.1:3535`. No LAN port, no
-   port-forward.
+   port-forward. **Never set `httpHostHeader` to a loopback name** in the
+   tunnel config: Knapper's local-caller exemption is loopback peer AND
+   loopback Host, and rewriting tunneled requests to `localhost` would
+   dress them up as same-box callers.
 2. Cloudflare Access application for `mcp.example.com`: Managed OAuth
    for claude.ai / Desktop / iOS connectors; a service token for Claude
    Code. Rate-limit rule on the hostname.
@@ -123,15 +132,36 @@ sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper
 
 ## 8. Monitoring (brief §8 — OUTSIDE the CT, on the Proxmox host)
 
-Following the `pbs-backup-freshness.sh` precedent, silent-on-success, alerts
-to `alerts@example.com`:
+The monitor is implemented: `ops/monitor/knapper-monitor.sh` (+ example
+config, host-side service/timer units). Silent on success, mails
+`alerts@example.com` on failure. Install on the HOST:
 
-- `/up` status code via the tunnel (with the monitoring service token) —
-  degrades on: vault unreachable, sync unhealthy, rg missing, audit
-  unwritable, conflict files present.
-- git-commit freshness: last-commit age threshold (a quietly dead commit
-  timer is indistinguishable from "nothing changed" from inside).
-- Exercise EVERY failure path before trusting a monitor.
+```sh
+cp ops/monitor/knapper-monitor.sh /usr/local/sbin/ && chmod +x /usr/local/sbin/knapper-monitor.sh
+cp ops/monitor/knapper-monitor.conf.example /etc/knapper-monitor.conf
+chmod 600 /etc/knapper-monitor.conf      # then fill in the service token
+cp ops/monitor/knapper-monitor.{service,timer} /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now knapper-monitor.timer
+knapper-monitor.sh --test                # MUST land a mail before trusting it
+```
+
+What it checks:
+
+- `/up` status code via the tunnel with the monitoring service token —
+  covers vault unreachable, sync unhealthy, rg missing, audit unwritable,
+  conflict files present, knapper down, tunnel down, Access broken.
+- git-snapshot freshness via `/var/lib/knapper/commit-stamp` (checked with
+  `pct exec`). **Deliberate deviation from the brief's last-commit-age
+  monitoring** (documented per review 2026-08-09): the commit job creates
+  no commit when the vault is quiet, so HEAD age cannot distinguish a
+  quiet vault from a dead timer. The stamp is fsync-touched by every
+  SUCCESSFUL `knapper commit` run — including "nothing to commit" — and is
+  NOT touched by refused/failed runs, so a dead timer, a wedged lock, and
+  a secret-scan refusal loop all go stale and alert.
+
+Exercise EVERY failure path before trusting the monitor: stop knapper,
+stop cloudflared, stop the commit timer, revoke the service token — one
+mail each.
 
 ## 9. Cutover (brief §12.8 — Dan's call, only after §13 passes)
 

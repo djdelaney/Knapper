@@ -129,6 +129,14 @@ format by default.
   Tool names are a client-facing contract; renames are version bumps, not
   refactors. There is no unconditional-write tool in the table and never
   will be.
+- **The Access loopback exemption requires loopback peer AND loopback
+  Host** (`HostGuard.IsLocalRequest` — the one definition, used by both the
+  audience handler and /health's filter). Production is
+  `cloudflared → 127.0.0.1`, so every tunneled internet request arrives
+  from a loopback PEER; a peer-only check silently disables origin
+  validation for the whole public surface (shipped here once, caught in
+  review 2026-08-09; `AccessTopologyTests` pins the topology). Never point
+  the tunnel's `httpHostHeader` at a loopback name.
 - **Startup fail-closed checks live in Program.cs singleton factories** and
   are forced at boot (`GetRequiredService` before Run): missing vault root /
   lock dir / audit path, lock dir or audit path INSIDE the vault — all
@@ -156,7 +164,11 @@ format by default.
   replaces an existing destination; link(2) cannot. Same inode means no data
   copy and no window where content could diverge. Deletes are SOFT — into
   `.trash/` with structure preserved, collisions timestamped, never
-  overwriting an earlier trash copy.
+  overwriting an earlier trash copy. A failure after the link and before
+  the unlink rolls the new link back (a failed operation leaves no new
+  pathname), and the source is re-verified by content immediately before
+  the unlink — an external writer's replacement landing mid-operation must
+  never be silently destroyed (`ExternalWriterRaceTests`).
 - **Batch validates EVERYTHING under the locks before the first write.** A
   bad hash/anchor/guard anywhere fails the whole batch untouched. The apply
   phase is not cross-file atomic (documented; git history is recovery), and
@@ -168,7 +180,9 @@ format by default.
 - **Rejections are audited, not just successes.** A stale-write rejection is
   signal (someone raced, or an agent is retrying a stale base). Audit writes
   are fsynced and live OUTSIDE the vault; vault content must never reach the
-  audit path.
+  audit path — which is why the audit `Detail` field never carries an
+  exception message: anchor/guard failure text IS note content (the error
+  CODE is the audit signal; rich diagnostics stay on the MCP response).
 - **Conflict gate: agents never resolve Sync conflict files.** A
   `* (Conflicted copy ...)*` sibling blocks mutations to both the original
   and the sibling until a human reconciles. The sync gate (`ISyncGate`)

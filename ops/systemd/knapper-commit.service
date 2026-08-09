@@ -12,3 +12,7 @@ ExecStart=/opt/knapper/cli/knapper commit
 Environment=Vault__RootPath=/vault
 Environment=Vault__LockDirectory=/var/lib/knapper/locks
 Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
+# The external monitor's git-freshness signal: touched (fsynced) on every
+# successful run including "nothing to commit" — last-commit age can't tell
+# a quiet vault from a dead timer.
+Environment=Vault__CommitStampPath=/var/lib/knapper/commit-stamp

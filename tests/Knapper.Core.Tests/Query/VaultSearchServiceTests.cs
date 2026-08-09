@@ -225,6 +225,49 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Output_budget_counts_utf8_bytes_and_unicode_pages_recombine()
+    {
+        // The budget is MaxOutputBYTES; .NET string Length is UTF-16 code
+        // units — for this content the byte count is ~2× Length, so
+        // Length-based accounting would let pages carry ~2× the budget.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        var resolver = new Knapper.Core.Vault.VaultPathResolver(dir.Path);
+        var line = "nëëdlë " + new string('ü', 40); // ~94 UTF-8 bytes, Length 47
+        var lineBytes = System.Text.Encoding.UTF8.GetByteCount(line);
+        for (var f = 0; f < 2; f++)
+            dir.File($"u{f}.md", string.Join("", Enumerable.Repeat(line + "\n", 20)));
+
+        const int Budget = 400;
+        var search = new VaultSearchService(resolver, gen,
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = Budget });
+        var query = new VaultSearchQuery { Pattern = "nëëdlë", MaxResults = 200 };
+
+        var all = new List<SearchMatch>();
+        string? cursor = null;
+        var pages = 0;
+        while (true)
+        {
+            var page = search.SearchMatches(query with { Cursor = cursor });
+            page.Items.ShouldNotBeEmpty(); // a budgeted page always makes progress
+            // The budget closes the page at the NEXT match, so one line of
+            // overshoot is legal — more than that means bytes were undercounted.
+            page.Items.Sum(m => System.Text.Encoding.UTF8.GetByteCount(m.Text))
+                .ShouldBeLessThanOrEqualTo(Budget + lineBytes);
+            all.AddRange(page.Items);
+            pages++;
+            pages.ShouldBeLessThan(20);
+            if (!page.Truncated)
+                break;
+            cursor = page.NextCursor.ShouldNotBeNull();
+        }
+
+        pages.ShouldBeGreaterThan(1); // the budget actually truncated
+        all.Count.ShouldBe(40);       // recombined: no duplicates, no omissions
+        all.Select(m => (m.Path, m.Line, m.Column)).Distinct().Count().ShouldBe(40);
+    }
+
+    [Fact]
     public void Missing_ripgrep_binary_is_a_typed_error_with_a_hint()
     {
         var broken = new VaultSearchService(_vault.Resolver, _vault.Generation,

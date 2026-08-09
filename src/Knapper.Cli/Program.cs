@@ -72,7 +72,9 @@ int GitInit()
 int Commit()
 {
     var (resolver, locks) = Open();
-    var outcome = new GitCommitJob(resolver, locks).Commit(TimeSpan.FromMilliseconds(vaultOptions.LockTimeoutMs));
+    var outcome = new GitCommitJob(resolver, locks).Commit(
+        TimeSpan.FromMilliseconds(vaultOptions.LockTimeoutMs),
+        vaultOptions.CommitStampPath);
     Console.WriteLine(outcome.Committed ? $"committed {outcome.CommitSha}: {outcome.Message}" : outcome.Message);
     return 0;
 }
@@ -103,10 +105,10 @@ int Doctor()
         () => !string.IsNullOrWhiteSpace(vaultOptions.RootPath) && Directory.Exists(vaultOptions.RootPath));
     Check("Vault:LockDirectory configured, outside the vault",
         () => !string.IsNullOrWhiteSpace(vaultOptions.LockDirectory)
-              && !Path.GetFullPath(vaultOptions.LockDirectory).StartsWith(Path.GetFullPath(vaultOptions.RootPath) + '/', StringComparison.Ordinal));
+              && !PathContainment.IsInsideOrEqual(vaultOptions.LockDirectory, vaultOptions.RootPath));
     Check("Vault:AuditLogPath configured, outside the vault",
         () => !string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath)
-              && !Path.GetFullPath(vaultOptions.AuditLogPath).StartsWith(Path.GetFullPath(vaultOptions.RootPath) + '/', StringComparison.Ordinal));
+              && !PathContainment.IsInsideOrEqual(vaultOptions.AuditLogPath, vaultOptions.RootPath));
     Check($"ripgrep runs ({vaultOptions.RipgrepPath})", () =>
     {
         var psi = new System.Diagnostics.ProcessStartInfo { FileName = vaultOptions.RipgrepPath, RedirectStandardOutput = true };

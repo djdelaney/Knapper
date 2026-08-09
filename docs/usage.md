@@ -33,6 +33,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `RootPath` | — (required) | Absolute vault path. Startup fails without it. |
 | `LockDirectory` | — (required) | flock lock files. MUST be outside the vault (enforced at startup). |
 | `AuditLogPath` | — (required by Mcp) | Append-only JSONL. MUST be outside the vault (enforced). |
+| `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault. |
 | `RipgrepPath` | `rg` | The search engine binary. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |
@@ -55,7 +56,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
 | `Access:MonitoringAudience` | — | Optional second AUD accepted on `/up` only. |
-| `Access:AllowLoopback` | true | Same-box health checks need no assertion. |
+| `Access:AllowLoopback` | true | Same-box health checks need no assertion. "Same-box" requires a loopback TCP peer AND a loopback Host header — tunneled requests proxied by cloudflared arrive from 127.0.0.1 but keep their public hostname, so they are always validated. |
 
 ### `Sync:*` — the mutation gate
 
@@ -132,6 +133,8 @@ Tool errors are structured MCP errors whose message leads with the code:
 | `QueryTimeout` | Budget elapsed with zero progress — narrow the scope. |
 | `TooLarge` | File exceeds the read cap; never silently truncated. |
 | `IoError` | Filesystem/OS failure (or rg/git missing). |
+| `Internal` | Unexpected server error (a bug, not your request). Details are in the server log, never on the wire. |
+| `QueryCancelled` | The request was cancelled at the transport before completion. |
 
 ## Health & monitoring
 

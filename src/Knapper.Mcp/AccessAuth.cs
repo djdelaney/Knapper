@@ -1,4 +1,3 @@
-using System.Net;
 using Knapper.Core.Options;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -176,7 +175,12 @@ internal sealed class AccessAudienceHandler(
     {
         var access = mcp.Value.Access;
 
-        if (access.AllowLoopback && IsLoopback(http.HttpContext))
+        // Loopback PEER is not enough: cloudflared proxies every tunneled
+        // internet request to this port from 127.0.0.1, so exempting on the
+        // peer alone would silently disable origin validation for the whole
+        // public surface. A genuine same-box caller also asks for a loopback
+        // Host; a tunneled request carries the public hostname.
+        if (access.AllowLoopback && HostGuard.IsLocalRequest(http.HttpContext))
         {
             context.Succeed(requirement);
             return Task.CompletedTask;
@@ -202,12 +206,5 @@ internal sealed class AccessAudienceHandler(
         // Never Fail() — declining is already deny-by-default, and Fail() would
         // veto any future composed policy.
         return Task.CompletedTask;
-    }
-
-    private static bool IsLoopback(HttpContext? context)
-    {
-        var remote = context?.Connection.RemoteIpAddress;
-        // Null = can't tell where it came from. Fail closed.
-        return remote is not null && IPAddress.IsLoopback(remote);
     }
 }

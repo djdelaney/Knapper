@@ -31,8 +31,10 @@ public sealed class VaultBatchReadTool(VaultReadService reader, ToolSupport supp
     [McpServerTool(Name = "vault_batch_read", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
     [Description(
         "Read several files/ranges in one call. Results are per-item: one unreadable file reports its own typed " +
-        "error and never hides the others.")]
-    public IReadOnlyList<VaultBatchReadItem> BatchRead(
+        "error and never hides the others. The envelope carries the batch-wide generation span " +
+        "(changedDuringRead=true means the vault moved mid-batch and items may be mutually inconsistent); " +
+        "each item also carries its own per-file span.")]
+    public VaultBatchReadResult BatchRead(
         [Description("Paths (with optional line ranges) to read")] ReadItem[] items,
         CancellationToken ct = default) =>
         support.Run("vault_batch_read", () => reader.BatchRead(

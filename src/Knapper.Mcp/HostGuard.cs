@@ -20,6 +20,27 @@ public static class HostGuard
     public static bool IsLoopbackBind(string? bindAddress) =>
         IPAddress.TryParse(bindAddress, out var ip) && IPAddress.IsLoopback(ip);
 
+    /// <summary>The Host-header host component names this box, not a public hostname.</summary>
+    public static bool IsLoopbackHost(string? host) =>
+        !string.IsNullOrEmpty(host) && Loopback.Contains(host, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// "Local" for security exemptions means BOTH the TCP peer and the
+    /// requested Host are loopback. The peer alone is not identity:
+    /// production fronts this server with cloudflared on the same box, so
+    /// every tunneled internet request arrives from 127.0.0.1 — what
+    /// distinguishes a genuine same-box caller is that it also ASKED for a
+    /// loopback host. Tunneled requests keep their public hostname (never
+    /// point cloudflared's httpHostHeader at a loopback name — the runbook
+    /// pins this). Null peer = can't tell where it came from; fail closed.
+    /// </summary>
+    public static bool IsLocalRequest(Microsoft.AspNetCore.Http.HttpContext? context)
+    {
+        var remote = context?.Connection.RemoteIpAddress;
+        return remote is not null && IPAddress.IsLoopback(remote)
+            && IsLoopbackHost(context!.Request.Host.Host);
+    }
+
     public static HashSet<string> BuildAllowedHosts(IEnumerable<string>? configured)
     {
         var set = new HashSet<string>(Loopback, StringComparer.OrdinalIgnoreCase);

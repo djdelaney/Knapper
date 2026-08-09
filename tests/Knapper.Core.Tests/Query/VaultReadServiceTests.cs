@@ -94,7 +94,7 @@ public sealed class VaultReadServiceTests : IClassFixture<FixtureVault>
     [Fact]
     public void Oversize_file_is_an_explicit_TooLarge_never_a_truncated_read()
     {
-        var tiny = new VaultReadService(_vault.Resolver, new VaultOptions { MaxReadBytes = 10 });
+        var tiny = new VaultReadService(_vault.Resolver, new VaultOptions { MaxReadBytes = 10 }, _vault.Generation);
         Should.Throw<KnapperException>(() => tiny.Read("Notes/Daily.md"))
             .Code.ShouldBe(VaultErrorCode.TooLarge);
         // Ranged reads don't bypass the cap either.
@@ -113,11 +113,29 @@ public sealed class VaultReadServiceTests : IClassFixture<FixtureVault>
             new VaultReadRequest("empty.md"),
         ]);
 
-        results.Count.ShouldBe(4);
-        results[0].Result.ShouldNotBeNull().Content.ShouldBe("# Daily\nTODO alpha task");
-        results[1].ErrorCode.ShouldBe(VaultErrorCode.NotFound);
-        results[2].ErrorCode.ShouldBe(VaultErrorCode.NotUtf8);
-        results[3].Result.ShouldNotBeNull();
+        results.Items.Count.ShouldBe(4);
+        results.Items[0].Result.ShouldNotBeNull().Content.ShouldBe("# Daily\nTODO alpha task");
+        results.Items[1].ErrorCode.ShouldBe(VaultErrorCode.NotFound);
+        results.Items[2].ErrorCode.ShouldBe(VaultErrorCode.NotUtf8);
+        results.Items[3].Result.ShouldNotBeNull();
+        results.GenerationEnd.ShouldBeGreaterThanOrEqualTo(results.GenerationStart);
+    }
+
+    [Fact]
+    public void Read_and_stat_carry_the_generation_span()
+    {
+        // Freshness signal only — the SHA stays the precondition. The span
+        // must track the live counter, not a constructor-time snapshot.
+        var read = _vault.Reader.Read("Notes/Daily.md");
+        read.GenerationStart.ShouldBe(_vault.Generation.Current);
+        read.GenerationEnd.ShouldBe(read.GenerationStart);
+        read.ChangedDuringRead.ShouldBeFalse();
+
+        _vault.Generation.Increment();
+        var stat = _vault.Reader.Stat("Notes/Daily.md");
+        stat.GenerationStart.ShouldBe(_vault.Generation.Current);
+        stat.GenerationEnd.ShouldBe(_vault.Generation.Current);
+        stat.ChangedDuringRead.ShouldBeFalse();
     }
 
     [Fact]
@@ -148,5 +166,28 @@ public sealed class VaultReadServiceTests : IClassFixture<FixtureVault>
         binary.IsText.ShouldBe(false);
         binary.Encoding.ShouldBe("binary");
         binary.Sha256.ShouldNotBeNull(); // stat still hashes binaries — moves need preconditions too
+    }
+
+    [Fact]
+    public void Stat_streams_the_hash_past_the_read_cap()
+    {
+        // The cap bounds the BODY; the SHA is the mutation precondition and
+        // must exist for files vault_read refuses as TooLarge.
+        var capped = new VaultReadService(_vault.Resolver, new VaultOptions { MaxReadBytes = 10 }, _vault.Generation);
+
+        var text = capped.Stat("Notes/Daily.md");
+        text.Sha256.ShouldBe(_vault.Reader.Stat("Notes/Daily.md").Sha256);
+        text.Encoding.ShouldBe("utf-8");
+        text.IsText.ShouldBe(true);
+        text.TotalLines.ShouldBeNull(); // counting would need a full decode
+
+        var binary = capped.Stat("raw/blob.bin");
+        binary.Sha256.ShouldBe(_vault.Reader.Stat("raw/blob.bin").Sha256);
+        binary.Encoding.ShouldBe("binary");
+        binary.IsText.ShouldBe(false);
+
+        // vault_read keeps its explicit refusal.
+        Should.Throw<KnapperException>(() => capped.Read("Notes/Daily.md"))
+            .Code.ShouldBe(VaultErrorCode.TooLarge);
     }
 }

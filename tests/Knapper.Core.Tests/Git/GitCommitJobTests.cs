@@ -47,6 +47,30 @@ public sealed class GitCommitJobTests : IDisposable
     }
 
     [Fact]
+    public void Success_stamp_is_touched_on_commit_and_on_quiet_runs_but_not_on_refusal()
+    {
+        // The stamp — not last-commit age — is the monitor's freshness
+        // signal: the job deliberately skips empty commits, so HEAD age
+        // can't distinguish a quiet vault from a dead timer.
+        var stamp = Path.Combine(_v.Outside.Path, "commit-stamp");
+        _job.Init();
+        _v.Write("Notes/a.md", "content\n");
+
+        _job.Commit(Ample, stamp).Committed.ShouldBeTrue();
+        File.Exists(stamp).ShouldBeTrue();
+
+        File.Delete(stamp);
+        _job.Commit(Ample, stamp).Committed.ShouldBeFalse(); // quiet run...
+        File.Exists(stamp).ShouldBeTrue();                   // ...still stamps
+
+        File.Delete(stamp);
+        _v.Write("Notes/oops.md", "my key is AKIAIOSFODNN7EXAMPLE\n");
+        Should.Throw<KnapperException>(() => _job.Commit(Ample, stamp))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        File.Exists(stamp).ShouldBeFalse("a refused run must NOT stamp — the monitor exists to notice it");
+    }
+
+    [Fact]
     public void Commit_without_a_repo_is_a_typed_refusal_naming_the_remedy()
     {
         var ex = Should.Throw<KnapperException>(() => _job.Commit(Ample));

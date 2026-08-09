@@ -47,8 +47,15 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// commit. Returns without committing when nothing changed. Throws
     /// <see cref="VaultErrorCode.MutationBlocked"/> with the findings when
     /// the secret scan trips — the vault must not accept new secrets.
+    /// When <paramref name="successStampPath"/> is set, EVERY successful run
+    /// (including "nothing to commit") durably touches that stamp: it is the
+    /// external monitor's freshness signal, because last-commit age cannot
+    /// distinguish a quiet vault from a dead timer — this job deliberately
+    /// creates no commit when nothing changed. A failed run (refused commit,
+    /// I/O error) writes no stamp, so the stamp goes stale and the monitor
+    /// fires.
     /// </summary>
-    public CommitOutcome Commit(TimeSpan lockTimeout)
+    public CommitOutcome Commit(TimeSpan lockTimeout, string? successStampPath = null)
     {
         if (!RepoExists)
         {
@@ -62,7 +69,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
             var staged = Run("diff", "--cached", "--name-only").Trim();
             if (staged.Length == 0)
-                return new CommitOutcome(false, null, "nothing to commit");
+                return Stamped(new CommitOutcome(false, null, "nothing to commit"), successStampPath);
 
             var findings = ScanStaged(staged.Split('\n'));
             if (findings.Count > 0)
@@ -79,8 +86,28 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
             var message = $"knapper snapshot {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}Z";
             Run("commit", "-m", message);
             var sha = Run("rev-parse", "HEAD").Trim();
-            return new CommitOutcome(true, sha, message);
+            return Stamped(new CommitOutcome(true, sha, message), successStampPath);
         }
+    }
+
+    private static CommitOutcome Stamped(CommitOutcome outcome, string? stampPath)
+    {
+        if (string.IsNullOrWhiteSpace(stampPath))
+            return outcome;
+        // Durable (fsynced): a stamp that evaporates on power loss would
+        // false-alarm the monitor after every crash-and-recover.
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(stampPath))!);
+        using var stream = new FileStream(stampPath, new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.Read,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+        stream.Write(Encoding.UTF8.GetBytes(
+            $"{DateTimeOffset.UtcNow:O} {(outcome.Committed ? outcome.CommitSha : "nothing-to-commit")}\n"));
+        stream.Flush(flushToDisk: true);
+        return outcome;
     }
 
     /// <summary>Age of HEAD in seconds, or null when there is no commit yet — for the freshness monitor.</summary>

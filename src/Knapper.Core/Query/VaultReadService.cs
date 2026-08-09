@@ -1,4 +1,5 @@
 using System.Text;
+using Knapper.Core.Generation;
 using Knapper.Core.Options;
 using Knapper.Core.Vault;
 
@@ -13,13 +14,15 @@ namespace Knapper.Core.Query;
 /// (a UTF-8 BOM is recognized and stripped from content, reported as
 /// encoding "utf-8-bom"); anything else is typed NotUtf8.
 /// </summary>
-public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions options)
+public sealed class VaultReadService(
+    VaultPathResolver resolver, VaultOptions options, VaultGenerationCounter generation)
 {
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
 
     public VaultReadResult Read(string path, int? startLine = null, int? endLine = null)
     {
+        var generationStart = generation.Current;
         var vp = resolver.Resolve(path);
         var bytes = ReadBytesChecked(vp);
         var (content, encoding) = DecodeStrict(bytes, vp.Relative);
@@ -44,6 +47,7 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
         }
 
         var info = new FileInfo(vp.Absolute);
+        var generationEnd = generation.Current;
         return new VaultReadResult(
             vp.Relative,
             content,
@@ -53,14 +57,17 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
             encoding,
             lines.Count,
             rangeStart,
-            rangeEnd);
+            rangeEnd,
+            generationStart,
+            generationEnd,
+            generationEnd != generationStart);
     }
 
     /// <summary>
     /// Per-path results; one bad file never hides the others' (brief §6).
     /// Only a malformed request as a whole (too many items) fails outright.
     /// </summary>
-    public IReadOnlyList<VaultBatchReadItem> BatchRead(
+    public VaultBatchReadResult BatchRead(
         IReadOnlyList<VaultReadRequest> requests, CancellationToken ct = default)
     {
         if (requests.Count == 0)
@@ -70,6 +77,7 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
             throw new KnapperException(VaultErrorCode.InvalidArgument,
                 $"batch has {requests.Count} items; the cap is {options.MaxBatchItems} — split the request");
         }
+        var generationStart = generation.Current;
         var results = new List<VaultBatchReadItem>(requests.Count);
         foreach (var request in requests)
         {
@@ -84,27 +92,36 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
                 results.Add(new VaultBatchReadItem(request.Path, null, e.Code, e.Message));
             }
         }
-        return results;
+        var generationEnd = generation.Current;
+        return new VaultBatchReadResult(results, generationStart, generationEnd, generationEnd != generationStart);
     }
 
     public VaultStatResult Stat(string path)
     {
+        var generationStart = generation.Current;
         var vp = resolver.Resolve(path);
         if (Directory.Exists(vp.Absolute))
         {
             var dirInfo = new DirectoryInfo(vp.Absolute);
-            return new VaultStatResult(vp.Relative, true, true, null,
-                new DateTimeOffset(dirInfo.LastWriteTimeUtc, TimeSpan.Zero), null, null, null, null);
+            return Finish(new VaultStatResult(vp.Relative, true, true, null,
+                new DateTimeOffset(dirInfo.LastWriteTimeUtc, TimeSpan.Zero), null, null, null, null, 0, 0, false));
         }
         if (!File.Exists(vp.Absolute))
-            return new VaultStatResult(vp.Relative, false, false, null, null, null, null, null, null);
+            return Finish(new VaultStatResult(vp.Relative, false, false, null, null, null, null, null, null, 0, 0, false));
 
         var info = new FileInfo(vp.Absolute);
         var mtime = new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero);
         if (info.Length > options.MaxReadBytes)
         {
-            // Hash/text status would require reading past the cap: explicit nulls.
-            return new VaultStatResult(vp.Relative, true, false, info.Length, mtime, null, null, null, null);
+            // The cap bounds the BODY, never the hash: the SHA is the
+            // precondition currency for move/soft-delete, and a stat that
+            // omitted it would strand every large synced attachment.
+            // Text/encoding detection is bounded to a prefix; totalLines
+            // stays null (it would require a full decode).
+            var (largeEncoding, largeIsText) = DetectTextBounded(vp.Absolute);
+            return Finish(new VaultStatResult(
+                vp.Relative, true, false, info.Length, mtime,
+                largeEncoding, largeIsText, VaultHash.Sha256HexOfFile(vp.Absolute), null, 0, 0, false));
         }
         var bytes = File.ReadAllBytes(vp.Absolute);
         string? encoding;
@@ -122,9 +139,21 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
             encoding = "binary";
             isText = false;
         }
-        return new VaultStatResult(
+        return Finish(new VaultStatResult(
             vp.Relative, true, false, bytes.Length, mtime,
-            encoding, isText, VaultHash.Sha256Hex(bytes), totalLines);
+            encoding, isText, VaultHash.Sha256Hex(bytes), totalLines, 0, 0, false));
+
+        // One exit point stamps the span so no return path can forget it.
+        VaultStatResult Finish(VaultStatResult r)
+        {
+            var generationEnd = generation.Current;
+            return r with
+            {
+                GenerationStart = generationStart,
+                GenerationEnd = generationEnd,
+                ChangedDuringRead = generationEnd != generationStart,
+            };
+        }
     }
 
     // ---- shared helpers (frontmatter search reuses these) --------------
@@ -143,6 +172,42 @@ public sealed class VaultReadService(VaultPathResolver resolver, VaultOptions op
                 "This vault's notes should never approach the cap — if this file is legitimate, raise Vault:MaxReadBytes.");
         }
         return File.ReadAllBytes(vp.Absolute);
+    }
+
+    /// <summary>
+    /// Bounded text/encoding detection for files past the read cap: strict
+    /// UTF-8 validation of the first 64 KiB only (a later invalid byte goes
+    /// undetected — documented bound, the alternative is an uncapped read).
+    /// A multi-byte sequence the cut may have truncated is trimmed before
+    /// validating so a clean boundary can't misread as binary.
+    /// </summary>
+    private static (string Encoding, bool IsText) DetectTextBounded(string absolutePath)
+    {
+        const int PrefixBytes = 64 * 1024;
+        using var stream = File.OpenRead(absolutePath);
+        var buffer = new byte[PrefixBytes];
+        var read = stream.ReadAtLeast(buffer, PrefixBytes, throwOnEndOfStream: false);
+        var hasBom = read >= 3 && buffer.AsSpan(0, 3).SequenceEqual(Utf8Bom);
+
+        var end = read;
+        for (var back = 0; back < 4 && end > 0; back++)
+        {
+            var b = buffer[end - 1];
+            if (b < 0x80)
+                break; // ASCII tail — nothing dangling
+            end--;
+            if (b >= 0xC0)
+                break; // removed the dangling sequence's lead byte
+        }
+        try
+        {
+            _ = StrictUtf8.GetString(buffer.AsSpan(hasBom ? 3 : 0, end - (hasBom ? 3 : 0)));
+            return (hasBom ? "utf-8-bom" : "utf-8", true);
+        }
+        catch (DecoderFallbackException)
+        {
+            return ("binary", false);
+        }
     }
 
     internal static (string Content, string Encoding) DecodeStrict(byte[] bytes, string relativeForError)

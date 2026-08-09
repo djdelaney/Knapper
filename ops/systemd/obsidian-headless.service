@@ -1,7 +1,8 @@
 # Official Obsidian CLI running continuous Sync against /vault (brief §5).
 # The upstream npm package ships NO unit — this is the hand-written one.
-# Prereq (interactive, once): ob login; ob sync-setup --vault Helios
-#   --device-name obsidian-mcp; ob sync-config --conflict-strategy conflict
+# Prereq (interactive, once): ob login; ob sync-setup --path /vault
+#   --vault Helios --device-name obsidian-mcp; ob sync-config --path /vault
+#   --conflict-strategy conflict
 #   --file-types image,audio,video,pdf,unsupported   (BOTH flags load-bearing — brief §5)
 [Unit]
 Description=Obsidian headless continuous sync (Helios)
@@ -12,7 +13,12 @@ Wants=network-online.target
 Type=simple
 User=knapper
 Group=knapper
-ExecStart=/usr/bin/ob sync --continuous
+# ob commands default to the CURRENT DIRECTORY; a system service does not
+# start in /vault, so both the WorkingDirectory and the explicit --path are
+# load-bearing — belt and suspenders against sync silently running against
+# the wrong directory.
+WorkingDirectory=/vault
+ExecStart=/usr/bin/ob sync --continuous --path /vault
 Restart=on-failure
 RestartSec=10
 

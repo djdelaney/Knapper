@@ -17,9 +17,12 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
 
     public McpSurfaceTests(KnapperMcpFactory factory) => _factory = factory;
 
-    internal static async Task<McpClient> ConnectAsync(WebApplicationFactory<Program> factory)
+    internal static Task<McpClient> ConnectAsync(WebApplicationFactory<Program> factory) =>
+        ConnectAsync(factory, factory.CreateClient());
+
+    /// <summary>Overload for callers that pre-configure the HttpClient (Host header, Access assertion).</summary>
+    internal static async Task<McpClient> ConnectAsync(WebApplicationFactory<Program> factory, HttpClient http)
     {
-        var http = factory.CreateClient();
         var transport = new HttpClientTransport(
             new HttpClientTransportOptions { Endpoint = new Uri(http.BaseAddress!, "/") }, http);
         return await McpClient.CreateAsync(transport);

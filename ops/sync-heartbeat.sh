@@ -10,9 +10,12 @@
 # mutations proceeding on a dead sync.
 set -eu
 
-HEARTBEAT="${1:?usage: sync-heartbeat.sh <heartbeat-file>}"
+HEARTBEAT="${1:?usage: sync-heartbeat.sh <heartbeat-file> [vault-path]}"
+# ob defaults to the CURRENT directory — always name the vault explicitly,
+# or a probe run from the wrong cwd reports on the wrong (or no) vault.
+VAULT_PATH="${2:-/vault}"
 
 systemctl is-active --quiet obsidian-headless.service || exit 0
-ob sync-status >/dev/null 2>&1 || exit 0
+ob sync-status --path "$VAULT_PATH" >/dev/null 2>&1 || exit 0
 
 touch "$HEARTBEAT"

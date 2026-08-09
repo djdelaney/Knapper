@@ -41,6 +41,22 @@ public sealed class ToolSupport(
             // wire message keeps the same [Code] shape agents parse.
             throw new McpException("[QueryCancelled] the request was cancelled before completion");
         }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Query-layer filesystem failures don't pass through Core's
+            // mutation-boundary normalization — map them here so every
+            // MCP-visible failure leads with a stable bracketed code.
+            Log(tool, VaultErrorCode.IoError.ToString(), started);
+            throw new McpException($"[{VaultErrorCode.IoError}] filesystem failure: {e.Message}");
+        }
+        catch (Exception e) when (e is not McpException)
+        {
+            // A bug, not an environment failure — clients still get the
+            // stable [Code] shape; the details go to the server log only.
+            Log(tool, "internal", started);
+            logger.LogError(e, "tool {Tool} failed unexpectedly", tool);
+            throw new McpException("[Internal] unexpected server error — see server logs");
+        }
     }
 
     /// <summary>

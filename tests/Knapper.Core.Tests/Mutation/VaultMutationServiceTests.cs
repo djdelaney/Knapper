@@ -294,6 +294,70 @@ public sealed class VaultMutationServiceTests : IDisposable
         _v.ReadText("a.md").ShouldBe("alpha\n");
     }
 
+    [Fact]
+    public void A_raw_io_failure_mid_batch_preserves_the_partial_receipt()
+    {
+        // Validation sees an existing writable-looking parent; the apply
+        // phase then hits EACCES creating the temp file — a RAW
+        // filesystem exception, not a KnapperException. The caller is owed
+        // the Applied/Failed/NotAttempted receipt, not an aborted call.
+        _v.Service.CreateDirectory("locked");
+        var lockedDir = Path.Combine(_v.VaultDir.Path, "locked");
+        File.SetUnixFileMode(lockedDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var result = _v.Service.Batch(
+            [
+                new BatchItem(BatchItemKind.Create, "first.md", Text: "one\n"),
+                new BatchItem(BatchItemKind.Create, "locked/second.md", Text: "two\n"),
+                new BatchItem(BatchItemKind.Create, "third.md", Text: "three\n"),
+            ]);
+
+            result.AllApplied.ShouldBeFalse();
+            result.Items[0].Status.ShouldBe(BatchItemStatus.Applied);
+            result.Items[1].Status.ShouldBe(BatchItemStatus.Failed);
+            result.Items[1].ErrorCode.ShouldBe(VaultErrorCode.IoError);
+            result.Items[2].Status.ShouldBe(BatchItemStatus.NotAttempted);
+
+            _v.ReadText("first.md").ShouldBe("one\n");
+            File.Exists(Path.Combine(_v.VaultDir.Path, "third.md")).ShouldBeFalse();
+            _v.AuditLines().ShouldContain(l => l.Contains("\"IoError\""));
+        }
+        finally
+        {
+            File.SetUnixFileMode(lockedDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public void Audit_never_records_anchor_or_guard_text()
+    {
+        // Anchors and guards are copies of note content (the agent read them
+        // out of the file), and the audit log lives OUTSIDE the vault: a
+        // rejection's audit entry must carry the CODE, never the text.
+        const string anchorSentinel = "ANCHOR-SENTINEL-77c2e91b";
+        const string guardSentinel = "GUARD-SENTINEL-8f3ad04c";
+        var sha = _v.Write("private.md", $"medical detail {anchorSentinel}\n");
+
+        Should.Throw<KnapperException>(() => _v.Service.Edit("private.md", sha,
+            [new EditSpec(anchorSentinel, "x", Count: 3)]))
+            .Code.ShouldBe(VaultErrorCode.AnchorMismatch);
+        Should.Throw<KnapperException>(() => _v.Service.Edit("private.md", sha,
+            [new EditSpec("medical", "x")], guards: [guardSentinel]))
+            .Code.ShouldBe(VaultErrorCode.GuardViolation);
+        Should.Throw<KnapperException>(() => _v.Service.Batch(
+            [new BatchItem(BatchItemKind.Edit, "private.md", sha, [new EditSpec(anchorSentinel, "x", Count: 3)])]))
+            .Code.ShouldBe(VaultErrorCode.AnchorMismatch);
+
+        var audit = string.Join("\n", _v.AuditLines());
+        audit.ShouldContain("AnchorMismatch"); // rejections ARE audited...
+        audit.ShouldContain("GuardViolation");
+        audit.ShouldNotContain(anchorSentinel); // ...but their text never is
+        audit.ShouldNotContain(guardSentinel);
+        audit.ShouldNotContain("medical");
+    }
+
     // ---- audit ---------------------------------------------------------
 
     [Fact]
