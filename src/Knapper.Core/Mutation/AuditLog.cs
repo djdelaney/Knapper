@@ -20,13 +20,15 @@ public sealed class AuditLog
 
     private readonly string _path;
     private readonly Lock _writeLock = new();
+    private readonly KnapperMetrics? _metrics;
 
-    public AuditLog(string path)
+    public AuditLog(string path, KnapperMetrics? metrics = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new KnapperException(VaultErrorCode.IoError, "audit log path is not configured");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _path = path;
+        _metrics = metrics;
     }
 
     public sealed record Entry(
@@ -40,21 +42,40 @@ public sealed class AuditLog
         string? AfterSha256 = null,
         string? Detail = null);
 
+    /// <summary>
+    /// Test seam: runs inside Append before the write so a test can fail the
+    /// sink deterministically for chosen entries (e.g. only post-write "ok"
+    /// records). Never set outside tests.
+    /// </summary>
+    internal Action<Entry>? BeforeAppendTestHook;
+
     public void Append(Entry entry)
     {
         var line = JsonSerializer.Serialize(entry, JsonOptions) + "\n";
         var bytes = Encoding.UTF8.GetBytes(line);
-        lock (_writeLock)
+        try
         {
-            using var stream = new FileStream(_path, new FileStreamOptions
+            BeforeAppendTestHook?.Invoke(entry);
+            lock (_writeLock)
             {
-                Mode = FileMode.Append,
-                Access = FileAccess.Write,
-                Share = FileShare.Read,
-                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-            });
-            stream.Write(bytes);
-            stream.Flush(flushToDisk: true);
+                using var stream = new FileStream(_path, new FileStreamOptions
+                {
+                    Mode = FileMode.Append,
+                    Access = FileAccess.Write,
+                    Share = FileShare.Read,
+                    UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                });
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Counted at the SINK so every caller's failure reaches the
+            // monitor's durable audit-failure signal (brief §8) — the metrics
+            // file lives on a different path than the failing audit log.
+            _metrics?.RecordAuditAppendFailure();
+            throw;
         }
     }
 }

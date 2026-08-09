@@ -44,7 +44,17 @@ public sealed class VaultOptions
     /// Durably touched by `knapper commit` on every SUCCESSFUL run,
     /// including "nothing to commit" — the external monitor's git-freshness
     /// signal (last-commit age can't tell a quiet vault from a dead timer).
-    /// Empty = no stamp. Outside the vault, like every operational file.
+    /// Empty = no stamp. Outside the vault, like every operational file
+    /// (enforced by the commit job and `knapper doctor`).
     /// </summary>
     public string CommitStampPath { get; set; } = "";
+
+    /// <summary>
+    /// The bounded metrics snapshot the external monitor reads (brief §8:
+    /// query timeout/error/truncation rates, generation-changed responses,
+    /// stale-write rejections, audit-append failures). Empty = counters stay
+    /// in memory only. Outside the vault, like every operational file
+    /// (enforced at startup).
+    /// </summary>
+    public string MetricsPath { get; set; } = "";
 }

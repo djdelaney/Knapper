@@ -71,6 +71,28 @@ public sealed class GitCommitJobTests : IDisposable
     }
 
     [Fact]
+    public void An_in_vault_stamp_path_is_refused_before_any_stamp_is_written()
+    {
+        _job.Init();
+        _v.Write("Notes/a.md", "content\n");
+
+        // Inside the vault: would sync, and each quiet run would dirty the
+        // tree for the next — a self-sustaining commit loop.
+        var inVault = Path.Combine(_v.VaultDir.Path, "stamp");
+        Should.Throw<KnapperException>(() => _job.Commit(Ample, inVault))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        File.Exists(inVault).ShouldBeFalse();
+
+        // Equality and a symlinked ancestor are the same violation.
+        Should.Throw<KnapperException>(() => _job.Commit(Ample, _v.VaultDir.Path))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        var link = Path.Combine(_v.Outside.Path, "sneaky");
+        File.CreateSymbolicLink(link, _v.VaultDir.Path);
+        Should.Throw<KnapperException>(() => _job.Commit(Ample, Path.Combine(link, "stamp")))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+    }
+
+    [Fact]
     public void Commit_without_a_repo_is_a_typed_refusal_naming_the_remedy()
     {
         var ex = Should.Throw<KnapperException>(() => _job.Commit(Ample));

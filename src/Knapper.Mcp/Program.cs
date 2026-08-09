@@ -1,4 +1,5 @@
 using System.Reflection;
+using Knapper.Core;
 using Knapper.Core.Generation;
 using Knapper.Core.Locking;
 using Knapper.Core.Mutation;
@@ -43,6 +44,15 @@ builder.Services.AddSingleton(sp => new ConflictDetector(sp.GetRequiredService<V
 builder.Services.AddSingleton(sp =>
 {
     var vault = sp.GetRequiredService<IOptions<VaultOptions>>().Value;
+    var root = sp.GetRequiredService<VaultPathResolver>().Root;
+    if (!string.IsNullOrWhiteSpace(vault.MetricsPath) && PathContainment.IsInsideOrEqual(vault.MetricsPath, root))
+        throw new InvalidOperationException(
+            $"Vault:MetricsPath ('{vault.MetricsPath}') is the vault or INSIDE it — operational files must never sync.");
+    return new KnapperMetrics(vault.MetricsPath);
+});
+builder.Services.AddSingleton(sp =>
+{
+    var vault = sp.GetRequiredService<IOptions<VaultOptions>>().Value;
     if (string.IsNullOrWhiteSpace(vault.AuditLogPath))
         throw new InvalidOperationException("Vault:AuditLogPath is not configured — mutations must be audited.");
     var root = sp.GetRequiredService<VaultPathResolver>().Root;
@@ -50,7 +60,7 @@ builder.Services.AddSingleton(sp =>
         throw new InvalidOperationException(
             $"Vault:AuditLogPath ('{vault.AuditLogPath}') is the vault or INSIDE it — the audit log must never " +
             "sync and vault content must never be able to touch it.");
-    return new AuditLog(vault.AuditLogPath);
+    return new AuditLog(vault.AuditLogPath, sp.GetRequiredService<KnapperMetrics>());
 });
 builder.Services.AddSingleton<ISyncGate>(sp =>
 {
@@ -107,6 +117,7 @@ var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogg
 // audit path must refuse startup, not surface on the first tool call.
 _ = app.Services.GetRequiredService<VaultPathResolver>();
 _ = app.Services.GetRequiredService<VaultLockManager>();
+_ = app.Services.GetRequiredService<KnapperMetrics>();
 _ = app.Services.GetRequiredService<AuditLog>();
 _ = app.Services.GetRequiredService<VaultMutationService>();
 

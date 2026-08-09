@@ -16,10 +16,11 @@ namespace Knapper.Mcp.Tests;
 /// </summary>
 public class ToolSupportTests
 {
-    private static ToolSupport NewSupport() => new(
+    private static ToolSupport NewSupport(KnapperMetrics? metrics = null) => new(
         new HttpContextAccessor(),
         Options.Create(new McpOptions { LogToolCalls = false }),
-        NullLogger<ToolSupport>.Instance);
+        NullLogger<ToolSupport>.Instance,
+        metrics ?? new KnapperMetrics());
 
     [Fact]
     public void Knapper_exceptions_lead_with_their_code()
@@ -56,5 +57,35 @@ public class ToolSupportTests
         var ex = Should.Throw<McpException>(() => NewSupport().Run<int>("t",
             () => throw new OperationCanceledException()));
         ex.Message.ShouldStartWith("[QueryCancelled]");
+    }
+
+    [Fact]
+    public void Every_outcome_feeds_the_metrics_surface()
+    {
+        // The monitor's rate signals (brief §8) hang off these counters —
+        // and they must record regardless of the LogToolCalls toggle
+        // (NewSupport runs with logging off).
+        using var metrics = new KnapperMetrics();
+        var support = NewSupport(metrics);
+
+        support.Run("t", () => 1); // plain ok
+        Should.Throw<McpException>(() => support.Run<int>("t",
+            () => throw new KnapperException(VaultErrorCode.QueryTimeout, "slow")));
+        Should.Throw<McpException>(() => support.Run<int>("t",
+            () => throw new KnapperException(VaultErrorCode.PreconditionFailed, "stale")));
+        Should.Throw<McpException>(() => support.Run<int>("t",
+            () => throw new IOException("disk")));
+        // A truncated, generation-changed envelope on a successful call.
+        support.Run("t", () => new Knapper.Core.Query.QueryEnvelope<int>(
+            [1], Truncated: true, null, 1, 1, null, 1, 2, ChangedDuringQuery: true));
+
+        var snapshot = metrics.Read();
+        snapshot.ToolCalls.ShouldBe(5);
+        snapshot.ToolErrors.ShouldBe(3);
+        snapshot.QueryTimeouts.ShouldBe(1);
+        snapshot.StaleRejections.ShouldBe(1);
+        snapshot.IoErrors.ShouldBe(1);
+        snapshot.TruncatedResponses.ShouldBe(1);
+        snapshot.GenerationChangedResponses.ShouldBe(1);
     }
 }

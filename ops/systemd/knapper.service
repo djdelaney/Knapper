@@ -18,6 +18,8 @@ RestartSec=5
 Environment=Vault__RootPath=/vault
 Environment=Vault__LockDirectory=/var/lib/knapper/locks
 Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
+# Bounded counters snapshot the external monitor reads (rates as deltas).
+Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
 Environment=Sync__Mode=heartbeat
 Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 Environment=Mcp__BindAddress=127.0.0.1

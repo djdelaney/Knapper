@@ -268,6 +268,53 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Trailing_after_context_crossing_the_budget_at_eof_is_still_a_complete_result()
+    {
+        // After-context alone crosses the limit and nothing follows: the
+        // scope WAS exhaustively searched, so the result must be complete
+        // (not truncated) — merely at its bounded one-record overshoot.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        var filler = new string('x', 120);
+        dir.File("only.md", $"needle omega\n{filler}\n{filler}\n{filler}\n");
+
+        var search = new VaultSearchService(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 });
+        var page = search.SearchMatches(new VaultSearchQuery { Pattern = "needle", ContextAfter = 3 });
+
+        page.Truncated.ShouldBeFalse();
+        page.NextCursor.ShouldBeNull();
+        var match = page.Items.ShouldHaveSingleItem();
+        match.ContextAfter.ShouldNotBeNull().Count.ShouldBe(3); // context is delivered, not dropped
+    }
+
+    [Fact]
+    public void After_context_crossing_the_budget_closes_the_page_at_the_next_match()
+    {
+        // The budget is noticed on the context DELIVERY, so the next match
+        // closes the page instead of being admitted first — and the pages
+        // recombine losslessly from the cursor.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        var filler = new string('x', 120);
+        dir.File("two.md", $"needle alpha\n{filler}\n{filler}\n{filler}\nquiet\nneedle beta\ntail\n");
+
+        var search = new VaultSearchService(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 });
+        var query = new VaultSearchQuery { Pattern = "needle", ContextAfter = 3 };
+
+        var first = search.SearchMatches(query);
+        first.Items.ShouldHaveSingleItem().Text.ShouldBe("needle alpha");
+        first.Truncated.ShouldBeTrue();
+
+        var second = search.SearchMatches(query with { Cursor = first.NextCursor.ShouldNotBeNull() });
+        second.Items.Select(m => m.Text).ShouldBe(["needle beta"]);
+        second.Truncated.ShouldBeFalse();
+    }
+
+    [Fact]
     public void Missing_ripgrep_binary_is_a_typed_error_with_a_hint()
     {
         var broken = new VaultSearchService(_vault.Resolver, _vault.Generation,

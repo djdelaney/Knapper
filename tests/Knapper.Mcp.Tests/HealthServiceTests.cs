@@ -113,6 +113,22 @@ public sealed class HealthServiceTests : IDisposable
         Directory.EnumerateFiles(auditDir).ShouldBeEmpty(); // probe cleaned, audit untouched
     }
 
+    [Fact]
+    public void Concurrent_health_checks_never_fail_each_others_audit_probe()
+    {
+        // /health and /up can run at the same time; a shared probe filename
+        // opened FileShare.None let one request 503 the other. Hammer it.
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var auditDir = Path.Combine(_outsideDir, "audit");
+        var health = NewService(rg, auditDir);
+
+        var reports = new HealthService.Report[64];
+        Parallel.For(0, reports.Length, i => reports[i] = health.Check());
+
+        reports.ShouldAllBe(r => r.Audit.Writable, "no probe may see another probe as a sharing violation");
+        Directory.EnumerateFiles(auditDir).ShouldBeEmpty();
+    }
+
     private static void RestoreWritable(string dir)
     {
         if (!Directory.Exists(dir))

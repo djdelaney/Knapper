@@ -8,6 +8,17 @@ namespace Knapper.Core.Query;
 /// full match count across ALL pages when known, and explicitly null when
 /// not — never guessed.
 /// </summary>
+/// <summary>
+/// Completeness/freshness bits every query/read result exposes uniformly so
+/// the MCP layer can feed the metrics surface (brief §8: truncation and
+/// generation-changed rates) without knowing each concrete result shape.
+/// </summary>
+public interface IFreshnessSignals
+{
+    bool WasTruncated { get; }
+    bool MovedDuringQuery { get; }
+}
+
 public sealed record QueryEnvelope<T>(
     IReadOnlyList<T> Items,
     bool Truncated,
@@ -17,7 +28,11 @@ public sealed record QueryEnvelope<T>(
     long? TotalMatches,
     long GenerationStart,
     long GenerationEnd,
-    bool ChangedDuringQuery);
+    bool ChangedDuringQuery) : IFreshnessSignals
+{
+    bool IFreshnessSignals.WasTruncated => Truncated;
+    bool IFreshnessSignals.MovedDuringQuery => ChangedDuringQuery;
+}
 
 public enum CaseMode
 {
@@ -126,7 +141,11 @@ public sealed record VaultReadResult(
     /// <summary>Freshness signal only (brief §6) — the SHA remains the mutation precondition.</summary>
     long GenerationStart,
     long GenerationEnd,
-    bool ChangedDuringRead);
+    bool ChangedDuringRead) : IFreshnessSignals
+{
+    bool IFreshnessSignals.WasTruncated => false; // reads are never truncated — TooLarge is a typed refusal
+    bool IFreshnessSignals.MovedDuringQuery => ChangedDuringRead;
+}
 
 public sealed record VaultBatchReadItem(
     string Path,
@@ -144,7 +163,11 @@ public sealed record VaultBatchReadResult(
     IReadOnlyList<VaultBatchReadItem> Items,
     long GenerationStart,
     long GenerationEnd,
-    bool ChangedDuringRead);
+    bool ChangedDuringRead) : IFreshnessSignals
+{
+    bool IFreshnessSignals.WasTruncated => false;
+    bool IFreshnessSignals.MovedDuringQuery => ChangedDuringRead;
+}
 
 public sealed record VaultReadRequest(string Path, int? StartLine = null, int? EndLine = null);
 
@@ -168,7 +191,11 @@ public sealed record VaultStatResult(
     /// <summary>Freshness signal only — the SHA remains the mutation precondition.</summary>
     long GenerationStart,
     long GenerationEnd,
-    bool ChangedDuringRead);
+    bool ChangedDuringRead) : IFreshnessSignals
+{
+    bool IFreshnessSignals.WasTruncated => false;
+    bool IFreshnessSignals.MovedDuringQuery => ChangedDuringRead;
+}
 
 public enum FrontmatterOp
 {
@@ -198,4 +225,8 @@ public sealed record FrontmatterMatch(string Path, string Field, string? Value);
 /// </summary>
 public sealed record FrontmatterSearchResult(
     QueryEnvelope<FrontmatterMatch> Envelope,
-    IReadOnlyList<string> UnparseableFiles);
+    IReadOnlyList<string> UnparseableFiles) : IFreshnessSignals
+{
+    bool IFreshnessSignals.WasTruncated => Envelope.Truncated;
+    bool IFreshnessSignals.MovedDuringQuery => Envelope.ChangedDuringQuery;
+}

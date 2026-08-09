@@ -14,6 +14,13 @@
 #      last-commit-age monitoring: the commit job creates no commit when
 #      the vault is quiet, so HEAD age cannot distinguish a quiet vault
 #      from a dead timer. The stamp can. (See ct106-runbook.md §8.)
+#   3. Metrics deltas (brief §8 rate signals) from the CT's metrics
+#      snapshot: audit-append failures (any > 0 alerts), query timeouts,
+#      tool errors, truncated and generation-changed responses over the
+#      window since the previous monitor run. The snapshot carries
+#      cumulative counters plus the process start stamp, so a server
+#      restart resets the baseline instead of false-alarming.
+#      Requires `jq` on the host.
 #
 # Usage:
 #   knapper-monitor.sh [config]     config default: /etc/knapper-monitor.conf
@@ -49,6 +56,17 @@ STAMP_PATH="${STAMP_PATH:-/var/lib/knapper/commit-stamp}"
 MAX_STAMP_AGE="${MAX_STAMP_AGE:-3900}"
 MAILTO="${MAILTO:-alerts@example.com}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-20}"
+METRICS_PATH="${METRICS_PATH:-/var/lib/knapper/metrics.json}"
+STATE_DIR="${STATE_DIR:-/var/lib/knapper-monitor}"
+# Per-window (one monitor interval) delta thresholds. Audit failures alert
+# on ANY occurrence; the others are agent-behavior signals with headroom —
+# tune after observing real traffic, per the brief's "exercise before trust".
+MAX_AUDIT_FAILURES="${MAX_AUDIT_FAILURES:-0}"
+MAX_QUERY_TIMEOUTS="${MAX_QUERY_TIMEOUTS:-5}"
+MAX_TOOL_ERRORS="${MAX_TOOL_ERRORS:-50}"
+MAX_STALE_REJECTIONS="${MAX_STALE_REJECTIONS:-25}"
+MAX_TRUNCATED="${MAX_TRUNCATED:-100}"
+MAX_GENERATION_CHANGED="${MAX_GENERATION_CHANGED:-100}"
 
 FAILURES=""
 fail() {
@@ -76,6 +94,46 @@ else
     if [ "$AGE" -gt "$MAX_STAMP_AGE" ]; then
         fail "commit stamp is ${AGE}s old (max ${MAX_STAMP_AGE}s) — the git snapshot timer is dead or every run is failing (secret scan? lock?)"
     fi
+fi
+
+# ---- 3. metrics deltas since the previous monitor run -------------------
+CURRENT=$(pct exec "$CT_ID" -- cat "$METRICS_PATH" 2>/dev/null)
+if [ -z "${CURRENT:-}" ]; then
+    fail "metrics snapshot ${METRICS_PATH} missing/unreadable in CT ${CT_ID} — Vault__MetricsPath unset, knapper never started, or CT stopped"
+elif ! command -v jq >/dev/null 2>&1; then
+    fail "jq is not installed on the monitor host — metrics deltas cannot be evaluated"
+else
+    mkdir -p "$STATE_DIR"
+    PREV_FILE="$STATE_DIR/last-metrics.json"
+    PREV=""
+    [ -r "$PREV_FILE" ] && PREV=$(cat "$PREV_FILE")
+
+    delta() { # $1 jq field name
+        CUR_V=$(printf '%s' "$CURRENT" | jq -r ".$1 // 0")
+        PREV_V=$(printf '%s' "$PREV" | jq -r ".$1 // 0" 2>/dev/null || echo 0)
+        echo $((CUR_V - PREV_V))
+    }
+
+    CUR_START=$(printf '%s' "$CURRENT" | jq -r '.StartedAt // ""')
+    PREV_START=$(printf '%s' "$PREV" | jq -r '.StartedAt // ""' 2>/dev/null || echo "")
+    if [ -z "$PREV" ] || [ "$CUR_START" != "$PREV_START" ]; then
+        # First run, or the server restarted: counters reset legitimately.
+        # Baseline this snapshot; deltas resume next run. A restart LOOP
+        # still surfaces through /up and the commit stamp.
+        :
+    else
+        check_delta() { # $1 field  $2 max  $3 description
+            D=$(delta "$1")
+            [ "$D" -gt "$2" ] && fail "$3: ${D} since the last monitor run (max $2)"
+        }
+        check_delta AuditAppendFailures "$MAX_AUDIT_FAILURES" "AUDIT APPEND FAILURES — landed changes may lack audit records"
+        check_delta QueryTimeouts       "$MAX_QUERY_TIMEOUTS" "query timeouts"
+        check_delta ToolErrors          "$MAX_TOOL_ERRORS" "tool errors"
+        check_delta StaleRejections     "$MAX_STALE_REJECTIONS" "stale-write rejections (agents racing or retrying stale bases)"
+        check_delta TruncatedResponses  "$MAX_TRUNCATED" "truncated responses"
+        check_delta GenerationChangedResponses "$MAX_GENERATION_CHANGED" "generation-changed responses"
+    fi
+    printf '%s' "$CURRENT" > "$PREV_FILE"
 fi
 
 # ---- alert / exit -------------------------------------------------------

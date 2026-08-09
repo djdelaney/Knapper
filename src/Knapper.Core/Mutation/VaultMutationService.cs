@@ -119,18 +119,19 @@ public sealed class VaultMutationService(
             var written = Encoding.UTF8.GetBytes(text);
             using (locks.AcquirePathLock(vp, LockTimeout))
             {
+                RequireAuditIntent("create", vp.Relative, ctx);
                 AtomicFile.CreateNew(vp.Absolute, written);
                 AtomicFile.VerifyOnDisk(vp.Absolute, written);
             }
             var gen = generation.Increment();
             var sha = VaultHash.Sha256Hex(written);
-            Audit("create", vp.Relative, "ok", ctx, before: null, after: sha);
+            TryAudit("create", vp.Relative, "ok", ctx, before: null, after: sha);
             return new MutationResult(vp.Relative, null, sha, 0, written.Length, true, gen);
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             var ke = NormalizeIo(e, "create", vp.Relative);
-            Audit("create", vp.Relative, ke.Code.ToString(), ctx);
+            TryAudit("create", vp.Relative, ke.Code.ToString(), ctx);
             if (ReferenceEquals(ke, e))
                 throw;
             throw ke;
@@ -155,14 +156,15 @@ public sealed class VaultMutationService(
                 throw new KnapperException(VaultErrorCode.NotFound,
                     $"parent directory does not exist: create it first (one deliberate level at a time)");
             }
+            RequireAuditIntent("mkdir", vp.Relative, ctx);
             Directory.CreateDirectory(vp.Absolute);
             generation.Increment();
-            Audit("mkdir", vp.Relative, "ok", ctx);
+            TryAudit("mkdir", vp.Relative, "ok", ctx);
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             var ke = NormalizeIo(e, "mkdir", vp.Relative);
-            Audit("mkdir", vp.Relative, ke.Code.ToString(), ctx);
+            TryAudit("mkdir", vp.Relative, ke.Code.ToString(), ctx);
             if (ReferenceEquals(ke, e))
                 throw;
             throw ke;
@@ -200,6 +202,7 @@ public sealed class VaultMutationService(
                 // link-then-unlink, not rename: rename(2) silently replaces an
                 // existing destination; link(2) cannot. Same inode → no data
                 // copy, mode/mtime ride along, content can't diverge mid-move.
+                RequireAuditIntent("move", source.Relative, ctx);
                 BeforeLinkTestHook?.Invoke(source.Absolute);
                 Posix.Link(source.Absolute, destination.Absolute);
                 var sourceUnlinked = false;
@@ -232,7 +235,7 @@ public sealed class VaultMutationService(
 
                 var gen = generation.Increment();
                 var sha = VaultHash.Sha256Hex(data);
-                Audit("move", source.Relative, "ok", ctx, before: sha, after: sha,
+                TryAudit("move", source.Relative, "ok", ctx, before: sha, after: sha,
                     detail: "→ " + destination.Relative);
                 return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen);
             }
@@ -240,7 +243,7 @@ public sealed class VaultMutationService(
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             var ke = NormalizeIo(e, "move", source.Relative);
-            Audit("move", source.Relative, ke.Code.ToString(), ctx, null, null,
+            TryAudit("move", source.Relative, ke.Code.ToString(), ctx, null, null,
                 "→ " + destination.Relative);
             if (ReferenceEquals(ke, e))
                 throw;
@@ -281,6 +284,7 @@ public sealed class VaultMutationService(
                 Directory.CreateDirectory(Path.GetDirectoryName(trashAbsolute)!);
 
                 var trashDir = Path.GetDirectoryName(trashAbsolute)!;
+                RequireAuditIntent("delete", vp.Relative, ctx);
                 BeforeLinkTestHook?.Invoke(vp.Absolute);
                 Posix.Link(vp.Absolute, trashAbsolute);
                 var sourceUnlinked = false;
@@ -309,14 +313,14 @@ public sealed class VaultMutationService(
 
                 var gen = generation.Increment();
                 var sha = VaultHash.Sha256Hex(data);
-                Audit("delete", vp.Relative, "ok", ctx, before: sha, after: null, detail: "→ " + trashRelative);
+                TryAudit("delete", vp.Relative, "ok", ctx, before: sha, after: null, detail: "→ " + trashRelative);
                 return new DeleteResult(vp.Relative, trashRelative, sha, gen);
             }
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             var ke = NormalizeIo(e, "delete", vp.Relative);
-            Audit("delete", vp.Relative, ke.Code.ToString(), ctx);
+            TryAudit("delete", vp.Relative, ke.Code.ToString(), ctx);
             if (ReferenceEquals(ke, e))
                 throw;
             throw ke;
@@ -368,7 +372,7 @@ public sealed class VaultMutationService(
                 catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
                 {
                     var ke = NormalizeIo(e, "batch-validate", vp.Relative);
-                    Audit("batch-validate", vp.Relative, ke.Code.ToString(), ctx);
+                    TryAudit("batch-validate", vp.Relative, ke.Code.ToString(), ctx);
                     throw new KnapperException(ke.Code,
                         $"batch item {i} ({vp.Relative}) failed validation — nothing was mutated: {ke.Message}", ke);
                 }
@@ -385,8 +389,14 @@ public sealed class VaultMutationService(
                     results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.NotAttempted, null, null, null));
                     continue;
                 }
+                var opName = "batch-" + item.Kind.ToString().ToLowerInvariant();
                 try
                 {
+                    // Per-item intent: if the audit sink dies mid-batch, the
+                    // NEXT item is refused before its write (this catch turns
+                    // that into Failed + NotAttempted) — items already landed
+                    // keep both their audit records and their receipt.
+                    RequireAuditIntent(opName, vp.Relative, ctx);
                     if (item.Kind == BatchItemKind.Create)
                         AtomicFile.CreateNew(vp.Absolute, after);
                     else
@@ -394,7 +404,7 @@ public sealed class VaultMutationService(
                     AtomicFile.VerifyOnDisk(vp.Absolute, after);
                     generation.Increment();
                     var sha = VaultHash.Sha256Hex(after);
-                    Audit("batch-" + item.Kind.ToString().ToLowerInvariant(), vp.Relative, "ok", ctx,
+                    TryAudit(opName, vp.Relative, "ok", ctx,
                         before is null ? null : VaultHash.Sha256Hex(before), sha);
                     results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Applied, sha, null, null));
                 }
@@ -404,7 +414,7 @@ public sealed class VaultMutationService(
                     // the caller is owed the Applied/Failed/NotAttempted
                     // receipt for the items that already landed.
                     var ke = NormalizeIo(e, "batch-apply", vp.Relative);
-                    Audit("batch-" + item.Kind.ToString().ToLowerInvariant(), vp.Relative, ke.Code.ToString(), ctx);
+                    TryAudit(opName, vp.Relative, ke.Code.ToString(), ctx);
                     results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message));
                     failedAt = i;
                 }
@@ -478,11 +488,12 @@ public sealed class VaultMutationService(
             {
                 var (before, after) = transform(vp);
                 var beforeSha = VaultHash.Sha256Hex(before);
+                RequireAuditIntent(op, vp.Relative, ctx);
                 AtomicFile.Replace(vp.Absolute, after, beforeSha);
                 AtomicFile.VerifyOnDisk(vp.Absolute, after);
                 var gen = generation.Increment();
                 var afterSha = VaultHash.Sha256Hex(after);
-                Audit(op, vp.Relative, "ok", ctx, beforeSha, afterSha);
+                TryAudit(op, vp.Relative, "ok", ctx, beforeSha, afterSha);
                 return new MutationResult(vp.Relative, beforeSha, afterSha, before.Length, after.Length, true, gen);
             }
         }
@@ -490,7 +501,7 @@ public sealed class VaultMutationService(
         {
             // Rejections are audited too — a stale-write rejection is signal.
             var ke = NormalizeIo(e, op, vp.Relative);
-            Audit(op, vp.Relative, ke.Code.ToString(), ctx);
+            TryAudit(op, vp.Relative, ke.Code.ToString(), ctx);
             if (ReferenceEquals(ke, e))
                 throw;
             throw ke;
@@ -648,5 +659,46 @@ public sealed class VaultMutationService(
         audit?.Append(new AuditLog.Entry(
             DateTimeOffset.UtcNow, op, relative, outcome,
             ctx?.Client, ctx?.RequestId, before, after, detail));
+    }
+
+    /// <summary>
+    /// The write-ahead half of the audit contract: an "attempt" record lands
+    /// (fsynced) BEFORE the first byte of a mutation touches the vault, so
+    /// no change can ever exist that no audit line explains. If the sink is
+    /// down, the mutation is refused before any write — fail closed, file
+    /// untouched — and the sink has already counted the failure into the
+    /// durable metrics the external monitor watches.
+    /// </summary>
+    private void RequireAuditIntent(string op, string relative, AuditContext? ctx)
+    {
+        try
+        {
+            Audit(op, relative, "attempt", ctx);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"audit log is unavailable — {op} of {relative} refused before any write (fail closed)", e);
+        }
+    }
+
+    /// <summary>
+    /// The post-write half: best-effort by design. The work it describes has
+    /// already landed (or already produced its typed rejection) — a failing
+    /// audit sink must not turn that into a false failure or destroy a batch
+    /// receipt, and must NEVER be retried against the same failed sink from
+    /// a catch path. The failure is counted durably at the sink; the
+    /// "attempt" record from <see cref="RequireAuditIntent"/> still explains
+    /// the change.
+    /// </summary>
+    private void TryAudit(
+        string op, string relative, string outcome, AuditContext? ctx,
+        string? before = null, string? after = null, string? detail = null)
+    {
+        try
+        {
+            Audit(op, relative, outcome, ctx, before, after, detail);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 }

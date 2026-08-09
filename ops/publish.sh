@@ -3,7 +3,7 @@
 # Output: artifacts/knapper-<version>-linux-x64.tar.gz containing
 #   mcp/   — Knapper.Mcp (self-contained)
 #   cli/   — knapper (self-contained)
-#   ops/   — systemd units + sync-heartbeat.sh
+#   ops/   — systemd units, sync-heartbeat.sh, and the HOST-side monitor kit
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -17,8 +17,38 @@ dotnet publish src/Knapper.Cli -c Release -r linux-x64 --self-contained -o "$STA
 cp -R ops/systemd "$STAGE/ops/systemd"
 cp ops/sync-heartbeat.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/sync-heartbeat.sh"
+# The Proxmox-host monitor installs FROM THIS ARCHIVE (runbook §8) — a
+# tarball without it cannot perform the documented installation.
+cp -R ops/monitor "$STAGE/ops/monitor"
+chmod +x "$STAGE/ops/monitor/knapper-monitor.sh"
 
 mkdir -p artifacts
-tar -czf "artifacts/knapper-$VERSION-linux-x64.tar.gz" -C "$STAGE" .
+TARBALL="artifacts/knapper-$VERSION-linux-x64.tar.gz"
+tar -czf "$TARBALL" -C "$STAGE" .
 rm -rf "$STAGE"
-echo "artifacts/knapper-$VERSION-linux-x64.tar.gz"
+
+# Content gate: every path the runbook installs must exist in the archive.
+# A missing path fails the PUBLISH, not the deployment.
+MANIFEST=$(tar -tzf "$TARBALL")
+for required in \
+    ./mcp/Knapper.Mcp \
+    ./cli/knapper \
+    ./ops/sync-heartbeat.sh \
+    ./ops/systemd/knapper.service \
+    ./ops/systemd/knapper-commit.service \
+    ./ops/systemd/knapper-commit.timer \
+    ./ops/systemd/knapper-heartbeat.service \
+    ./ops/systemd/knapper-heartbeat.timer \
+    ./ops/systemd/obsidian-headless.service \
+    ./ops/monitor/knapper-monitor.sh \
+    ./ops/monitor/knapper-monitor.conf.example \
+    ./ops/monitor/knapper-monitor.service \
+    ./ops/monitor/knapper-monitor.timer
+do
+    printf '%s\n' "$MANIFEST" | grep -qx "$required" || {
+        echo "publish FAILED: $required missing from $TARBALL" >&2
+        exit 1
+    }
+done
+
+echo "$TARBALL"

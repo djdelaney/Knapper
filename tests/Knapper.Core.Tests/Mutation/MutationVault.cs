@@ -24,13 +24,15 @@ public sealed class MutationVault : IDisposable
     public string AuditPath { get; }
     public VaultMutationService Service { get; }
 
+    public KnapperMetrics Metrics { get; } = new();
+
     public MutationVault()
     {
         Resolver = new VaultPathResolver(VaultDir.Path);
         Locks = new VaultLockManager(Path.Combine(Outside.Path, "locks"));
         Conflicts = new ConflictDetector(Resolver);
         AuditPath = Path.Combine(Outside.Path, "audit.jsonl");
-        Audit = new AuditLog(AuditPath);
+        Audit = new AuditLog(AuditPath, Metrics);
         Options = new VaultOptions
         {
             RootPath = Resolver.Root,
@@ -61,6 +63,7 @@ public sealed class MutationVault : IDisposable
     public void Dispose()
     {
         Generation.Dispose();
+        Metrics.Dispose();
         Outside.Dispose();
         VaultDir.Dispose();
     }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Knapper.Core;
 using Knapper.Core.Mutation;
 using Knapper.Core.Options;
+using Knapper.Core.Query;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 
@@ -18,7 +19,8 @@ namespace Knapper.Mcp.Tools;
 public sealed class ToolSupport(
     IHttpContextAccessor httpContext,
     IOptions<McpOptions> mcpOptions,
-    ILogger<ToolSupport> logger)
+    ILogger<ToolSupport> logger,
+    KnapperMetrics metrics)
 {
     public T Run<T>(string tool, Func<T> body)
     {
@@ -26,16 +28,23 @@ public sealed class ToolSupport(
         try
         {
             var result = body();
+            // Metrics are never gated on LogToolCalls — the monitor's rate
+            // signals (brief §8) must not vanish with a logging toggle.
+            if (result is IFreshnessSignals signals)
+                metrics.RecordCompleteness(signals.WasTruncated, signals.MovedDuringQuery);
+            metrics.RecordToolOutcome("ok");
             Log(tool, "ok", started);
             return result;
         }
         catch (KnapperException e)
         {
+            metrics.RecordToolOutcome(e.Code.ToString());
             Log(tool, e.Code.ToString(), started);
             throw new McpException($"[{e.Code}] {e.Message}");
         }
         catch (OperationCanceledException)
         {
+            metrics.RecordToolOutcome("cancelled");
             Log(tool, "cancelled", started);
             // Cancellation is transport-level, not a VaultErrorCode — but the
             // wire message keeps the same [Code] shape agents parse.
@@ -46,6 +55,7 @@ public sealed class ToolSupport(
             // Query-layer filesystem failures don't pass through Core's
             // mutation-boundary normalization — map them here so every
             // MCP-visible failure leads with a stable bracketed code.
+            metrics.RecordToolOutcome(VaultErrorCode.IoError.ToString());
             Log(tool, VaultErrorCode.IoError.ToString(), started);
             throw new McpException($"[{VaultErrorCode.IoError}] filesystem failure: {e.Message}");
         }
@@ -53,6 +63,7 @@ public sealed class ToolSupport(
         {
             // A bug, not an environment failure — clients still get the
             // stable [Code] shape; the details go to the server log only.
+            metrics.RecordToolOutcome("internal");
             Log(tool, "internal", started);
             logger.LogError(e, "tool {Tool} failed unexpectedly", tool);
             throw new McpException("[Internal] unexpected server error — see server logs");

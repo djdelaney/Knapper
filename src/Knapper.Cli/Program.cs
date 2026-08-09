@@ -109,6 +109,12 @@ int Doctor()
     Check("Vault:AuditLogPath configured, outside the vault",
         () => !string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath)
               && !PathContainment.IsInsideOrEqual(vaultOptions.AuditLogPath, vaultOptions.RootPath));
+    Check("Vault:CommitStampPath outside the vault (or unset)",
+        () => string.IsNullOrWhiteSpace(vaultOptions.CommitStampPath)
+              || !PathContainment.IsInsideOrEqual(vaultOptions.CommitStampPath, vaultOptions.RootPath));
+    Check("Vault:MetricsPath outside the vault (or unset)",
+        () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)
+              || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
     Check($"ripgrep runs ({vaultOptions.RipgrepPath})", () =>
     {
         var psi = new System.Diagnostics.ProcessStartInfo { FileName = vaultOptions.RipgrepPath, RedirectStandardOutput = true };

@@ -90,10 +90,20 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         }
     }
 
-    private static CommitOutcome Stamped(CommitOutcome outcome, string? stampPath)
+    private CommitOutcome Stamped(CommitOutcome outcome, string? stampPath)
     {
         if (string.IsNullOrWhiteSpace(stampPath))
             return outcome;
+        // Same containment rule as the lock dir and audit log: a stamp
+        // INSIDE the vault would sync — and worse, every "nothing to
+        // commit" run would dirty the tree and feed the next run a change,
+        // a self-sustaining commit loop.
+        if (PathContainment.IsInsideOrEqual(stampPath, resolver.Root))
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"Vault:CommitStampPath ('{stampPath}') is the vault or INSIDE it — " +
+                "operational files must never sync (and an in-vault stamp would trigger the next commit).");
+        }
         // Durable (fsynced): a stamp that evaporates on power loss would
         // false-alarm the monitor after every crash-and-recover.
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(stampPath))!);

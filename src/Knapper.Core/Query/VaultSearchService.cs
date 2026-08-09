@@ -317,6 +317,13 @@ public sealed class VaultSearchService(
                         while (_before.Count > query.ContextBefore)
                             _before.Dequeue();
                     }
+                    // Context participates in the budget DECISION, not just
+                    // the count: after-context alone can cross the limit, and
+                    // the next match must then close the page rather than be
+                    // admitted first. At end-of-stream a crossed budget with
+                    // no further match means everything was emitted — the
+                    // result is complete, merely at its bounded overshoot.
+                    NoteBudget();
                     return true;
                 }
 
@@ -356,11 +363,14 @@ public sealed class VaultSearchService(
                         Items.Add(new SearchMatch(path, lineNumber, column, text, before, after));
                         _outputBytes += textBytes; // per emitted record — each carries the line
                         LastPosition = pos;
+                        // Per emitted RECORD, so a second submatch on this
+                        // same line is not admitted past the budget. The
+                        // one-record-over rule: the page closes at the next
+                        // record after the running total (match lines + all
+                        // delivered context, UTF-8 bytes) exceeds the budget,
+                        // bounding overshoot to one match plus its context.
+                        NoteBudget();
                     }
-                    // Byte budget closes the page at the NEXT match, so a page
-                    // always makes progress even when one line exceeds it.
-                    if (_outputBytes > OutputBudget && Items.Count > 0)
-                        _budgetHit = true;
                     return true;
                 }
 
@@ -378,6 +388,13 @@ public sealed class VaultSearchService(
         }
 
         public int OutputBudget { get; init; } = int.MaxValue;
+
+        /// <summary>A page always makes progress: the budget never closes a page that has no items yet.</summary>
+        private void NoteBudget()
+        {
+            if (_outputBytes > OutputBudget && Items.Count > 0)
+                _budgetHit = true;
+        }
 
         private static string GetLinesText(JsonElement root) =>
             root.GetProperty("data").GetProperty("lines").TryGetProperty("text", out var t)

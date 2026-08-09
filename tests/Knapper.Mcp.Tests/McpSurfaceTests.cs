@@ -95,7 +95,14 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
     [Fact]
     public async Task Search_round_trip_carries_the_completeness_envelope()
     {
-        await using var client = await ConnectAsync(_factory);
+        // ISOLATED factory, not the class fixture: the server runs a real
+        // filesystem watcher over its vault, and sibling tests in this class
+        // mutate the shared fixture — a delayed watcher event can then
+        // legitimately advance the generation mid-search and flip
+        // changedDuringQuery. This vault is seeded before the host (and its
+        // watcher) starts, and nothing mutates it.
+        using var isolated = new KnapperMcpFactory(null);
+        await using var client = await ConnectAsync(isolated);
         var result = await CallOk(client, "vault_search", new() { ["pattern"] = "needle" });
         result.GetProperty("truncated").GetBoolean().ShouldBeFalse();
         result.GetProperty("totalMatches").GetInt64().ShouldBe(2);

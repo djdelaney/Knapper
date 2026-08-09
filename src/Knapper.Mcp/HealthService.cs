@@ -168,13 +168,16 @@ public sealed class HealthService(
         // succeed on a filesystem that no longer accepts a durable write
         // (full, read-only remount) — and a mutation whose audit append then
         // fails is exactly the failure this signal exists to surface. The
-        // probe never touches the audit trail itself.
-        var probePath = vaultOptions.Value.AuditLogPath + ".health-probe";
+        // probe never touches the audit trail itself. The name is unique per
+        // request: /health and /up can run concurrently, and a shared name
+        // opened FileShare.None would let one probe fail the other with a
+        // sharing violation — a spurious 503.
+        var probePath = $"{vaultOptions.Value.AuditLogPath}.health-probe-{Guid.NewGuid():N}";
         try
         {
             using (var stream = new FileStream(probePath, new FileStreamOptions
             {
-                Mode = FileMode.Create,
+                Mode = FileMode.CreateNew,
                 Access = FileAccess.Write,
                 Share = FileShare.None,
                 UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
@@ -183,12 +186,20 @@ public sealed class HealthService(
                 stream.Write("knapper-health-probe\n"u8);
                 stream.Flush(flushToDisk: true);
             }
-            File.Delete(probePath);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return false;
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(probePath);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }

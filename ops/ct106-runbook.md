@@ -150,6 +150,15 @@ What it checks:
 - `/up` status code via the tunnel with the monitoring service token —
   covers vault unreachable, sync unhealthy, rg missing, audit unwritable,
   conflict files present, knapper down, tunnel down, Access broken.
+- Metrics deltas (brief §8 rate signals) from
+  `/var/lib/knapper/metrics.json` inside the CT (`Vault__MetricsPath`,
+  written by the server as bounded cumulative counters): audit-append
+  failures (ANY occurrence alerts — a landed change may lack its audit
+  record), query timeouts, tool errors, stale-write rejections, truncated
+  and generation-changed responses, evaluated over the window since the
+  previous monitor run. Needs `jq` on the host (`apt install jq`). A
+  server restart resets the baseline via the snapshot's `StartedAt`, so
+  counters resetting never false-alarms.
 - git-snapshot freshness via `/var/lib/knapper/commit-stamp` (checked with
   `pct exec`). **Deliberate deviation from the brief's last-commit-age
   monitoring** (documented per review 2026-08-09): the commit job creates

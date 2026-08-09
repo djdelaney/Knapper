@@ -33,7 +33,8 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `RootPath` | — (required) | Absolute vault path. Startup fails without it. |
 | `LockDirectory` | — (required) | flock lock files. MUST be outside the vault (enforced at startup). |
 | `AuditLogPath` | — (required by Mcp) | Append-only JSONL. MUST be outside the vault (enforced). |
-| `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault. |
+| `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault (enforced). |
+| `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). |
 | `RipgrepPath` | `rg` | The search engine binary. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |

@@ -100,6 +100,11 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   (`Stale_sha_rejects_untouched_and_the_rejection_is_audited`).
 - Mutation tests build a fresh `MutationVault` per test (no shared state);
   query tests share a read-only `FixtureVault` per class.
+- The MCP factory's server runs a REAL filesystem watcher over its vault, so
+  any test pinning `changedDuringQuery`/`changedDuringRead` = false must use
+  an ISOLATED `KnapperMcpFactory` that nothing mutates — a delayed watcher
+  event from a sibling test's edit legitimately advances the generation and
+  flips the flag (observed as a real one-in-many-runs flake, 2026-08-09).
 - Cross-process claims need cross-process tests: the probe binaries are
   copied into the test output by project reference and spawned with
   `dotnet exec`. An in-process test of flock proves nothing.
