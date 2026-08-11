@@ -40,6 +40,13 @@ jobs:
             exit 1
           fi
 
+      # The runbook is the one deliverable no test executes, and six review
+      # rounds found defects a careful read had missed — a fact corrected in
+      # one of the two places it lived, a reference to a section that did not
+      # exist. These checks are the mechanical subset of that review.
+      - name: Lint the deployment runbook
+        run: ops/runbook-lint.sh
+
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'

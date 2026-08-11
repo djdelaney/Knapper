@@ -2,8 +2,9 @@
 
 The condensed, Knapper-specific build sequence. The authoritative
 requirements document is `obsidian-mcp-implementation-brief.md` (referenced
-below as "brief") — **read §11's six mail-stack corrections and LXC traps in
-full before building; every one is a failure already paid for in this lab.**
+below as "brief") — **read brief §11's six mail-stack corrections and LXC
+traps in full before building; every one is a failure already paid for in
+this lab.**
 
 Ops runbooks describe how to VERIFY live state, never what it was (house
 rule, via Mailvec): when you must record observed state, date it and mark it
@@ -24,7 +25,7 @@ resolve it, don't pick a winner.**
 | 2 | mail stack | — | — | `MailReport always`, reverted in-section |
 | 3 / 3b | rg 15, node, empty `/vault`, persistent journal | — | — | — (first reboot; DNS re-checked) |
 | 4 | **`/vault` = Helios, syncing** | `obsidian-headless` | — | — |
-| 5 | `/opt/knapper`, units, `_deploy-check/` **(synced)** | + `knapper` :3535, heartbeat timer | loopback | scratch subtree + conflict fixture; services stopped during gates |
+| 5 | `/opt/knapper`, units | + `knapper` :3535, heartbeat timer | loopback | `_deploy-check/` + conflict fixture, transient and **synced to Dan's devices** while they exist; services stopped during gates |
 | 6 | tunnel config, Access apps 1–2 | + `cloudflared` | prod hostname, loopback | — |
 | 7 | **`.git`**, commit stamp, **archive #2** (first with history) | + commit timer | as §6 | scratch CT 9nn again |
 | 8 | monitor + conf (on the HOST) | + monitor timer | as §6 | **`MAILTO` → drill address**; `/up` token replaced |
@@ -40,9 +41,10 @@ document is a reference that resolves to the wrong member of a pair:
 
 | Identity | Belongs to | Never |
 |---|---|---|
-| Root Access app + token (§6.2) | Claude Code and the other connectors | the monitor |
-| `/up` path-scoped app + token (§6.4) | the host-side monitor only | the vault surface |
-| Smoke app + token (§8b) | the smoke instance on :3536 | production, and gone by §9 |
+| Root Access app + token (§6.2), `CF_ACCESS_CLIENT_*` | Claude Code and the other connectors | the monitor |
+| `/up` path-scoped app + token (§6.4), `CF_MONITOR_CLIENT_*`, `/etc/knapper-monitor.conf` | the host-side monitor only | the vault surface, or Claude Code |
+| Smoke app + token, `<smoke-hostname>` :3536 (§8b) | the smoke instance | production, and gone by §9 |
+| `106` / `knapper` / `mcp.example.com` | VMID for `pct` / the CT's own hostname / the public name | used interchangeably |
 | `_deploy-check/` (§5) | live-vault acceptance gates — **synced to Dan's devices** | mistaken for isolated |
 | `/var/lib/knapper-smoke/vault` (§8b) | the smoke instance — outside `/vault`, unreachable by its unit | inside `/vault` |
 | Archive #1 (§1) | proof that restore works | an incident restore |
@@ -57,9 +59,12 @@ On the Proxmox host:
   `zfs get casesensitivity <parent-dataset>` must read `sensitive`. If it
   does not, fix or choose a different parent and create the CT under that;
   doing this first turns a destroy-and-rebuild into a no-op.
-- Debian 13 unprivileged CT, VMID 106, rootfs on `local-zfs`, 2 cores /
-  2–4 GB RAM / 16 GB. DHCP reservation first; `onboot: 1`,
-  `startup: order=` after the other guests.
+- Debian 13 unprivileged CT, VMID 106, **`--hostname knapper`**, rootfs on
+  `local-zfs`, 2 cores / 2–4 GB RAM / 16 GB. DHCP reservation first;
+  `onboot: 1`, `startup: order=` after the other guests. Set the hostname
+  explicitly and use it consistently: `106` is the VMID `pct` takes, `knapper`
+  is what the machine calls itself, and the restore drill below has nothing to
+  compare against if the second one is left to chance.
 - **`nesting=1`** even with no Docker (systemd 254+ needs it for
   `LoadCredential=` tmpfs; without it units fail `243/CREDENTIALS`).
 - **Pin DNS**: `pct set 106 --nameserver "<lan-resolver> 1.1.1.1"` — a blank
@@ -107,7 +112,10 @@ On the Proxmox host:
   pct restore 9<nn> <archive> --storage <storage>   # needs room for a second rootfs
   pct mount 9<nn>                                   # NOT pct start
   cat /var/lib/lxc/9<nn>/rootfs/etc/os-release      # rootfs is populated…
-  cat /var/lib/lxc/9<nn>/rootfs/etc/hostname        # …and is THIS container
+  cat /var/lib/lxc/9<nn>/rootfs/etc/hostname        # …must read `knapper` (§1) —
+                                                    # restoring the WRONG archive is
+                                                    # the error this catches, and only
+                                                    # if you know what to expect
   pct unmount 9<nn> && pct destroy 9<nn>
   ```
 
@@ -275,7 +283,7 @@ Install `obsidian-headless.service` from `ops/systemd/`, start, and
 **verify content arrives including `.sh`/`.py` files**. The publish tarball
 that puts `ops/` on the CT does not land until §5, so copy this ONE unit
 from the repo now — `scp ops/systemd/obsidian-headless.service
-root@ct106:/etc/systemd/system/` — then `systemctl daemon-reload` and
+root@<ct-address>:/etc/systemd/system/` — then `systemctl daemon-reload` and
 `systemctl enable --now obsidian-headless`. §5's bulk copy re-installs this
 same file, which is harmless if you left it alone — **but if you edited it**
 (a different vault path or service user), re-apply that edit after §5's copy
@@ -284,9 +292,11 @@ be running and healthy before §5: the
 heartbeat probe gates mutations on it, and `knapper doctor` fails on a
 stale heartbeat.
 
-⚠️ **VERIFY `ops/sync-heartbeat.sh`'s health check against the real
+⚠️ **VERIFY the health check in `ops/sync-heartbeat.sh` against the real
 `ob sync-status` output** before trusting the mutation gate — the script
-documents the assumption it makes.
+documents the assumption it makes. Read it in the REPO on the dev box: the
+tarball that puts `ops/` on the CT does not land until §5, and this is the
+moment you have a live `ob sync-status --json` to compare against.
 
 ## 5. Knapper
 
@@ -542,7 +552,12 @@ config, host-side service/timer units). Silent on success, mails
 ```sh
 cp ops/monitor/knapper-monitor.sh /usr/local/sbin/ && chmod +x /usr/local/sbin/knapper-monitor.sh
 cp ops/monitor/knapper-monitor.conf.example /etc/knapper-monitor.conf
-chmod 600 /etc/knapper-monitor.conf      # then fill in the service token
+chmod 600 /etc/knapper-monitor.conf      # then fill in the /up app's service token
+# Read the whole example while you are in there — three knobs have consequences
+# elsewhere in this section: MAX_STAMP_AGE (3900s) is the wait drill 3 below is
+# measured against, RENOTIFY_SECONDS (86400) is how often an unchanged failure
+# re-notifies, and TEST_MAILTO (e.g. failtest@example.com) is where `--test`
+# goes.
 cp ops/monitor/knapper-monitor.{service,timer} /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now knapper-monitor.timer
 knapper-monitor.sh --test                # MUST land a mail before trusting it
@@ -656,8 +671,10 @@ change in a section that already has three. Install
 `ops/systemd/knapper-smoke.service.example` as `knapper-smoke.service` and
 read its header — it carries the whole configuration, including why the copy
 lives OUTSIDE `/vault` (anything inside is Helios, and Sync would propagate
-it). Reaching it from a real client means one more tunnel route and Access
-app for the smoke hostname; that is the cost of not touching production, and
+it). Reaching it from a real client means one more tunnel route
+(`<smoke-hostname>` → `127.0.0.1:3536`) and one more Access app: its AUD goes
+in the smoke unit's `Mcp__Access__Audience`, `<smoke-hostname>` in its
+`Mcp__AllowedHosts__0`; that is the cost of not touching production, and
 it is worth it. A second CT restored from §7's backup also works if you
 prefer isolation over convenience — disable `obsidian-headless` in the
 mounted rootfs BEFORE first start (§1's warning applies in full).
@@ -720,8 +737,8 @@ test 4's routing evidence exactly as thoroughly as a new model does.
 ## 9. Cutover (brief §12.8 — Dan's call, only after the brief's §13 and §8b pass)
 
 Add the connector to every agent surface; verify query parity; remove local
-Helios folders from agent workspaces; install the routing instruction (brief
-§14) outside the vault; swap the vault's own CLAUDE.md to the MCP-only rule
+Helios folders from agent workspaces; install the brief §14 routing
+instruction outside the vault; swap the vault's own CLAUDE.md to the MCP-only rule
 (done in-vault, not from here); verify an outage produces a hard stop.
 
 **Restore every temporary setting before calling this done.** Each was
@@ -731,14 +748,26 @@ silently if left:
 - [ ] `MailReport` back to `on-change` (§2)
 - [ ] `MAILTO` back to the real alert address, proven by the §8 positive
       control — not just edited back
-- [ ] monitoring service token in `/etc/knapper-monitor.conf` AND in Claude
-      Code's config is the CURRENT one, if the §8 revocation drill ran
+- [ ] the `/up` token in `/etc/knapper-monitor.conf` is the CURRENT one, if
+      the §8 revocation drill ran — Claude Code holds the ROOT app's token
+      and is unaffected by that drill
 - [ ] `knapper-smoke.service` stopped and REMOVED, `/var/lib/knapper-smoke`
       deleted, its tunnel route and Access app torn down (§8b) — that single
       teardown is what retires `Mcp__LogToolCalls=true`,
       `Vault__MaxResultsPerPage=25` and the disposable vault path together
 - [ ] `knapper.service` never acquired any §8b setting — grep it for
-      `LogToolCalls` and `MaxResultsPerPage` and expect nothing
+      `Sync__Mode`, `LogToolCalls`, `MaxResultsPerPage`; the only acceptable
+      hit is `Sync__Mode=heartbeat`
+
+  `Sync__Mode` leads that grep because it is the one setting on this box that
+  fails INVISIBLY. `open` does not break the gate, it configures it off:
+  `doctor` still reports ok (it prints a `warn` line, easy to read past among
+  a screen of `ok`s), `/health` is ok, `/up` is 200, `knapper verify` is
+  all-ok, the monitor stays silent — and the fail-closed guarantee §5 spent a
+  section proving is simply gone. `LogToolCalls` left on costs a verbose
+  journal; this costs the property the whole design rests on. The smoke unit
+  legitimately sets `open` (§8b), which is exactly why the two units must
+  never be edited from each other.
 - [ ] §1's restore drill run a SECOND time after §7, cold-mounted and
       `fsck`-checked, and both scratch CTs destroyed
 - [ ] `_deploy-check/` and its conflict fixture removed through the tools

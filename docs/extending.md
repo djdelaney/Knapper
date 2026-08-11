@@ -127,6 +127,17 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   (runbook §§8–9): cloudflared, alert delivery, vzdump/PBS, fail-closed
   service stops.
 
+## Runbook conventions
+
+`ops/ct106-runbook.md` is checked by `ops/runbook-lint.sh` in CI: every fenced
+`sh` block must parse, every bare `§N` must resolve to a heading in that file
+(brief references are written `brief §N`), every `<placeholder>` must be in the
+script's declared list, and the smoke unit must keep pointing away from
+`/vault`. Adding a placeholder means adding it there too — that is the cost of
+the list being something a deployment can key on. What the lint cannot check is
+whether a procedure is correct or in the right order; six review rounds' worth
+of those findings are in git history.
+
 ## Build conventions
 
 - Central Package Management: versions in `Directory.Packages.props` only;
