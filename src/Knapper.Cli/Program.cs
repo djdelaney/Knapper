@@ -127,16 +127,23 @@ int Doctor()
     Check("Vault:MetricsPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
-    Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ ({vaultOptions.RipgrepPath})", () =>
+    // The DETECTED version is in the label, not just in the failure message:
+    // a wrong rg is then caught by reading doctor's output, instead of by
+    // someone remembering why the version matters.
+    // Probed BEFORE the check so the detected version can go in the label:
+    // on a pass, `doctor` then names the rg it actually found, and a wrong
+    // build is caught by reading the output rather than by remembering that
+    // the version matters at all.
+    var probe = RipgrepVersion.Read(vaultOptions.RipgrepPath);
+    var firstLine = probe.Output?.Split('\n')[0].Trim() ?? "not found";
+    Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ ({vaultOptions.RipgrepPath} → {firstLine})", () =>
     {
-        var probe = RipgrepVersion.Read(vaultOptions.RipgrepPath);
         // Thrown, not returned false: Check appends the message, and WHICH rg
         // was found is the whole diagnosis — "too old" without a version sends
         // the operator back to the shell to find out.
         if (probe.Error is { } probeError)
             throw new InvalidOperationException(probeError);
         var version = probe.Output!;
-        var firstLine = version.Split('\n')[0].Trim();
         if (RipgrepVersion.ParseMajor(version) is not { } major)
             throw new InvalidOperationException($"unrecognized `rg --version` output: '{firstLine}'");
         if (major < RipgrepVersion.MinimumMajor)

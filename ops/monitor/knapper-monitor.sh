@@ -23,21 +23,28 @@
 #      Requires `jq` on the host.
 #
 # Usage:
-#   knapper-monitor.sh [config]     config default: /etc/knapper-monitor.conf
-#   knapper-monitor.sh --test       force an alert to prove mail delivery
+#   knapper-monitor.sh [config]          config default: /etc/knapper-monitor.conf
+#   knapper-monitor.sh --test [config]   force a mail to prove delivery
+#
+# Alert cadence: one mail when the failure SET changes, a reminder at most
+# once per RENOTIFY_SECONDS while it is unchanged, one mail on recovery. A
+# conflict file blocks mutations until a HUMAN reconciles it — mailing that
+# every five minutes for three days is how a monitor gets filtered into a
+# folder nobody reads. The exit code always reflects the live state.
 #
 # Exercise EVERY failure path before trusting this monitor (brief §8):
 # stop knapper, stop cloudflared, stop the commit timer, revoke the service
-# token — each must produce exactly one mail.
+# token — each must produce exactly one mail. Point MAILTO at TEST_MAILTO
+# while doing it, so drills cannot be mistaken for real alerts later.
 set -u
 
 CONFIG="/etc/knapper-monitor.conf"
 TEST_ALERT=0
-case "${1:-}" in
-    --test) TEST_ALERT=1 ;;
-    "") ;;
-    *) CONFIG="$1" ;;
-esac
+if [ "${1:-}" = "--test" ]; then
+    TEST_ALERT=1
+    shift
+fi
+[ -n "${1:-}" ] && CONFIG="$1"
 
 # ---- configuration (all required unless a default is shown) -------------
 #   UP_URL           e.g. https://mcp.example.com/up
@@ -47,21 +54,37 @@ esac
 #   STAMP_PATH       default /var/lib/knapper/commit-stamp (inside the CT)
 #   MAX_STAMP_AGE    seconds; default 3900 (30-min timer + one missed run)
 #   MAILTO           default alerts@example.com
+#   TEST_MAILTO      where --test goes; default $MAILTO. Point failure-injection
+#                    drills here so they cannot be mistaken for real alerts.
+#   RENOTIFY_SECONDS default 86400 — see "alert cadence" below
 #   CURL_TIMEOUT     seconds; default 20
 [ -r "$CONFIG" ] || { echo "knapper-monitor: config $CONFIG not readable" >&2; exit 2; }
 # A monitor whose mailer is missing is the exact "alert path silently dead"
 # condition this script exists to prevent. Checked up front, loudly: the
 # systemd unit fails and the journal names the cause.
-command -v mail >/dev/null 2>&1 || {
-    echo "knapper-monitor: 'mail' is not installed — alerts CANNOT be delivered; install a mailer (msmtp + mailutils)" >&2
+#
+# sendmail(8) first, `mail` second. On a Proxmox host the sendmail interface
+# is usually the established one, and it is what msmtp-mta provides. NEVER
+# install `mailutils` to satisfy the `mail` branch: it brings its own MTA and
+# takes over /usr/sbin/sendmail, breaking every OTHER monitor on the host that
+# went through sendmail. bsd-mailx is the safe provider of `mail`.
+if command -v sendmail >/dev/null 2>&1; then
+    MAILER=sendmail
+elif command -v mail >/dev/null 2>&1; then
+    MAILER=mail
+else
+    echo "knapper-monitor: no mailer — alerts CANNOT be delivered. Install msmtp + msmtp-mta (sendmail)," \
+        "or msmtp + bsd-mailx. NOT mailutils: it hijacks /usr/sbin/sendmail for the whole host." >&2
     exit 2
-}
+fi
 # shellcheck disable=SC1090
 . "$CONFIG"
 
 STAMP_PATH="${STAMP_PATH:-/var/lib/knapper/commit-stamp}"
 MAX_STAMP_AGE="${MAX_STAMP_AGE:-3900}"
 MAILTO="${MAILTO:-alerts@example.com}"
+TEST_MAILTO="${TEST_MAILTO:-$MAILTO}"
+RENOTIFY_SECONDS="${RENOTIFY_SECONDS:-86400}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-20}"
 METRICS_PATH="${METRICS_PATH:-/var/lib/knapper/metrics.json}"
 STATE_DIR="${STATE_DIR:-/var/lib/knapper-monitor}"
@@ -79,6 +102,20 @@ FAILURES=""
 fail() {
     FAILURES="${FAILURES}- $1
 "
+}
+
+# One mail, either interface. sendmail(8) needs the headers in the body.
+send_mail() {
+    _to="$1"
+    _subject="$2"
+    if [ "$MAILER" = sendmail ]; then
+        {
+            printf 'To: %s\nSubject: %s\n\n' "$_to" "$_subject"
+            cat
+        } | sendmail -t
+    else
+        mail -s "$_subject" "$_to"
+    fi
 }
 
 # ---- 1. /up through the tunnel ------------------------------------------
@@ -144,13 +181,65 @@ else
 fi
 
 # ---- alert / exit -------------------------------------------------------
+# --test bypasses the cadence entirely: it exists to prove delivery, and a
+# suppressed test mail would prove the opposite of what the operator wanted.
 if [ "$TEST_ALERT" = 1 ]; then
-    fail "TEST alert requested with --test: delivery path works if you are reading this"
+    printf 'Knapper monitor TEST alert from %s at %s — delivery path works if you are reading this.\n' \
+        "$(hostname)" "$(date -Is)" \
+        | send_mail "$TEST_MAILTO" "[knapper] monitor TEST: $(hostname)"
+    exit 0
 fi
 
-[ -z "$FAILURES" ] && exit 0
+# Alert cadence. /up answers 503 for as long as an unreconciled Sync conflict
+# file exists — a condition that legitimately persists for days until a human
+# reconciles it. Mailing that every interval trains the operator to filter the
+# monitor out, which is the same outcome as having no monitor. So: mail when
+# the failure SET changes (fingerprint), remind at most once per
+# RENOTIFY_SECONDS while it is unchanged, and send exactly one recovery mail
+# when it clears. The exit CODE still reflects the live state on every run —
+# systemd and `systemctl list-timers` never see the suppression.
+mkdir -p "$STATE_DIR"
+ALERT_STATE="$STATE_DIR/last-alert"
+NOW=$(date +%s)
 
-printf 'Knapper monitor failures on %s at %s:\n\n%s' \
-    "$(hostname)" "$(date -Is)" "$FAILURES" \
-    | mail -s "[knapper] monitor alert: $(hostname)" "$MAILTO"
+if [ -z "$FAILURES" ]; then
+    if [ -f "$ALERT_STATE" ]; then
+        printf 'Knapper monitor RECOVERED on %s at %s — all checks pass again.\n' \
+            "$(hostname)" "$(date -Is)" \
+            | send_mail "$MAILTO" "[knapper] monitor recovered: $(hostname)"
+        rm -f "$ALERT_STATE"
+    fi
+    exit 0
+fi
+
+# cksum, not a hash tool: every coreutils has it, and this only needs to tell
+# "same failure set" from "different failure set".
+FINGERPRINT=$(printf '%s' "$FAILURES" | cksum | tr -d ' ')
+PREV_FINGERPRINT=""
+PREV_NOTIFIED=0
+if [ -r "$ALERT_STATE" ]; then
+    PREV_FINGERPRINT=$(sed -n 1p "$ALERT_STATE")
+    PREV_NOTIFIED=$(sed -n 2p "$ALERT_STATE")
+    [ -n "$PREV_NOTIFIED" ] || PREV_NOTIFIED=0
+fi
+
+NOTIFY=0
+NOTE=""
+if [ "$FINGERPRINT" != "$PREV_FINGERPRINT" ]; then
+    NOTIFY=1
+elif [ "$((NOW - PREV_NOTIFIED))" -ge "$RENOTIFY_SECONDS" ]; then
+    NOTIFY=1
+    NOTE="(still failing — reminder after $(( (NOW - PREV_NOTIFIED) / 3600 ))h; the set has not changed)
+"
+fi
+
+if [ "$NOTIFY" = 1 ]; then
+    printf 'Knapper monitor failures on %s at %s:\n%s\n%s' \
+        "$(hostname)" "$(date -Is)" "$NOTE" "$FAILURES" \
+        | send_mail "$MAILTO" "[knapper] monitor alert: $(hostname)"
+    printf '%s\n%s\n' "$FINGERPRINT" "$NOW" > "$ALERT_STATE"
+else
+    # Keep the notification timestamp; only the fingerprint is re-asserted.
+    printf '%s\n%s\n' "$FINGERPRINT" "$PREV_NOTIFIED" > "$ALERT_STATE"
+fi
 exit 1

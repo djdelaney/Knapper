@@ -34,6 +34,11 @@ Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
 Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
 Environment=Sync__Mode=heartbeat
 Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
+# The fail-closed budget, stated here even though it is the default: with the
+# heartbeat probe running every 60s, this is how long continuous sync can be
+# dead before mutations stop. Left to appsettings.json it would be invisible
+# to anyone reading the unit to find out.
+Environment=Sync__MaxAgeSeconds=300
 Environment=Mcp__BindAddress=127.0.0.1
 Environment=Mcp__Port=3535
 Environment=Mcp__AllowedHosts__0=mcp.example.com

@@ -7,6 +7,13 @@ CT_ID=106
 STAMP_PATH=/var/lib/knapper/commit-stamp
 MAX_STAMP_AGE=3900
 MAILTO=alerts@example.com
+# Where `--test` mails go. Point MAILTO here too while running the §8 failure
+# drills, so injected failures never sit in the stream beside real ones.
+TEST_MAILTO=failtest@example.com
+# An unchanged failure set re-notifies at most this often (default 24h). A
+# Sync conflict file blocks writes until a human reconciles it; that is days,
+# not minutes, and one mail per interval would train the operator to ignore it.
+RENOTIFY_SECONDS=86400
 CURL_TIMEOUT=20
 METRICS_PATH=/var/lib/knapper/metrics.json
 STATE_DIR=/var/lib/knapper-monitor

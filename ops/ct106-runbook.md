@@ -18,22 +18,38 @@ On the Proxmox host:
   `startup: order=` after the other guests.
 - **`nesting=1`** even with no Docker (systemd 254+ needs it for
   `LoadCredential=` tmpfs; without it units fail `243/CREDENTIALS`).
-- **Pin DNS**: `pct set 106 --nameserver "192.168.1.1 1.1.1.1"` — a blank
+- **Pin DNS**: `pct set 106 --nameserver "<lan-resolver> 1.1.1.1"` — a blank
   field inherits the host's Tailscale MagicDNS, a black hole in a CT.
   Re-check `/etc/resolv.conf` after a reboot.
+- **Prove the rootfs is case-SENSITIVE before anything populates it.** On ZFS
+  `casesensitivity` is fixed at dataset CREATION and cannot be changed
+  afterwards, so discovering it from a `knapper doctor` failure (§5) means
+  destroying and rebuilding the CT with a synced vault already in it:
+  `zfs get casesensitivity <rootfs-dataset>` must report `sensitive`.
 - **Verify `tmpdir: /var/tmp` in `/etc/vzdump.conf`** on the host (should
   exist from an earlier CT on this host — verify, don't assume), then prove backup BEFORE `.git`
-  exists: `vzdump 106 --storage nas-backup` + `zstd -t` the artifact.
+  exists: `vzdump 106 --storage <backup-storage>` + `zstd -t` the artifact.
+- If this host ALSO runs a scheduled backup product, that path is a separate
+  proof: confirm a snapshot of this CT exists in its datastore after the
+  first scheduled run, and that any offsite replication picked it up. A
+  guest-selection of "all" is a configuration, not evidence. Also before
+  `.git` exists.
 
 ## 2. OS baseline (brief §11)
 
 `unattended-upgrades` (Debian-Security only, no auto-reboot), `msmtp` +
-`bsd-mailx` (never `mailutils`), a dedicated Fastmail app password
+`msmtp-mta` + `bsd-mailx` (never `mailutils`), a dedicated Fastmail app password
 inline in msmtprc, `set_from_header on` in the defaults block, **NO** to the
 AppArmor debconf prompt, log via `syslog LOG_MAIL`. Mail to
 `lab@example.com`; prove the unattended-upgrades mail path specifically
 (`MailReport "always"` → run → confirm arrival → back to `on-change`).
 Test cron entries with `env -i` and cron's real PATH.
+
+`msmtp-mta` is not optional dressing: it is what provides `/usr/sbin/sendmail`,
+and `bsd-mailx` DEPENDS on an MTA — install it without staging `msmtp-mta`
+first and apt satisfies that dependency by pulling in `exim4`. `mailutils`
+stays forbidden for the same reason in reverse: it ships its own MTA and
+takes over the sendmail path.
 
 ## 3. Runtimes + service user
 
@@ -59,9 +75,14 @@ chown -R knapper:knapper /vault /var/lib/knapper
 `/vault` on the CT's local rootfs — **NEVER NFS** (house policy; watchers
 and locking misbehave), and **only on a case-SENSITIVE filesystem** (ext4
 is; per-path lock identity and duplicate detection assume distinct strings
-are distinct files — `knapper doctor` fails otherwise).
+are distinct files — `knapper doctor` fails otherwise). §1 already proved
+this for a ZFS rootfs, where it cannot be fixed after the fact.
 
-### Make the journal persistent (do this BEFORE the service runs)
+## 3b. Make the journal persistent (BEFORE the service runs)
+
+Numbered separately because it is a prerequisite with its own verify-and-reboot
+loop, not a detail of installing packages — sections are what people skim, and
+this one must not be skipped.
 
 Knapper writes no log file. It logs structured JSON to stdout and systemd
 routes that to journald, which owns rotation, size caps and retention. The
@@ -153,7 +174,9 @@ cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
 # the REAL public hostname (the unit ships the mcp.example.com placeholder);
 # it is checked again in §6 because that is when it starts mattering. Then:
 systemctl daemon-reload
-systemctl enable --now knapper-heartbeat.timer knapper.service knapper-commit.timer
+# NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
+# with no .git, and the repo is not created until §7. It starts there.
+systemctl enable --now knapper-heartbeat.timer knapper.service
 # doctor reads env, not the service unit — pass the SAME config the service runs with:
 sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
   Vault__AuditLogPath=/var/lib/knapper/audit.jsonl Vault__MetricsPath=/var/lib/knapper/metrics.json \
@@ -183,6 +206,14 @@ afterwards through the tools), never against real notes:
   `Sync__MaxAgeSeconds` a mutation must fail `[MutationBlocked]`; restart and
   confirm it clears. This is the only test of `sync-heartbeat.sh`'s
   assumption about real `ob sync-status` output.
+
+  That window is the fail-closed budget and it belongs where the service is
+  read: set `Environment=Sync__MaxAgeSeconds=300` in knapper.service even
+  though 300 is the default, because otherwise its only home is
+  `appsettings.json` and nobody reading the unit can see how long sync may be
+  dead while writes still land. With the heartbeat timer at 60s, the honest
+  statement is "up to ~5 minutes of dead sync is invisible to agents" — and
+  the gate test has a number to wait for instead of a guess.
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.
@@ -213,13 +244,18 @@ afterwards through the tools), never against real notes:
    shipped `mcp.example.com` placeholder still in place, ingress comes up
    and then refuses all of it. Verify through the tunnel, not from the CT:
    a loopback `curl` passes the guard no matter what this is set to.
-4. Optional second path-scoped Access app for `/up` → external monitor;
-   its AUD goes in `Mcp__Access__MonitoringAudience`, which is accepted on
-   `/up` and nowhere else. It must be a genuinely SEPARATE application:
-   startup refuses when it equals `Mcp__Access__Audience`, because equal
-   AUDs give the monitoring token the whole vault surface while the config
-   still reads like a path-scoped restriction. Leave it empty for a
-   single-app setup — the monitor then uses the main app's token.
+4. Second path-scoped Access app for `/up` → external monitor. Its AUD goes
+   in `Mcp__Access__MonitoringAudience`, which is accepted on `/up` and
+   nowhere else, and it must be a genuinely SEPARATE application: startup
+   refuses when it equals `Mcp__Access__Audience`, because equal AUDs give
+   the monitoring token the whole vault surface while the config still reads
+   like a path-scoped restriction.
+
+   Leaving `MonitoringAudience` empty is the **single-app setup**, and it is
+   a downgrade with a name rather than a neutral choice: the monitor then
+   authenticates with the main app's token, so a credential living in a
+   config file on ANOTHER machine can read and mutate the whole vault. Two
+   apps is the default; take one only deliberately.
 5. **Re-run the verifier through the tunnel** — from the dev box or the
    Proxmox host, NOT the CT (a loopback URL skips every ingress check):
 
@@ -232,24 +268,40 @@ afterwards through the tools), never against real notes:
    Now the skipped checks do the work: unauthenticated callers refused on
    both `/up` and the MCP endpoint, `/health` 404 from outside, `/up`
    answering 200 with booleans only, and — with the monitor token supplied —
-   that credential being refused at the vault surface. Every line must read
-   `ok` (exit 0); no line may still read `skip` except the single-app one.
+   that credential being refused at the vault surface.
+
+   **Read the `skip` lines, not just the red ones.** A missing `CF_MONITOR_*`
+   pair does not fail the monitoring-token check, it SKIPS it, and a skimmer
+   looking for red sees a clean run that proved nothing about the credential
+   asymmetry. In a two-app deployment every line must read `ok` and exit must
+   be 0; the only acceptable `skip` is the single-app one from §6.4, and only
+   if that was a deliberate choice.
 6. Watch for the redirect-URI / DCR failure class during claude.ai
    connector setup (bit this homelab's previous MCP go-live).
 
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh
-sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
-  /opt/knapper/cli/knapper git-init
+CLI_ENV="Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
+  Vault__CommitStampPath=/var/lib/knapper/commit-stamp"
+# shellcheck disable=SC2086
+sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
+# Seed the monitor's freshness stamp with one commit BY HAND, then start the
+# timer. In that order: `knapper commit` fails on a vault with no .git, and
+# §8's staleness alert is undefined until the stamp exists at all.
+sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper commit
+systemctl enable --now knapper-commit.timer
 ```
 
 - Local-only. **NO remote until Dan closes the credential sweep.**
-- The commit timer is already running; `knapper commit` takes the vault-wide
-  lock and refuses credential-shaped content (the pre-commit scan).
+- `knapper commit` takes the vault-wide lock and refuses credential-shaped
+  content (the pre-commit scan). Every SUCCESSFUL run — including "nothing to
+  commit" — fsync-touches the stamp §8 watches; refused and failed runs do
+  not, which is what makes a wedged job visible.
 - Never `git checkout`/`reset` against the live tree — Sync propagates the
   revert vault-wide.
-- `pct snapshot obsidian-mcp pre-upgrade-YYYYMMDD` before any bump.
+- `pct snapshot 106 pre-upgrade-YYYYMMDD` before any bump (`pct` takes the
+  VMID, not the CT's name).
 
 ## 8. Monitoring (brief §8 — OUTSIDE the CT, on the Proxmox host)
 
@@ -265,6 +317,26 @@ cp ops/monitor/knapper-monitor.{service,timer} /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now knapper-monitor.timer
 knapper-monitor.sh --test                # MUST land a mail before trusting it
 ```
+
+Host prerequisites: `jq`, `curl`, and `pct` (so it runs as root on the
+Proxmox host), plus a mailer — and the mailer needs the same care as §2, on a
+DIFFERENT machine with a different package set. The script prefers
+`sendmail -t`, falls back to `mail`, and refuses to run when neither exists,
+so `--test` failing is diagnosable. **`mailutils` is forbidden here too**, and
+for a sharper reason than in the CT: it bundles its own MTA and takes over
+`/usr/sbin/sendmail` for the whole host, breaking unrelated monitors that
+have nothing to do with this project. Reach for `msmtp` + `msmtp-mta`, or
+`bsd-mailx`.
+
+Alert cadence: one mail when the failure SET changes, a reminder at most once
+per `RENOTIFY_SECONDS` (default 24h) while it is unchanged, and exactly one
+mail on recovery. This matters most for the conflict-file case — `/up` stays
+503 until a HUMAN reconciles, which is days, and a mail every five minutes
+for three days is how a monitor gets filtered into a folder nobody reads. The
+exit code still reflects live state on every run, so `systemctl` and the
+journal never see the suppression. Set `TEST_MAILTO` to a distinct address
+and point `MAILTO` at it while running the failure drills below, so injected
+failures cannot later be mistaken for real ones.
 
 What it checks:
 
@@ -291,7 +363,7 @@ What it checks:
 
 Exercise EVERY failure path before trusting the monitor: stop knapper,
 stop cloudflared, stop the commit timer, revoke the service token — one
-mail each.
+mail each, then one recovery mail as each is restored.
 
 ## 8b. Behavioral smoke test (disposable vault — before any connector sees Helios)
 
@@ -330,15 +402,17 @@ find/summarize/edit tasks, answers spot-checked against the disposable
 vault by hand.
 
 **Outcome handling.** Failures here are STEERING failures — fix tool
-descriptions, server instructions, or the §14 routing instruction and
+descriptions, server instructions, or the brief's §14 routing instruction and
 re-run; the contract itself does not move to accommodate the model
 (house rule). Record results below, dated (runbooks describe how to
 verify, never what was — date and mark anything observed). Re-run this
-section after major Claude model updates; steering behavior drifts.
+section after major Claude model updates (steering behavior drifts) AND
+after any change to the tool surface — a renamed or added tool invalidates
+test 4's routing evidence exactly as thoroughly as a new model does.
 
 - [ ] _no runs recorded yet_
 
-## 9. Cutover (brief §12.8 — Dan's call, only after §13 and §8b pass)
+## 9. Cutover (brief §12.8 — Dan's call, only after the brief's §13 and §8b pass)
 
 Add the connector to every agent surface; verify query parity; remove local
 Helios folders from agent workspaces; install the routing instruction (brief

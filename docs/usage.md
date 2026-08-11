@@ -175,7 +175,7 @@ Tool errors are structured MCP errors whose message leads with the code:
 
 The server writes **no log file**. It logs structured JSON to stdout and
 systemd routes that to journald, which owns rotation, size caps and
-retention (`SystemMaxUse` etc., configured in runbook §3). Under
+retention (`SystemMaxUse` etc., configured in runbook §3b). Under
 `ProtectSystem=strict` the service could not write `/var/log` even if it
 wanted to. The audit log above is a separate, deliberate artifact — it is
 the mutation record, not the diagnostic trail.
