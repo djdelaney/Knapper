@@ -144,11 +144,21 @@ format by default.
   `ToolSupport.Run` — agents parse that prefix to decide "re-read and
   rebuild" vs "give up". New tools go through `Run`; a bare exception would
   reach clients as an unstructured message with no code.
-- **The locked tool table (`ToolSurface.All`) and the
-  `[McpServerTool(Name=…)]` attributes are held in lockstep by a test.**
-  Tool names are a client-facing contract; renames are version bumps, not
-  refactors. There is no unconditional-write tool in the table and never
-  will be.
+- **The locked tool table (`ToolSurface.All`), the `[McpServerTool(Name=…)]`
+  attributes, and `Knapper.Core.ToolNames.All` are held in lockstep by
+  tests.** Tool names are a client-facing contract; renames are version
+  bumps, not refactors. There is no unconditional-write tool in the table
+  and never will be. The third list exists because `knapper verify --url`
+  asserts a DEPLOYED server's surface against it from another assembly — if
+  it drifted, the one check standing between a partially-registered server
+  and production would assert the wrong contract, in the green.
+- **`knapper verify` is READ-ONLY and must stay read-only.** The runbook
+  points it at the live service, where the vault IS Helios over Obsidian
+  Sync — a write there lands real notes on Dan's devices. Its one mutation
+  call targets a path that cannot exist, so it dies at the fresh read
+  before any temp file; `VerifyCommandTests` byte-compares the whole vault
+  across a run. Write-side races belong to the runbook's §8b
+  disposable-vault session, never here.
 - **The Access loopback exemption requires loopback peer AND loopback
   Host** (`HostGuard.IsLocalRequest` — the one definition, used by both the
   audience handler and /health's filter). Production is

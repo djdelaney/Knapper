@@ -6,9 +6,12 @@
 //   knapper status              one-screen operational summary
 //   knapper doctor              config/dependency checks; exit 1 on any failure
 //   knapper audit-tail [n]      last n audit entries (default 20)
+//   knapper verify --url …      READ-ONLY checks against a DEPLOYED server
 //
 // Configuration: appsettings.json next to the binary (same schema as the MCP
 // server's Vault/Sync sections) + environment variables (Vault__RootPath=…).
+// `verify` is the exception: it is a pure client and reads no vault config,
+// so it runs from anywhere that can reach the URL.
 
 using Knapper.Core;
 using Knapper.Core.Git;
@@ -36,6 +39,7 @@ try
         "status" => Status(),
         "doctor" => Doctor(),
         "audit-tail" => AuditTail(args.Length > 1 && int.TryParse(args[1], out var n) ? n : 20),
+        "verify" => Knapper.Cli.Verify.Run(args),
         _ => Usage(),
     };
 }
@@ -47,7 +51,8 @@ catch (KnapperException e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: knapper <git-init|commit|status|doctor|audit-tail [n]>");
+    Console.Error.WriteLine(
+        "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|verify --url <url> [--client-id ID --client-secret SECRET]>");
     return 2;
 }
 

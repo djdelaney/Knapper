@@ -74,6 +74,10 @@ evidence the crash was worth investigating for.
 ```sh
 mkdir -p /var/log/journal
 systemd-tmpfiles --create --prefix /var/log/journal
+# The drop-in directory does NOT exist on a fresh Debian CT — without this
+# the heredoc below dies on redirection and journald keeps its RAM-only
+# default while the rest of this section reads as if it were configured.
+mkdir -p /etc/systemd/journald.conf.d
 cat >/etc/systemd/journald.conf.d/knapper.conf <<'CONF'
 [Journal]
 Storage=persistent
@@ -90,8 +94,13 @@ systemctl restart systemd-journald
 journalctl --header | grep -i 'file path'   # must be under /var/log/journal
 journalctl --disk-usage
 systemctl reboot                            # then, after it comes back:
-journalctl --boot=-1 -u knapper | tail       # last boot's logs still readable
+journalctl --boot=-1 | tail                 # last boot's logs still readable
 ```
+
+Knapper does not exist yet at this point, so the previous-boot read above
+uses whatever the CT already logs — that is what proves persistence. Repeat
+it against the service itself once §5 has it running and it has survived one
+reboot: `journalctl --boot=-1 -u knapper | tail`.
 
 Sizing note: `SystemMaxUse` is the cap for the WHOLE journal, shared with
 every other unit on the CT, not a per-service quota. 512M against a 16 GB
@@ -121,7 +130,14 @@ not just from an interactive root shell.
   never sync (multi-day incident 2026-08-03).
 
 Install `obsidian-headless.service` from `ops/systemd/`, start, and
-**verify content arrives including `.sh`/`.py` files**.
+**verify content arrives including `.sh`/`.py` files**. The publish tarball
+that puts `ops/` on the CT does not land until §5, so copy this ONE unit
+from the repo now — `scp ops/systemd/obsidian-headless.service
+root@ct106:/etc/systemd/system/` — then `systemctl daemon-reload` and
+`systemctl enable --now obsidian-headless`. (§5's bulk copy re-installs the
+same file harmlessly.) Sync must be running and healthy before §5: the
+heartbeat probe gates mutations on it, and `knapper doctor` fails on a
+stale heartbeat.
 
 ⚠️ **VERIFY `ops/sync-heartbeat.sh`'s health check against the real
 `ob sync-status` output** before trusting the mutation gate — the script
@@ -133,7 +149,9 @@ documents the assumption it makes.
 # on the dev box: ops/publish.sh; scp the tarball
 tar -xzf knapper-<v>-linux-x64.tar.gz -C /opt/knapper
 cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
-# edit knapper.service env if paths differ; then:
+# edit knapper.service env if paths differ, and set Mcp__AllowedHosts__0 to
+# the REAL public hostname (the unit ships the mcp.example.com placeholder);
+# it is checked again in §6 because that is when it starts mattering. Then:
 systemctl daemon-reload
 systemctl enable --now knapper-heartbeat.timer knapper.service knapper-commit.timer
 # doctor reads env, not the service unit — pass the SAME config the service runs with:
@@ -143,12 +161,37 @@ sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper
   Sync__Mode=heartbeat Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat \
   /opt/knapper/cli/knapper doctor                 # must be all-ok
 curl -s 127.0.0.1:3535/health | jq .status        # "ok"
+sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/
 ```
 
-Acceptance before ingress: re-run the §13 race tests against the live
-service — two-process stale edit, simultaneous create, conflict gate
-(synthetic `X (Conflicted copy ...).md`), and each fail-closed path (stop
-sync → mutation blocked; stop knapper → hard failure, no fallback).
+`knapper verify` is READ-ONLY by design and stays that way: at this point
+`/vault` is already Helios via Sync, so a write test would land real notes on
+Dan's devices. From loopback it checks the contract the wire carries — the
+13 locked tool names exactly (a partially-registered surface answers
+`tools/list` without complaint), the routing instruction, a no-match search
+that still reports `scannedFiles > 0` (the live ripgrep-15 evidence check),
+a well-formed completeness envelope, whole-file SHAs on reads, and a typed
+`[NotFound]` from the mutation surface. It announces the ingress checks it
+SKIPPED over loopback; §6 re-runs it through the tunnel, where those are the
+point.
+
+Acceptance before ingress — the deployment-specific half, none of which any
+repo test can reach. Do it in a scratch subtree (`_deploy-check/`, removed
+afterwards through the tools), never against real notes:
+
+- **Sync gate**: `systemctl stop obsidian-headless` → within
+  `Sync__MaxAgeSeconds` a mutation must fail `[MutationBlocked]`; restart and
+  confirm it clears. This is the only test of `sync-heartbeat.sh`'s
+  assumption about real `ob sync-status` output.
+- **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
+  scratch note; mutations to BOTH must be refused until it is removed.
+  Prefer a conflict file Sync itself produced if one has appeared.
+- **No fallback**: `systemctl stop knapper` → the client hard-fails; confirm
+  no agent silently reaches the filesystem instead.
+- **Two-process write races** (stale edit, simultaneous create) belong to
+  §8b's disposable-vault session, not here — the repo's acceptance tier
+  already proves them over the same wire against the same binary, and here
+  the blast radius is Helios.
 
 ## 6. Ingress (brief §9 — B2: Cloudflare Access; B1 was dropped with the Python fork)
 
@@ -164,11 +207,35 @@ sync → mutation blocked; stop knapper → hard failure, no fallback).
 3. Origin validation ON (knapper.service): `Mcp__Access__Enabled=true`,
    `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the Access app AUD).
    The server refuses to start if it cannot fetch the signing keys — that
-   refusal is the feature.
-4. Watch for the redirect-URI / DCR failure class during claude.ai
+   refusal is the feature. **`Mcp__AllowedHosts__0` must already be the
+   real public hostname**: a tunneled request keeps that hostname, and the
+   DNS-rebinding guard rejects every Host it does not recognize — with the
+   shipped `mcp.example.com` placeholder still in place, ingress comes up
+   and then refuses all of it. Verify through the tunnel, not from the CT:
+   a loopback `curl` passes the guard no matter what this is set to.
+4. Optional second path-scoped Access app for `/up` → external monitor;
+   its AUD goes in `Mcp__Access__MonitoringAudience`, which is accepted on
+   `/up` and nowhere else. It must be a genuinely SEPARATE application:
+   startup refuses when it equals `Mcp__Access__Audience`, because equal
+   AUDs give the monitoring token the whole vault surface while the config
+   still reads like a path-scoped restriction. Leave it empty for a
+   single-app setup — the monitor then uses the main app's token.
+5. **Re-run the verifier through the tunnel** — from the dev box or the
+   Proxmox host, NOT the CT (a loopback URL skips every ingress check):
+
+   ```sh
+   CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
+   CF_MONITOR_CLIENT_ID=<monitor-token>.access CF_MONITOR_CLIENT_SECRET=<monitor-secret> \
+     knapper verify --url https://mcp.example.com/
+   ```
+
+   Now the skipped checks do the work: unauthenticated callers refused on
+   both `/up` and the MCP endpoint, `/health` 404 from outside, `/up`
+   answering 200 with booleans only, and — with the monitor token supplied —
+   that credential being refused at the vault surface. Every line must read
+   `ok` (exit 0); no line may still read `skip` except the single-app one.
+6. Watch for the redirect-URI / DCR failure class during claude.ai
    connector setup (bit this homelab's previous MCP go-live).
-5. Optional second path-scoped Access app for `/up` → external monitor;
-   its AUD goes in `Mcp__Access__MonitoringAudience`.
 
 ## 7. Git (brief §10 — after backup is proven)
 

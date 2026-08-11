@@ -9,6 +9,11 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <!-- `knapper verify` speaks to a deployed server as a real MCP
+         client over Streamable HTTP — the same transport Claude uses, which
+         is the point of the check. Client half only; the server packages
+         stay in Knapper.Mcp. -->
+    <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
   <ItemGroup>

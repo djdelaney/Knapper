@@ -56,6 +56,17 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         }
     }
 
+    [Fact]
+    public void Tool_surface_table_is_in_lockstep_with_the_names_the_verifier_asserts()
+    {
+        // `knapper verify --url` checks a DEPLOYED server against
+        // Knapper.Core's ToolNames.All. If that list drifted from this table
+        // the live check would happily assert the wrong surface — and it is
+        // the only check standing between a partially-registered server and
+        // production.
+        ToolSurface.All.Keys.ShouldBe(Knapper.Core.ToolNames.All, ignoreOrder: true);
+    }
+
     [Theory]
     [InlineData("localhost", null, true)]
     [InlineData("127.0.0.1", null, true)]

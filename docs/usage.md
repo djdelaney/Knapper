@@ -148,6 +148,25 @@ Tool errors are structured MCP errors whose message leads with the code:
   unhealthy, ripgrep missing, audit unwritable, conflict files present.
 - `knapper status` / `knapper doctor` — one-screen summary / checks with
   exit codes for scripting.
+- `knapper verify --url <url>` — checks a DEPLOYED server from the outside,
+  as a real MCP client over the same transport agents use. **Read-only, and
+  it must stay that way**: it is pointed at the production vault, where a
+  stray write syncs to the user's devices. Checks `tools/list` against the
+  locked 13 names (a partially-registered surface answers without
+  complaint), the routing instruction, scan evidence on a no-match search
+  (the live ripgrep-15 check), the completeness envelope, whole-file SHAs,
+  and a typed `[NotFound]` from the mutation surface. Through a tunnel it
+  also checks the ingress contract: unauthenticated callers refused,
+  `/health` 404 from outside, `/up` disclosing booleans only, and the
+  monitoring token refused at the vault surface. Against a loopback URL
+  those ingress checks print `skip` — the same-box exemption is the thing
+  they would be testing. Exit 0 = all passed.
+
+  ```sh
+  CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
+  CF_MONITOR_CLIENT_ID=… CF_MONITOR_CLIENT_SECRET=… \
+    knapper verify --url https://mcp.example.com/
+  ```
 - The audit log (`Vault:AuditLogPath`) is JSONL, one entry per mutation
   attempt including rejections: timestamp, client, request id, op, path,
   outcome, before/after SHA. `knapper audit-tail 50` shows the recent end.

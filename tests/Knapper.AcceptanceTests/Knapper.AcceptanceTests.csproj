@@ -25,6 +25,9 @@
          probes. These tests never load Knapper types in-process on purpose:
          the whole point is the black box. -->
     <ProjectReference Include="..\..\src\Knapper.Mcp\Knapper.Mcp.csproj" />
+    <!-- Same reason: `knapper verify` is exercised as the SHIPPED binary
+         against a real server over a real socket, not as a method call. -->
+    <ProjectReference Include="..\..\src\Knapper.Cli\Knapper.Cli.csproj" />
   </ItemGroup>
 
 </Project>

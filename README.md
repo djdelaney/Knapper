@@ -33,7 +33,7 @@ contract):
 |---|---|
 | `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch — with conflict/sync gates, a write-ahead JSONL audit log, and a durable metrics snapshot for the external monitor) |
 | `src/Knapper.Mcp` | ASP.NET Core MCP server: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
-| `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan + monitor freshness stamp) / `status` / `doctor` / `audit-tail` |
+| `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan + monitor freshness stamp) / `status` / `doctor` / `audit-tail` / `verify --url` (read-only checks against a DEPLOYED server, including the ingress contract through the tunnel) |
 | `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), the Proxmox-host monitor kit (`ops/monitor/`: silent-on-success alerting over `/up` + commit-stamp age + metrics deltas), self-verifying publish script, CT 106 deployment runbook |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |
 | `tools/Knapper.MutationProbe` | child-process probe for two-process stale-edit / simultaneous-create races |

@@ -139,11 +139,14 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
 
 ## Ideas already scoped (not yet built)
 
-- **Live-server §13 acceptance runner**: the repo-runnable half exists
-  (`Knapper.AcceptanceTests` spawns real server processes); what remains
-  is a `knapper verify --url` variant that drives the SAME scenarios
-  against the DEPLOYED CT 106 service for the runbook §5 pre-ingress
-  check.
+- **Live-server write races**: `knapper verify --url` now covers the
+  deployed service READ-ONLY (runbook §5 pre-ingress and §6 through the
+  tunnel), and that boundary is deliberate — it runs against Helios, where
+  a stray write syncs to Dan's devices. The write-side scenarios
+  (two-process stale edit, simultaneous create) live in §8b's
+  disposable-vault session instead; automating them there against a
+  deployed URL is the remaining piece, and it must never be folded into
+  `verify`.
 - **Read-only deployment profile**: `Mcp:DisabledTools` with the seven
   mutation tools listed, as a documented one-liner.
 - **Per-client credentials** (brief §8 "where practical"): Access already
