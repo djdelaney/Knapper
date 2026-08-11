@@ -9,6 +9,45 @@ Ops runbooks describe how to VERIFY live state, never what it was (house
 rule, via Mailvec): when you must record observed state, date it and mark it
 observed.
 
+## Map: what exists when
+
+The intended state after each section — a map of the build, not a record of
+any run. Two review rounds found defects that were invisible section by
+section and obvious against this table (a drill reading `.git` before §7
+created it; a step in §5 configuring a unit whose environment §5 had already
+captured). **If a section disagrees with this table, one of them is a bug —
+resolve it, don't pick a winner.**
+
+| After § | On disk | Running | Reachable | Deviations in force |
+|---|---|---|---|---|
+| 1 | bare rootfs; **archive #1** (pre-vault, disposable) | — | — | scratch CT 9nn, transient |
+| 2 | mail stack | — | — | `MailReport always`, reverted in-section |
+| 3 / 3b | rg 15, node, empty `/vault`, persistent journal | — | — | — (first reboot; DNS re-checked) |
+| 4 | **`/vault` = Helios, syncing** | `obsidian-headless` | — | — |
+| 5 | `/opt/knapper`, units, `_deploy-check/` **(synced)** | + `knapper` :3535, heartbeat timer | loopback | scratch subtree + conflict fixture; services stopped during gates |
+| 6 | tunnel config, Access apps 1–2 | + `cloudflared` | prod hostname, loopback | — |
+| 7 | **`.git`**, commit stamp, **archive #2** (first with history) | + commit timer | as §6 | scratch CT 9nn again |
+| 8 | monitor + conf (on the HOST) | + monitor timer | as §6 | **`MAILTO` → drill address**; `/up` token replaced |
+| 8b | smoke unit, disposable vault outside `/vault`, Access app 3 | + `knapper-smoke` :3536 | + smoke hostname | smoke unit/vault/route/app/connector; `LogToolCalls`; page-size override |
+| 9 | production | `knapper`, `obsidian-headless`, 2 timers, monitor | prod hostname only | **all of the above must be zero** |
+
+**Peak surface is §8b**: 2 Knappers, 2 hostnames, 2 ports, 3 Access apps, 3
+service tokens, 2 vaults, 2 audit logs, 2 archives, 6 live deviations. That
+row is what §9's checklist has to reverse in full.
+
+Each identity below has exactly one job. Most of what goes wrong late in this
+document is a reference that resolves to the wrong member of a pair:
+
+| Identity | Belongs to | Never |
+|---|---|---|
+| Root Access app + token (§6.2) | Claude Code and the other connectors | the monitor |
+| `/up` path-scoped app + token (§6.4) | the host-side monitor only | the vault surface |
+| Smoke app + token (§8b) | the smoke instance on :3536 | production, and gone by §9 |
+| `_deploy-check/` (§5) | live-vault acceptance gates — **synced to Dan's devices** | mistaken for isolated |
+| `/var/lib/knapper-smoke/vault` (§8b) | the smoke instance — outside `/vault`, unreachable by its unit | inside `/vault` |
+| Archive #1 (§1) | proof that restore works | an incident restore |
+| Archive #2 (§7) | the only backup containing vault history | pruned before #1 |
+
 ## 1. LXC (brief §12.1, §11 traps)
 
 On the Proxmox host:
@@ -90,11 +129,26 @@ On the Proxmox host:
   commit` was mid-flight. That narrow window is exactly what this drill
   exists to catch. If `fsck` ever gets too slow for the repo's size, the
   cheap floor is `git rev-parse HEAD && git cat-file -e HEAD^{tree}`.
+
+  **A failing `fsck` on pass 2 has two candidate causes**, and the commit
+  timer is live by then (§7 starts it before taking that backup): the backup
+  path may be broken, or this archive may simply BE the mid-commit capture.
+  Distinguish before concluding: stop `knapper-commit.timer`, take another
+  `vzdump`, re-run the check. Still failing means the backup path; clean
+  means you caught the window, which is worth knowing but is not a backup
+  defect — real backups run against a live timer.
   If the container must be booted, remove its network interface AND disable
   `obsidian-headless` in the mounted rootfs before the first start.
 
   §7 and §9's checklist call the second pass back in, because nobody re-opens
   §1 mid-build.
+
+  **This first archive is disposable, and it is dangerous to keep unlabelled.**
+  It restores cleanly, passes every integrity check, and contains no vault
+  and no history — so during an incident "restore the backup of 106" can
+  select it and succeed at nothing. Once §7's post-`git-init` archive
+  verifies, prune this one or mark it in the storage's notes field:
+  `pre-git, mechanism proof only`.
 
 ## 2. OS baseline (brief §11)
 
@@ -310,7 +364,19 @@ point.
 
 Acceptance before ingress — the deployment-specific half, none of which any
 repo test can reach. Do it in a scratch subtree (`_deploy-check/`, removed
-afterwards through the tools), never against real notes:
+afterwards through the tools), never against real notes.
+
+⚠️ **This scratch is SYNCED. §8b's is not.** The word covers two different
+things in this runbook and only one of them is contained: `_deploy-check/`
+lives inside `/vault`, which by §4 is Helios, so the subtree *and* the fake
+`X (Conflicted copy 2026-01-01).md` replicate to every device Dan owns while
+these gates run — including a phone that is offline now and picks them up
+after cleanup. §8b's disposable vault lives outside `/vault` and its unit
+cannot even write there. Keep the fixtures few, obviously named, and short-
+lived, and confirm at §9 that the DELETION propagated rather than merely
+happened on the CT. (The conflict fixture also degrades `/up` vault-wide
+while it exists — harmless here because the monitor arrives in §8, but a
+reason not to re-run these gates casually afterwards.)
 
 - **Sync gate**: `systemctl stop obsidian-headless` → within
   `Sync__MaxAgeSeconds` a mutation must fail `[MutationBlocked]`; restart and
@@ -550,13 +616,17 @@ last one does not restore cleanly:
    monitor failure for the first hour. Restart the timer, then run
    `knapper commit` by hand so the stamp is fresh again and the recovery mail
    fires without another hour's wait.
-4. Revoke the monitoring service token LAST, because a revoked Cloudflare
-   token is not restored, it is **replaced**: the new `<token>.access` and
-   secret must be written into `/etc/knapper-monitor.conf` (chmod 600, on the
-   host) AND wherever §6.2's token lives for Claude Code. Until both are
-   updated the monitor keeps alerting and the connector keeps failing, which
-   looks exactly like the drill having broken something. Doing it last keeps
-   that tail from contaminating the other three.
+4. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
+   is not restored, it is **replaced**: issue a new one on the path-scoped
+   `/up` app from §6.4 and write it into `/etc/knapper-monitor.conf` (chmod
+   600, on the host). Until it is, the monitor keeps alerting, which looks
+   exactly like the drill having broken something — hence doing it last.
+
+   **Claude Code is unaffected by this drill.** It holds the ROOT app's token
+   from §6.2; the monitor holds the `/up` app's. Two apps, two tokens, and
+   that separation is precisely what §6.4 buys — treating them as one is the
+   belief §6.4 exists to prevent. (Revoking the root token instead is the
+   mirror image: the connector needs the new value and the monitor does not.)
 
 Then the **positive control**, which is what actually closes this section:
 restore `MAILTO` to the real alert address, induce ONE more failure, confirm
@@ -591,6 +661,21 @@ app for the smoke hostname; that is the cost of not touching production, and
 it is worth it. A second CT restored from §7's backup also works if you
 prefer isolation over convenience — disable `obsidian-headless` in the
 mounted rootfs BEFORE first start (§1's warning applies in full).
+
+**The smoke instance's own gates must be OPEN, or it fails its own tests.**
+Two of them would otherwise refuse every mutation, and §8b's outcome rule
+would send you off to rewrite tool descriptions over it:
+
+- **Sync gate**: nothing syncs the disposable copy and nothing touches a
+  heartbeat for it, so `Sync__Mode=heartbeat` would start returning
+  `[MutationBlocked]` after `Sync__MaxAgeSeconds` — failing tests 2 and 4,
+  which are both mutations, in a way that reads as the MODEL misbehaving.
+  The example unit sets `Sync__Mode=open` for exactly this reason; that is
+  the one deployment where the dev-only opt-out is correct, because the gate
+  is protecting a vault that does not exist here.
+- **Conflict gate**: a single `* (Conflicted copy ...)*` name anywhere in the
+  seeded corpus refuses every smoke mutation before test 1 runs. Do not seed
+  one, and do not copy §5's `_deploy-check/` fixtures into this vault.
 
 **Setup.** That instance over a DISPOSABLE COPY of the vault (never Helios
 itself), `Mcp__LogToolCalls=true`, fresh audit log + metrics file, and for
@@ -656,10 +741,15 @@ silently if left:
       `LogToolCalls` and `MaxResultsPerPage` and expect nothing
 - [ ] §1's restore drill run a SECOND time after §7, cold-mounted and
       `fsck`-checked, and both scratch CTs destroyed
-- [ ] `_deploy-check/` scratch subtree removed through the tools (§5);
-      disposable §8b vault deleted
-- [ ] `/opt/knapper` back on the current release if the §7 rollback
-      rehearsal ran
+- [ ] `_deploy-check/` and its conflict fixture removed through the tools
+      (§5) AND the deletion confirmed on a second device — it is inside
+      Helios, so "gone on the CT" is not gone
+- [ ] the smoke CONNECTOR entry removed from the client (§8b) — a configured
+      connector pointing at a dead hostname invites someone to later "fix"
+      it by aiming it at production
+- [ ] the shipped tarball is still on the CT, readable, for the first real
+      upgrade's rollback (§7's rehearsal leaves you on current by
+      construction — there is no earlier version to be stranded on)
 
 **If cutover is abandoned**, the two irreversible-feeling steps are not: put
 the local Helios folders back in the agent workspaces that had them, and
