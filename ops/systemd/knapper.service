@@ -14,6 +14,18 @@ ExecStart=/opt/knapper/mcp/Knapper.Mcp
 Restart=on-failure
 RestartSec=5
 
+# Logging. stdout/stderr go to journald (systemd's default); the service
+# writes no log file — ProtectSystem=strict below leaves /var/log read-only.
+# Tags entries so `journalctl -t knapper` works, not just `-u knapper`.
+SyslogIdentifier=knapper
+# Rate limiting OFF for this unit. journald's default burst discards messages
+# once a unit gets loud, and the loudest moment a service ever has is the
+# crash loop you are trying to read — evidence would be dropped exactly when
+# it matters, silently. The disk backstop is journald's SystemMaxUse cap
+# (runbook §3), not throttling at the source.
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
+
 # Configuration via environment (overrides appsettings.json).
 Environment=Vault__RootPath=/vault
 Environment=Vault__LockDirectory=/var/lib/knapper/locks

@@ -61,6 +61,43 @@ and locking misbehave), and **only on a case-SENSITIVE filesystem** (ext4
 is; per-path lock identity and duplicate detection assume distinct strings
 are distinct files — `knapper doctor` fails otherwise).
 
+### Make the journal persistent (do this BEFORE the service runs)
+
+Knapper writes no log file. It logs structured JSON to stdout and systemd
+routes that to journald, which owns rotation, size caps and retention. The
+tool errors agents receive say *"details in the server log"* — that promise
+is only as good as the journal's durability, and journald's default
+`Storage=auto` keeps logs in RAM ONLY unless `/var/log/journal` exists. On a
+fresh CT it does not, so a crash followed by a reboot destroys exactly the
+evidence the crash was worth investigating for.
+
+```sh
+mkdir -p /var/log/journal
+systemd-tmpfiles --create --prefix /var/log/journal
+cat >/etc/systemd/journald.conf.d/knapper.conf <<'CONF'
+[Journal]
+Storage=persistent
+SystemMaxUse=512M
+SystemMaxFileSize=64M
+MaxRetentionSec=90day
+CONF
+systemctl restart systemd-journald
+```
+
+**Verify** (do not assume — this is the whole point):
+
+```sh
+journalctl --header | grep -i 'file path'   # must be under /var/log/journal
+journalctl --disk-usage
+systemctl reboot                            # then, after it comes back:
+journalctl --boot=-1 -u knapper | tail       # last boot's logs still readable
+```
+
+Sizing note: `SystemMaxUse` is the cap for the WHOLE journal, shared with
+every other unit on the CT, not a per-service quota. 512M against a 16 GB
+rootfs leaves ample headroom; raise it if a busy period truncates history
+sooner than 90 days.
+
 ## 4. Obsidian Sync (brief §5 — both flags load-bearing)
 
 As the knapper user (interactive, needs Dan's Obsidian credentials):

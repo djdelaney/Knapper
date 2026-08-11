@@ -12,6 +12,21 @@ using ModelContextProtocol.Protocol;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Structured console logging, replacing the default text formatter. Every log
+// call in this service already uses named placeholders ({Tool}, {Outcome},
+// {ElapsedMs}, {Client}); the text formatter flattens them into a sentence, so
+// `journalctl -o json` returns one opaque MESSAGE and "every failure of this
+// tool" becomes a grep instead of a query. Scopes are included because the
+// ASP.NET trace identifier rides in one, and that id is what correlates a
+// server log line with its audit entry.
+//
+// stdout is the only sink on purpose: systemd routes it to journald, which
+// owns rotation, the size cap and retention. This service writes no log file
+// and could not if it wanted to — ProtectSystem=strict leaves /var/log
+// read-only, and the only writable paths are the vault and /var/lib/knapper.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
+
 builder.Services.Configure<VaultOptions>(builder.Configuration.GetSection(VaultOptions.SectionName));
 builder.Services.Configure<McpOptions>(builder.Configuration.GetSection(McpOptions.SectionName));
 builder.Services.Configure<SyncOptions>(builder.Configuration.GetSection(SyncOptions.SectionName));

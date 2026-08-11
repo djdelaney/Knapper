@@ -151,3 +151,31 @@ Tool errors are structured MCP errors whose message leads with the code:
 - The audit log (`Vault:AuditLogPath`) is JSONL, one entry per mutation
   attempt including rejections: timestamp, client, request id, op, path,
   outcome, before/after SHA. `knapper audit-tail 50` shows the recent end.
+
+### Logs
+
+The server writes **no log file**. It logs structured JSON to stdout and
+systemd routes that to journald, which owns rotation, size caps and
+retention (`SystemMaxUse` etc., configured in runbook §3). Under
+`ProtectSystem=strict` the service could not write `/var/log` even if it
+wanted to. The audit log above is a separate, deliberate artifact — it is
+the mutation record, not the diagnostic trail.
+
+This matters for support: several tool errors deliberately withhold detail
+from the client (`[Internal] unexpected server error — see server logs`,
+`filesystem failure — … details in the server log`), so the journal is the
+other half of those messages.
+
+Because the records are JSON, the fields each call already logs are
+queryable rather than greppable — placeholders land under `State`:
+
+```sh
+journalctl -u knapper -o cat | jq -r 'select(.LogLevel=="Error") | .Message'
+journalctl -u knapper -o cat | jq -r 'select(.State.Tool=="edit_note") | .State.Outcome'
+journalctl -u knapper --since -1h -p warning     # warnings and worse
+journalctl -t knapper --boot=-1                  # the boot before this one
+```
+
+A tool call logs `Tool`, `Outcome`, `ElapsedMs` and `Client`; the ASP.NET
+trace identifier rides in a log scope and also appears in the audit entry,
+which is what lets one request be followed across both.
