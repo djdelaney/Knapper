@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGENTS.md and CLAUDE.md are two real byte-identical files (a symlink
+      # would be tidier, but agent tooling in use here refuses to read one).
+      # Checked against the INDEX: identical content means git stored ONE blob
+      # under both paths, so comparing object ids is exact and needs no diff.
+      # Runs first because it costs nothing and fails fast.
+      - name: AGENTS.md and CLAUDE.md have not drifted
+        run: |
+          mode=$(git ls-files -s AGENTS.md | awk '{print $1}')
+          if [ "$mode" = "120000" ]; then
+            echo "::error file=AGENTS.md::AGENTS.md is a symlink. It must be a real file —" \
+                 "agent tooling used here refuses symlinked instructions and then runs with" \
+                 "no guidance at all. Fix: rm AGENTS.md && cp CLAUDE.md AGENTS.md"
+            exit 1
+          fi
+          if [ "$(git rev-parse :AGENTS.md)" != "$(git rev-parse :CLAUDE.md)" ]; then
+            echo "::error file=AGENTS.md::AGENTS.md and CLAUDE.md have drifted." \
+                 "Edit CLAUDE.md, then mirror it: cp CLAUDE.md AGENTS.md"
+            git --no-pager diff --no-index -- CLAUDE.md AGENTS.md || true
+            exit 1
+          fi
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The query layer shells out to a real ripgrep; the suite is not
+      # self-contained without it.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Build
+        run: dotnet build Knapper.slnx --configuration Release
+
+      # Includes the black-box acceptance tier: real server processes over
+      # real HTTP, plus the cross-process flock probes.
+      - name: Test
+        run: dotnet test Knapper.slnx --configuration Release --no-build
