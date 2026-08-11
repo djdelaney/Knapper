@@ -255,8 +255,11 @@ format by default.
   that matched nothing, so `scanned_files` — the evidence that "no match"
   means exhaustively searched — collapses to zero while the envelope still
   claims `truncated: false`. Nothing errors. `knapper doctor` FAILS below 15
-  (`RipgrepVersion`), CI pins a release build, and the runbook installs one:
-  Debian's apt package is still 14.x.
+  (`RipgrepVersion`), the server WARNS at boot and keeps serving — the same
+  gate/warn split as the case-sensitivity probe, for the same reason — CI
+  pins a release build, and the runbook installs one: Debian's apt package
+  is still 14.x. Both callers go through `RipgrepVersion.Read`, so doctor and
+  startup can never disagree about what a usable ripgrep is.
 - **Cursors are bound to their query** (fingerprint of the filter fields).
   Honoring a cursor against different filters would omit or duplicate
   records across pages — that's why the mismatch is a typed `InvalidCursor`,

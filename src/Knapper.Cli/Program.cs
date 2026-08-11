@@ -124,16 +124,13 @@ int Doctor()
               || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
     Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ ({vaultOptions.RipgrepPath})", () =>
     {
-        var psi = new System.Diagnostics.ProcessStartInfo { FileName = vaultOptions.RipgrepPath, RedirectStandardOutput = true };
-        psi.ArgumentList.Add("--version");
-        using var p = System.Diagnostics.Process.Start(psi);
-        var version = p!.StandardOutput.ReadToEnd();
-        p.WaitForExit(5000);
-        if (p.ExitCode != 0)
-            return false;
+        var probe = RipgrepVersion.Read(vaultOptions.RipgrepPath);
         // Thrown, not returned false: Check appends the message, and WHICH rg
         // was found is the whole diagnosis — "too old" without a version sends
         // the operator back to the shell to find out.
+        if (probe.Error is { } probeError)
+            throw new InvalidOperationException(probeError);
+        var version = probe.Output!;
         var firstLine = version.Split('\n')[0].Trim();
         if (RipgrepVersion.ParseMajor(version) is not { } major)
             throw new InvalidOperationException($"unrecognized `rg --version` output: '{firstLine}'");

@@ -163,6 +163,28 @@ if (vaultIsCaseInsensitive)
         "or another case-sensitive filesystem (knapper doctor enforces this).");
 }
 
+// Warning, not refusal, matching the case-sensitivity gate above: `knapper
+// doctor` FAILS below the minimum and is the production gate, while a dev box
+// on a distro-packaged rg still runs. What it costs is quiet — search keeps
+// working, but `scanned_files` reports 0 for every query with no matches, so
+// the evidence behind "exhaustively searched" silently disappears.
+var ripgrepProbe = RipgrepVersion.Read(app.Services.GetRequiredService<VaultOptions>().RipgrepPath);
+if (ripgrepProbe.Error is { } ripgrepError)
+{
+    startupLogger.LogWarning(
+        "Could not determine the ripgrep version ({Error}). Every search will fail until this is " +
+        "fixed; `knapper doctor` checks it.", ripgrepError);
+}
+else if (!RipgrepVersion.IsSupported(ripgrepProbe.Output!))
+{
+    startupLogger.LogWarning(
+        "ripgrep is older than the required major version {Minimum} (found '{Found}'). Searches still " +
+        "run, but a query with no matches reports scanned_files 0, so \"no match\" carries no evidence " +
+        "that the scope was searched. Install a current release build; Debian's apt package is older.",
+        RipgrepVersion.MinimumMajor,
+        ripgrepProbe.Output!.Split('\n')[0].Trim());
+}
+
 if (resolvedSyncOpts.Mode.Equals("open", StringComparison.OrdinalIgnoreCase))
 {
     startupLogger.LogWarning(

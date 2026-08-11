@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Knapper.Core.Query;
@@ -42,4 +43,47 @@ public static partial class RipgrepVersion
     /// <summary>True when this rg counts matchless searches in its summary stats.</summary>
     public static bool IsSupported(string versionOutput) =>
         ParseMajor(versionOutput) is { } major && major >= MinimumMajor;
+
+    /// <summary>
+    /// Outcome of running <c>rg --version</c>: either <paramref name="Output"/>
+    /// or an <paramref name="Error"/> saying why not. Never both, never neither.
+    /// </summary>
+    public readonly record struct Probe(string? Output, string? Error);
+
+    /// <summary>
+    /// Run <c>rg --version</c>. Shared by `knapper doctor` (which turns a bad
+    /// result into a failed check) and server startup (which warns), so the two
+    /// can never disagree about what counts as a usable ripgrep.
+    /// </summary>
+    public static Probe Read(string ripgrepPath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo { FileName = ripgrepPath, RedirectStandardOutput = true };
+            psi.ArgumentList.Add("--version");
+            using var process = Process.Start(psi);
+            if (process is null)
+                return new Probe(null, $"could not start '{ripgrepPath}'");
+            var output = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(5000))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Already gone between the timeout and the kill.
+                }
+                return new Probe(null, $"'{ripgrepPath} --version' did not exit within 5s");
+            }
+            return process.ExitCode == 0
+                ? new Probe(output, null)
+                : new Probe(null, $"'{ripgrepPath} --version' exited {process.ExitCode}");
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            return new Probe(null, e.Message);
+        }
+    }
 }

@@ -55,17 +55,33 @@ public sealed class RipgrepVersionTests
     [Fact]
     public void The_rg_used_by_this_test_run_is_supported()
     {
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "rg",
-            RedirectStandardOutput = true,
-        };
-        psi.ArgumentList.Add("--version");
-        using var process = System.Diagnostics.Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit(5000);
+        var probe = RipgrepVersion.Read("rg");
 
-        RipgrepVersion.IsSupported(output).ShouldBeTrue(
-            $"the rg on PATH is not {RipgrepVersion.MinimumMajor}+: '{output.Split('\n')[0].Trim()}'");
+        probe.Error.ShouldBeNull();
+        RipgrepVersion.IsSupported(probe.Output!).ShouldBeTrue(
+            $"the rg on PATH is not {RipgrepVersion.MinimumMajor}+: '{probe.Output!.Split('\n')[0].Trim()}'");
+    }
+
+    [Fact]
+    public void A_missing_binary_reports_an_error_rather_than_throwing()
+    {
+        // Both callers — doctor and server startup — rely on this never
+        // throwing: one turns it into a failed check, the other into a
+        // warning, and an escaped exception would take the server down at boot
+        // over a diagnostic.
+        var probe = RipgrepVersion.Read("/nonexistent/rg");
+
+        probe.Output.ShouldBeNull();
+        probe.Error.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void A_binary_that_is_not_ripgrep_is_not_mistaken_for_one()
+    {
+        // Exits 0 and prints something, just not a ripgrep version banner.
+        var probe = RipgrepVersion.Read("/bin/echo");
+
+        probe.Error.ShouldBeNull();
+        RipgrepVersion.IsSupported(probe.Output!).ShouldBeFalse();
     }
 }

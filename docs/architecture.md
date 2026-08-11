@@ -161,7 +161,10 @@ proven by tests that spawn real second processes (`LockProbe`,
   startup instead of silently ungating mutations. A case-insensitive vault
   filesystem fails `knapper doctor` (production gate) and warns at server
   startup (dev) — but a probe that cannot write at all is a refusal, not a
-  warning: booting would serve reads while every mutation failed.
+  warning: booting would serve reads while every mutation failed. A ripgrep
+  older than the supported major takes the same gate/warn split: doctor fails,
+  startup warns and keeps serving, because the cost is a degraded
+  `scanned_files` rather than a broken vault.
 - **Monitoring** (brief §8, outside the CT): `KnapperMetrics` snapshots
   bounded counters — tool outcomes, query timeouts, stale-write
   rejections, truncation, generation-changed responses, audit-append
