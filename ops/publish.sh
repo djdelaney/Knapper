@@ -51,6 +51,7 @@ for required in \
     ./ops/systemd/knapper-heartbeat.service \
     ./ops/systemd/knapper-heartbeat.timer \
     ./ops/systemd/obsidian-headless.service \
+    ./ops/systemd/knapper-smoke.service.example \
     ./ops/monitor/knapper-monitor.sh \
     ./ops/monitor/knapper-monitor.conf.example \
     ./ops/monitor/knapper-monitor.service \

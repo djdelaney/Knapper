@@ -55,14 +55,33 @@ On the Proxmox host:
   vault-wide rollback hazard §7 warns about, arriving through a door this
   drill opened. (`knapper-commit.timer` and the heartbeat start too, and two
   containers with one MAC collide on the LAN and the DHCP reservation.)
-  Inspect it cold, from the host:
+  Inspect it cold, from the host. Use a scratch VMID from a range reserved
+  for throwaways (9xx here) — this runs twice, and a collision with a real
+  or planned guest is a bad way to learn the numbering.
+
+  **First pass — HERE.** At this point in the build there is no `/vault`
+  (created in §3), no vault content (§4) and no `.git` (§7), so this pass
+  proves only that the restore MECHANISM works — which is the honest limit
+  of what any backup taken now could prove:
 
   ```sh
-  pct restore <scratch-vmid> <archive> --storage <storage>   # needs room for a second rootfs
-  pct mount <scratch-vmid>                                   # NOT pct start
-  git --git-dir=/var/lib/lxc/<scratch-vmid>/rootfs/vault/.git log -1
-  git --git-dir=/var/lib/lxc/<scratch-vmid>/rootfs/vault/.git fsck --no-dangling
-  pct unmount <scratch-vmid> && pct destroy <scratch-vmid>
+  pct restore 9<nn> <archive> --storage <storage>   # needs room for a second rootfs
+  pct mount 9<nn>                                   # NOT pct start
+  cat /var/lib/lxc/9<nn>/rootfs/etc/os-release      # rootfs is populated…
+  cat /var/lib/lxc/9<nn>/rootfs/etc/hostname        # …and is THIS container
+  pct unmount 9<nn> && pct destroy 9<nn>
+  ```
+
+  **Second pass — after §7**, against a backup taken AFTER `git-init`, which
+  is why §7 says to run `vzdump` again first. This is the pass that matters,
+  because it is the only one that can see the irreplaceable part:
+
+  ```sh
+  pct restore 9<nn> <fresh-archive> --storage <storage>
+  pct mount 9<nn>
+  git --git-dir=/var/lib/lxc/9<nn>/rootfs/vault/.git log -1
+  git --git-dir=/var/lib/lxc/9<nn>/rootfs/vault/.git fsck --no-dangling
+  pct unmount 9<nn> && pct destroy 9<nn>
   ```
 
   `fsck`, not just `log`: `git log` walks commits and prints happily until it
@@ -74,9 +93,8 @@ On the Proxmox host:
   If the container must be booted, remove its network interface AND disable
   `obsidian-headless` in the mounted rootfs before the first start.
 
-  Run this drill TWICE: once here (proves the mechanism) and once after §7
-  (proves it carries the irreplaceable part). §7 and §9's checklist call the
-  second pass back in, because nobody re-opens §1 mid-build.
+  §7 and §9's checklist call the second pass back in, because nobody re-opens
+  §1 mid-build.
 
 ## 2. OS baseline (brief §11)
 
@@ -159,7 +177,13 @@ journalctl --header | grep -i 'file path'   # must be under /var/log/journal
 journalctl --disk-usage
 systemctl reboot                            # then, after it comes back:
 journalctl --boot=-1 | tail                 # last boot's logs still readable
+cat /etc/resolv.conf                        # §1's DNS pin, checked at the reboot it warned about
 ```
+
+That `resolv.conf` read is not incidental: this is the FIRST reboot of the
+build, and §1's nameserver pin says to re-check after one. It must still read
+`<lan-resolver> 1.1.1.1` — if MagicDNS came back, the first thing to fail is
+`ob login` in §4, and it fails in a way that looks like an Obsidian problem.
 
 Knapper does not exist yet at this point, so the previous-boot read above
 uses whatever the CT already logs — that is what proves persistence. Repeat
@@ -198,8 +222,11 @@ Install `obsidian-headless.service` from `ops/systemd/`, start, and
 that puts `ops/` on the CT does not land until §5, so copy this ONE unit
 from the repo now — `scp ops/systemd/obsidian-headless.service
 root@ct106:/etc/systemd/system/` — then `systemctl daemon-reload` and
-`systemctl enable --now obsidian-headless`. (§5's bulk copy re-installs the
-same file harmlessly.) Sync must be running and healthy before §5: the
+`systemctl enable --now obsidian-headless`. §5's bulk copy re-installs this
+same file, which is harmless if you left it alone — **but if you edited it**
+(a different vault path or service user), re-apply that edit after §5's copy
+and reload, or Sync stops and the symptom surfaces sections later. Sync must
+be running and healthy before §5: the
 heartbeat probe gates mutations on it, and `knapper doctor` fails on a
 stale heartbeat.
 
@@ -209,13 +236,27 @@ documents the assumption it makes.
 
 ## 5. Knapper
 
+Configure `knapper.service` ONCE, here, before anything reads its environment
+— every value below is knowable now, and the environment captured further down
+is only as good as the unit being finished when it is taken:
+
+- paths, if they differ from the unit's defaults;
+- `Mcp__AllowedHosts__0` = the REAL public hostname (the unit ships the
+  `mcp.example.com` placeholder). §6.3 re-checks it because that is when it
+  starts mattering, not because it is edited then;
+- `Sync__MaxAgeSeconds=300` — see the sync-gate bullet below for why it is
+  pinned explicitly.
+
+The ONE edit that genuinely cannot happen yet is §6.3's Access block: the AUD
+does not exist until the Access app does. That edit carries its own
+`daemon-reload` + `restart`, and re-running the `doctor` line below after it
+is the cheapest way to confirm the unit still says what you think.
+
 ```sh
 # on the dev box: ops/publish.sh; scp the tarball
 tar -xzf knapper-<v>-linux-x64.tar.gz -C /opt/knapper
 cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
-# edit knapper.service env if paths differ, and set Mcp__AllowedHosts__0 to
-# the REAL public hostname (the unit ships the mcp.example.com placeholder);
-# it is checked again in §6 because that is when it starts mattering. Then:
+$EDITOR /etc/systemd/system/knapper.service     # the three edits listed above
 systemctl daemon-reload
 # NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
 # with no .git, and the repo is not created until §7. It starts there.
@@ -239,13 +280,22 @@ KNAPPER_ENV=$(systemctl show knapper.service -p Environment --value)
 echo "$KNAPPER_ENV"     # eyeball it once: is this the config you meant?
 case "$KNAPPER_ENV" in
   # Word-splitting is intended; no value contains a space (quote if one ever does).
-  *Vault__RootPath=*) sudo -u knapper env $KNAPPER_ENV \
-                        /opt/knapper/cli/knapper doctor ;;   # must be all-ok
-  *) echo "REFUSING: no usable environment from knapper.service — wrong unit name, or not loaded" >&2 ;;
+  # The checks live INSIDE this branch on purpose: /health and `verify` do not
+  # read this environment, so on a bad capture they would pass and the run
+  # would look clean with doctor never having executed at all.
+  *Vault__RootPath=*)
+      sudo -u knapper env $KNAPPER_ENV /opt/knapper/cli/knapper doctor &&   # must be all-ok
+      curl -s 127.0.0.1:3535/health | jq .status &&                         # "ok"
+      sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/ ;;
+  *) echo "REFUSING: no usable environment from knapper.service — wrong unit name, or not loaded." \
+          "Fix this before continuing; nothing below proves anything without it." >&2 ;;
 esac
-curl -s 127.0.0.1:3535/health | jq .status        # "ok"
-sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/
 ```
+
+These blocks are written to be pasted into an interactive root shell, so no
+guard here calls `exit` — that would close the shell rather than stop the
+step. A refusal prints and stops the chain; read the output, do not assume the
+absence of red means the checks ran.
 
 `knapper verify` is READ-ONLY by design and stays that way: at this point
 `/vault` is already Helios via Sync, so a write test would land real notes on
@@ -267,13 +317,12 @@ afterwards through the tools), never against real notes:
   confirm it clears. This is the only test of `sync-heartbeat.sh`'s
   assumption about real `ob sync-status` output.
 
-  That window is the fail-closed budget and it belongs where the service is
-  read: set `Environment=Sync__MaxAgeSeconds=300` in knapper.service even
-  though 300 is the default, because otherwise its only home is
-  `appsettings.json` and nobody reading the unit can see how long sync may be
-  dead while writes still land. With the heartbeat timer at 60s, the honest
+  That window is the fail-closed budget, which is why it was pinned
+  explicitly in the unit above rather than left to `appsettings.json`: nobody
+  reading `knapper.service` could otherwise see how long sync may be dead
+  while writes still land. With the heartbeat timer at 60s, the honest
   statement is "up to ~5 minutes of dead sync is invisible to agents" — and
-  the gate test has a number to wait for instead of a guess.
+  this test has a number to wait for instead of a guess.
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.
@@ -296,9 +345,12 @@ afterwards through the tools), never against real notes:
    for claude.ai / Desktop / iOS connectors; a service token for Claude
    Code. Rate-limit rule on the hostname.
 3. Origin validation ON (knapper.service): `Mcp__Access__Enabled=true`,
-   `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the Access app AUD).
-   The server refuses to start if it cannot fetch the signing keys — that
-   refusal is the feature. **`Mcp__AllowedHosts__0` must already be the
+   `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the Access app AUD) —
+   then `systemctl daemon-reload && systemctl restart knapper`. This is the
+   one unit edit §5 could not fold in, because the AUD does not exist until
+   the Access app does; re-run §5's `doctor` line afterwards so the captured
+   environment matches the unit again. The server refuses to start if it
+   cannot fetch the signing keys — that refusal is the feature. **`Mcp__AllowedHosts__0` must already be the
    real public hostname**: a tunneled request keeps that hostname, and the
    DNS-rebinding guard rejects every Host it does not recognize — with the
    shipped `mcp.example.com` placeholder still in place, ingress comes up
@@ -343,7 +395,9 @@ afterwards through the tools), never against real notes:
    window is outside git history permanently — history begins at `git-init`.
    Nothing in §6.5 or §8b writes to Helios by design (the verifier is
    read-only, §8b uses a disposable copy); this line makes that a constraint
-   rather than a happy accident. Connect no agent surface before §9.
+   rather than a happy accident. Connect no agent surface **to the live
+   vault** before §9 — §8b does attach a real connector, pointed at a
+   disposable copy, and that distinction is the whole of what makes it safe.
 
 ## 7. Git (brief §10 — after backup is proven)
 
@@ -365,10 +419,19 @@ sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper commit
 systemctl enable --now knapper-commit.timer
 ```
 
-**Now run §1's restore drill a second time**, with `.git` on disk: the first
-pass proved the mechanism, this one proves the archive carries the only copy
-of vault history. Cold inspection only — a booted restore is a second Sync
-client with this CT's device identity, and it is holding an older tree.
+**Take a FRESH backup, then run §1's restore drill a second time.** The only
+archive that exists so far predates the OS baseline, the runtimes, Sync and
+git, so restoring it and looking for `.git` would report a failure that isn't
+one:
+
+```sh
+vzdump 106 --storage <backup-storage>      # the first archive containing .git
+```
+
+Then §1's second-pass commands against THAT archive. Cold inspection only — a
+booted restore is a second Sync client with this CT's device identity, holding
+an older tree. This is the pass that proves the backup carries the only copy
+of vault history; the first proved nothing more than that restore works.
 
 That environment is deliberately smaller than §5's, and the difference is not
 an omission: `GitCommitJob` takes neither the audit log nor the sync gate, so
@@ -386,13 +449,23 @@ carries.
   revert vault-wide.
 - `pct snapshot 106 pre-upgrade-YYYYMMDD` before any bump (`pct` takes the
   VMID, not the CT's name).
-- **Rehearse the rollback once, before cutover**, on the same principle §8
-  applies to alerts: an unexercised recovery path is not a trusted one, and
-  this one would otherwise first run during an incident. Extract the previous
-  tarball over `/opt/knapper`, restart, confirm `knapper verify --url` still
-  passes, then return to current and verify again. It also proves the
-  previous tarball is still on disk and still readable — the part most likely
-  to have quietly stopped being true.
+- **Rehearse the rollback MECHANICS once, before cutover**, on the same
+  principle §8 applies to alerts: an unexercised recovery path is not a
+  trusted one, and this one would otherwise first run during an incident. On
+  a first deployment there is no previous release to roll back TO, so be
+  honest about what this proves: keep the shipped tarball on the CT, extract
+  that same artifact over `/opt/knapper`, `systemctl restart knapper`,
+  confirm `knapper verify --url` still passes, and note how long the whole
+  thing took. It proves the artifact is on disk and readable, that extraction
+  does not break ownership or modes, and that the service comes back — which
+  is most of what fails during a real rollback.
+
+  What it cannot prove is a VERSION downgrade, because there is no earlier
+  version yet. That belongs to the first real upgrade: snapshot, install,
+  verify, and if verify fails, roll back to the retained previous tarball and
+  make `knapper verify --url` passing the acceptance criterion for the
+  rollback itself. Deferring silently is the only bad answer here; deferring
+  in writing is fine.
 
 ## 8. Monitoring (brief §8 — OUTSIDE the CT, on the Proxmox host)
 
@@ -465,9 +538,25 @@ What it checks:
   NOT touched by refused/failed runs, so a dead timer, a wedged lock, and
   a secret-scan refusal loop all go stale and alert.
 
-Exercise EVERY failure path before trusting the monitor: stop knapper,
-stop cloudflared, stop the commit timer, revoke the service token — one
-mail each, then one recovery mail as each is restored.
+Exercise EVERY failure path before trusting the monitor — one mail each, then
+one recovery mail as each is restored. Run them in this order, because the
+last one does not restore cleanly:
+
+1. `systemctl stop knapper` → restart.
+2. `systemctl stop cloudflared` → restart.
+3. `systemctl stop knapper-commit.timer` → **wait out `MAX_STAMP_AGE`**
+   (3900s ≈ 65 min by default) before expecting the mail: the stamp has to
+   age past the threshold, and "stop it, expect a mail" would read as a
+   monitor failure for the first hour. Restart the timer, then run
+   `knapper commit` by hand so the stamp is fresh again and the recovery mail
+   fires without another hour's wait.
+4. Revoke the monitoring service token LAST, because a revoked Cloudflare
+   token is not restored, it is **replaced**: the new `<token>.access` and
+   secret must be written into `/etc/knapper-monitor.conf` (chmod 600, on the
+   host) AND wherever §6.2's token lives for Claude Code. Until both are
+   updated the monitor keeps alerting and the connector keeps failing, which
+   looks exactly like the drill having broken something. Doing it last keeps
+   that tail from contaminating the other three.
 
 Then the **positive control**, which is what actually closes this section:
 restore `MAILTO` to the real alert address, induce ONE more failure, confirm
@@ -488,12 +577,29 @@ corpus). Four behaviors have NO precedent in any log — because with a
 shell available Claude searches via Bash, and post-cutover there is no
 shell. This session answers exactly those four.
 
-**Setup.** Knapper over a DISPOSABLE COPY of the vault (never Helios
+**Where this instance runs.** A SECOND Knapper on the same CT, on its own
+port, with its own environment — never the live `knapper.service` repointed
+at a copy. Repointing means the live vault has no server for the duration and
+the host-side monitor alerts throughout §8b, which is how an operator learns
+to ignore it; and "point it back afterwards" is one more untracked temporary
+change in a section that already has three. Install
+`ops/systemd/knapper-smoke.service.example` as `knapper-smoke.service` and
+read its header — it carries the whole configuration, including why the copy
+lives OUTSIDE `/vault` (anything inside is Helios, and Sync would propagate
+it). Reaching it from a real client means one more tunnel route and Access
+app for the smoke hostname; that is the cost of not touching production, and
+it is worth it. A second CT restored from §7's backup also works if you
+prefer isolation over convenience — disable `obsidian-headless` in the
+mounted rootfs BEFORE first start (§1's warning applies in full).
+
+**Setup.** That instance over a DISPOSABLE COPY of the vault (never Helios
 itself), `Mcp__LogToolCalls=true`, fresh audit log + metrics file, and for
 test 1 set `Vault__MaxResultsPerPage=25` — then **restore it to the
 production value before test 2**, so tests 2–4 exercise the page size agents
 will actually meet (test 4 reads counts and files modes, where a 25-item page
-would change what the log shows). Attach one real agent surface
+would change what the log shows). Every one of these settings lives in the
+smoke unit, so tearing that unit down at §9 retires all of them at once —
+which is the point of keeping them out of `knapper.service`. Attach one real agent surface
 (Claude Code via the connector). Seed: ≥60 matches for one term spread
 over many notes; one note with an unterminated frontmatter fence whose
 (broken) frontmatter matches test 3's query; a handful of
@@ -540,7 +646,14 @@ silently if left:
 - [ ] `MailReport` back to `on-change` (§2)
 - [ ] `MAILTO` back to the real alert address, proven by the §8 positive
       control — not just edited back
-- [ ] `Vault__MaxResultsPerPage` back to the production value (§8b)
+- [ ] monitoring service token in `/etc/knapper-monitor.conf` AND in Claude
+      Code's config is the CURRENT one, if the §8 revocation drill ran
+- [ ] `knapper-smoke.service` stopped and REMOVED, `/var/lib/knapper-smoke`
+      deleted, its tunnel route and Access app torn down (§8b) — that single
+      teardown is what retires `Mcp__LogToolCalls=true`,
+      `Vault__MaxResultsPerPage=25` and the disposable vault path together
+- [ ] `knapper.service` never acquired any §8b setting — grep it for
+      `LogToolCalls` and `MaxResultsPerPage` and expect nothing
 - [ ] §1's restore drill run a SECOND time after §7, cold-mounted and
       `fsck`-checked, and both scratch CTs destroyed
 - [ ] `_deploy-check/` scratch subtree removed through the tools (§5);

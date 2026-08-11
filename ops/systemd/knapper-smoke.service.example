@@ -1,0 +1,68 @@
+# §8b's behavioral smoke-test instance: a SECOND Knapper beside the live one,
+# serving a DISPOSABLE COPY of the vault to a real agent surface.
+#
+# Copy to /etc/systemd/system/knapper-smoke.service, fill in the two <…>
+# values, `systemctl daemon-reload && systemctl start knapper-smoke`. Do NOT
+# enable it — it is meant to die with §9's teardown, and an enabled unit
+# quietly outlives the test that needed it.
+#
+# Why a separate unit rather than repointing knapper.service at the copy:
+# repointing leaves the live vault unserved for the length of §8b and makes
+# the host-side monitor alert throughout, which teaches the operator to
+# ignore alerts. It also turns three test-only settings (LogToolCalls, the
+# page-size override, the vault path) into temporary edits of the PRODUCTION
+# unit, each of which fails silently if left behind. Here they die with the
+# file.
+#
+# ⚠️ The copy lives OUTSIDE /vault. Anything inside /vault is Helios, and
+# Obsidian Sync would propagate the test vault to every device. /var/lib is
+# the natural home; the lock directory, audit log and metrics file are
+# per-instance for the same reason — sharing the live ones would mix test
+# mutations into the record §8's monitor reads.
+[Unit]
+Description=Knapper smoke-test instance (§8b, disposable vault copy)
+After=network-online.target
+
+[Service]
+Type=simple
+User=knapper
+Group=knapper
+WorkingDirectory=/opt/knapper/mcp
+ExecStart=/opt/knapper/mcp/Knapper.Mcp
+Restart=no
+SyslogIdentifier=knapper-smoke
+
+# Its own everything. Nothing here is shared with knapper.service.
+Environment=Vault__RootPath=/var/lib/knapper-smoke/vault
+Environment=Vault__LockDirectory=/var/lib/knapper-smoke/locks
+Environment=Vault__AuditLogPath=/var/lib/knapper-smoke/audit.jsonl
+Environment=Vault__MetricsPath=/var/lib/knapper-smoke/metrics.json
+# Test 1 only — the cursor follow-through test needs a page size the seeded
+# corpus overflows. Restore the production value (200) before test 2: test 4
+# reads counts and files modes, where a 25-item page changes what the log says.
+Environment=Vault__MaxResultsPerPage=25
+# The evidence §8b's verdicts come from. Deliberately NOT set on the live
+# unit, where it would outlive the test.
+Environment=Mcp__LogToolCalls=true
+# No sync gate: this vault is a copy, nothing syncs it, and a heartbeat that
+# never arrives would block every mutation the test exists to observe.
+Environment=Sync__Mode=open
+Environment=Mcp__BindAddress=127.0.0.1
+Environment=Mcp__Port=3536
+Environment=Mcp__AllowedHosts__0=<smoke-hostname>
+# Its own Access application — never the vault's AUD. A token minted for a
+# test surface must not open the real vault if it leaks.
+Environment=Mcp__Access__Enabled=true
+Environment=Mcp__Access__TeamDomain=<https://YOURTEAM.cloudflareaccess.com>
+Environment=Mcp__Access__Audience=<smoke-access-app-aud>
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+# /vault is absent from this list on purpose: this instance must not be able
+# to write Helios even if it is misconfigured to point at it.
+ReadWritePaths=/var/lib/knapper-smoke
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
