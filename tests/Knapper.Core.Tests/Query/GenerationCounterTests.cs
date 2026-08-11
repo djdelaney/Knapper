@@ -50,20 +50,24 @@ public sealed class GenerationCounterTests
         using var counter = VaultGenerationCounter.StartWatching(dir.Path);
         var before = counter.Current;
 
+        // Control-dir churn ALONE first, and assert the quiet window before any
+        // real write exists to muddy it. Order matters: one real write produces
+        // an unpredictable NUMBER of native events (inotify reports creation
+        // and modification separately; FSEvents usually coalesces them), so a
+        // fence written first races its own second event against this
+        // assertion. That raced, and the resulting "counter moved" was
+        // indistinguishable from an actual filter leak — the one thing this
+        // test exists to detect. Do not reintroduce the fence-first ordering.
         dir.File(".obsidian/workspace.json", "{\"x\": 1}");
-        // Then a real write, as the ordering fence: once it lands, any
-        // control-dir event would already have landed too.
-        dir.File("real.md", "content");
+        dir.File(".obsidian/workspace.json", "{\"x\": 2}");
+        dir.File(".trash/deleted.md", "gone");
+        Thread.Sleep(500);
+        counter.Current.ShouldBe(before, "control-dir churn moved the generation counter");
 
+        // Then a real write, proving the watcher was live throughout — without
+        // this, the assertion above would also pass on a watcher seeing nothing.
+        dir.File("real.md", "content");
         WaitUntil(() => counter.Current > before, "watcher missed the fence write");
-        // Only the real write may have counted. FSEvents/inotify may coalesce
-        // or double-report a single write, so we assert the control-dir write
-        // added nothing beyond the fence write's own events (which all name
-        // real.md — a workspace.json event would be a filtered path anyway,
-        // so any bump here proves the filter, not timing luck).
-        var afterFence = counter.Current;
-        Thread.Sleep(300);
-        counter.Current.ShouldBe(afterFence);
     }
 
     private static void WaitUntil(Func<bool> condition, string message)
