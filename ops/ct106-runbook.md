@@ -43,14 +43,40 @@ On the Proxmox host:
 - **Prove a RESTORE, not just a backup.** Everything above proves an archive
   exists and is not corrupt; none of it proves anything can be got back out,
   and this CT holds the only copy of vault git history (`.git` never syncs —
-  §7). Restore the artifact to a scratch VMID, confirm `/vault/.git` is
-  present in the restored container and that `git log` reads, then destroy
-  the scratch CT. Re-run this after `.git` exists too — the first pass proves
-  the mechanism, the second proves it carries the irreplaceable part.
-  `zstd -t` is an integrity check on a container archive; it says nothing
-  about whether the repository inside survived the unprivileged-CT `tmpdir`
-  handling. Same principle as the bullet above, one step further down the
-  chain: an untested restore is a configuration, not evidence.
+  §7). `zstd -t` is an integrity check on a container archive; it says
+  nothing about whether the repository inside survived the unprivileged-CT
+  `tmpdir` handling. Same principle as the bullet above, one step further
+  down the chain: an untested restore is a configuration, not evidence.
+
+  ⛔ **Do not START the restored container.** It carries the same Obsidian
+  Sync device identity, the same enabled units and the same MAC as the
+  original: boot it and `ob sync --continuous` comes up as a SECOND client,
+  with the same device name, pushing an OLDER tree at the live vault — the
+  vault-wide rollback hazard §7 warns about, arriving through a door this
+  drill opened. (`knapper-commit.timer` and the heartbeat start too, and two
+  containers with one MAC collide on the LAN and the DHCP reservation.)
+  Inspect it cold, from the host:
+
+  ```sh
+  pct restore <scratch-vmid> <archive> --storage <storage>   # needs room for a second rootfs
+  pct mount <scratch-vmid>                                   # NOT pct start
+  git --git-dir=/var/lib/lxc/<scratch-vmid>/rootfs/vault/.git log -1
+  git --git-dir=/var/lib/lxc/<scratch-vmid>/rootfs/vault/.git fsck --no-dangling
+  pct unmount <scratch-vmid> && pct destroy <scratch-vmid>
+  ```
+
+  `fsck`, not just `log`: `git log` walks commits and prints happily until it
+  needs a damaged object, so it passes on a truncated packfile or a missing
+  blob — and `vzdump` of a RUNNING CT can capture the moment a `knapper
+  commit` was mid-flight. That narrow window is exactly what this drill
+  exists to catch. If `fsck` ever gets too slow for the repo's size, the
+  cheap floor is `git rev-parse HEAD && git cat-file -e HEAD^{tree}`.
+  If the container must be booted, remove its network interface AND disable
+  `obsidian-headless` in the mounted rootfs before the first start.
+
+  Run this drill TWICE: once here (proves the mechanism) and once after §7
+  (proves it carries the irreplaceable part). §7 and §9's checklist call the
+  second pass back in, because nobody re-opens §1 mid-build.
 
 ## 2. OS baseline (brief §11)
 
@@ -197,11 +223,26 @@ systemctl enable --now knapper-heartbeat.timer knapper.service
 # doctor reads env, not the service unit — so ASK THE UNIT for its environment
 # instead of retyping it. A hand-copied list is a second source of truth that
 # drifts silently: doctor then passes against a configuration nothing runs.
-# (Word-splitting is fine here because no value contains a space; if one ever
-# does, quote it.)
-sudo -u knapper env $(systemctl show knapper.service -p Environment --value) \
-  /opt/knapper/cli/knapper doctor                 # must be all-ok
-systemctl show knapper.service -p Environment --value   # eyeball it once: is this the config you meant?
+#
+# The case guard is load-bearing: `systemctl show` answers exit 0 with an EMPTY
+# string for a unit that is misspelled, missing, or not yet loaded, and `env`
+# with no assignments is not an error either — so an unguarded line degrades to
+# running doctor against built-in defaults, which may well report all-ok. That
+# is the SAME "graded a configuration nothing runs" failure this pattern was
+# introduced to remove, wearing different clothes.
+#
+# NOTE: this reads inline `Environment=` ONLY. Values from an `EnvironmentFile=`
+# are read at exec time and never appear in this property, so if these units
+# ever gain one, the CLI silently gets a partial environment — and the guard
+# below would not catch it. Both call sites (§5 and §7) need revisiting then.
+KNAPPER_ENV=$(systemctl show knapper.service -p Environment --value)
+echo "$KNAPPER_ENV"     # eyeball it once: is this the config you meant?
+case "$KNAPPER_ENV" in
+  # Word-splitting is intended; no value contains a space (quote if one ever does).
+  *Vault__RootPath=*) sudo -u knapper env $KNAPPER_ENV \
+                        /opt/knapper/cli/knapper doctor ;;   # must be all-ok
+  *) echo "REFUSING: no usable environment from knapper.service — wrong unit name, or not loaded" >&2 ;;
+esac
 curl -s 127.0.0.1:3535/health | jq .status        # "ok"
 sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/
 ```
@@ -307,9 +348,14 @@ afterwards through the tools), never against real notes:
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh
-# Same rule as §5: take the environment from the unit that will run this job,
-# so the hand-run seed and the timer's runs cannot diverge.
+# Same rule as §5, same guard for the same reason: take the environment from the
+# unit that will run this job — an empty expansion here would `git-init` in
+# whatever directory the binary falls back to.
 CLI_ENV=$(systemctl show knapper-commit.service -p Environment --value)
+case "$CLI_ENV" in
+  *Vault__RootPath=*) ;;
+  *) echo "REFUSING: no usable environment from knapper-commit.service" >&2; exit 1 ;;
+esac
 # shellcheck disable=SC2086
 sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
 # Seed the monitor's freshness stamp with one commit BY HAND, then start the
@@ -318,6 +364,11 @@ sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
 sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper commit
 systemctl enable --now knapper-commit.timer
 ```
+
+**Now run §1's restore drill a second time**, with `.git` on disk: the first
+pass proved the mechanism, this one proves the archive carries the only copy
+of vault history. Cold inspection only — a booted restore is a second Sync
+client with this CT's device identity, and it is holding an older tree.
 
 That environment is deliberately smaller than §5's, and the difference is not
 an omission: `GitCommitJob` takes neither the audit log nor the sync gate, so
@@ -490,8 +541,10 @@ silently if left:
 - [ ] `MAILTO` back to the real alert address, proven by the §8 positive
       control — not just edited back
 - [ ] `Vault__MaxResultsPerPage` back to the production value (§8b)
-- [ ] scratch restore CT destroyed (§1); `_deploy-check/` scratch subtree
-      removed through the tools (§5); disposable §8b vault deleted
+- [ ] §1's restore drill run a SECOND time after §7, cold-mounted and
+      `fsck`-checked, and both scratch CTs destroyed
+- [ ] `_deploy-check/` scratch subtree removed through the tools (§5);
+      disposable §8b vault deleted
 - [ ] `/opt/knapper` back on the current release if the §7 rollback
       rehearsal ran
 
@@ -501,3 +554,14 @@ restore the vault's own CLAUDE.md from git history (`knapper commit` has been
 snapshotting since §7, which is what makes this a revert rather than a
 reconstruction). Reverse them in that order, then stop the connector — never
 the other way round, or agents lose both paths at once.
+
+Retrieve that file **from the host, not through the MCP** — the likeliest
+reason to be abandoning cutover is that the MCP, the tunnel, or Access is not
+working, and a recovery path that runs through the broken surface is no
+recovery path:
+
+```sh
+pct exec 106 -- git -C /vault show <ref>:CLAUDE.md
+```
+
+Same virtue as §1's restore drill, which is host-side end to end.
