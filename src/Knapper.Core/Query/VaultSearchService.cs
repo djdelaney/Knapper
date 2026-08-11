@@ -202,7 +202,20 @@ public sealed class VaultSearchService(
         args.Add("-e");
         args.Add(query.Pattern);
         args.Add("--");
-        foreach (var prefix in ValidatePrefixes(query.PathPrefixes))
+        var prefixes = ValidatePrefixes(query.PathPrefixes);
+        if (prefixes.Count == 0)
+        {
+            // ALWAYS name a search target. Given no path, rg decides between
+            // "recurse the working directory" and "read stdin" by inspecting
+            // stdin, and the answer varies by rg version and by how the
+            // process was launched. A server under systemd has no terminal,
+            // so the stdin branch returns zero matches over an empty stream —
+            // reported as an ordinary exhaustive "no match", which is the one
+            // answer this layer must never invent. Naming the directory
+            // removes the choice.
+            args.Add(".");
+        }
+        foreach (var prefix in prefixes)
             args.Add(prefix);
     }
 
@@ -245,6 +258,17 @@ public sealed class VaultSearchService(
             genEnd,
             genEnd != plan.GenerationStart);
     }
+
+    /// <summary>
+    /// rg echoes back the search target it was handed, so the explicit "."
+    /// above comes back as "./note.md". A vault path carries no such prefix —
+    /// it is the identity behind cursor fingerprints, prefix scoping, and the
+    /// lister differential, so a "./" leaking through would make the same file
+    /// compare unequal to itself. Prefixed searches are unaffected: rg echoes
+    /// those verbatim.
+    /// </summary>
+    private static string NormalizeRgPath(string path) =>
+        path.StartsWith("./", StringComparison.Ordinal) ? path[2..] : path;
 
     private IReadOnlyList<string> ValidatePrefixes(IReadOnlyList<string>? prefixes)
     {
@@ -386,7 +410,7 @@ public sealed class VaultSearchService(
                             "a matching file's name is not valid UTF-8 — the server cannot address it and " +
                             "will not silently omit it; rename the file (it is visible to `ls`, not to agents)");
                     }
-                    var path = pathProp.GetString()!;
+                    var path = NormalizeRgPath(pathProp.GetString()!);
                     var lineNumber = data.GetProperty("line_number").GetInt32();
                     var text = TrimNewline(GetLinesText(root));
                     var textBytes = System.Text.Encoding.UTF8.GetByteCount(text);

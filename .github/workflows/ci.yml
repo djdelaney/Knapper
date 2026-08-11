@@ -47,7 +47,11 @@ jobs:
       # The query layer shells out to a real ripgrep; the suite is not
       # self-contained without it.
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        run: |
+          sudo apt-get update && sudo apt-get install -y ripgrep
+          # Logged deliberately: rg's behaviour differs across versions, and
+          # this is a different one from any dev machine.
+          rg --version
 
       - name: Build
         run: dotnet build Knapper.slnx --configuration Release
