@@ -58,7 +58,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Access:Enabled` | false | Cloudflare Access assertion validation at the origin. |
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
-| `Access:MonitoringAudience` | — | Optional second AUD accepted on `/up` only. |
+| `Access:MonitoringAudience` | — | Optional second AUD accepted on `/up` only. Must differ from `Access:Audience` — equal values would give the monitoring credential the whole vault surface, so startup refuses. Leave empty for a single-app setup. |
 | `Access:AllowLoopback` | true | Same-box health checks need no assertion. "Same-box" requires a loopback TCP peer AND a loopback Host header — tunneled requests proxied by cloudflared arrive from 127.0.0.1 but keep their public hostname, so they are always validated. |
 
 ### `Sync:*` — the mutation gate

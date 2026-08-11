@@ -63,6 +63,14 @@ public sealed class AccessOptions
             return $"Mcp:Access:TeamDomain must be an absolute https:// URL, got '{TeamDomain}'.";
         if (string.IsNullOrWhiteSpace(Audience))
             return "Mcp:Access:Enabled is true but Mcp:Access:Audience is empty — any token from the team would authenticate.";
+        // Equal audiences silently collapse the asymmetry documented on
+        // MonitoringAudience: the monitoring token satisfies OwnerAudiences()
+        // too, so a leaked monitoring credential reaches the whole vault while
+        // the config still reads like a path-scoped restriction.
+        if (string.Equals(MonitoringAudience, Audience, StringComparison.Ordinal))
+            return "Mcp:Access:MonitoringAudience equals Mcp:Access:Audience — the monitoring credential "
+                 + "would carry the whole vault surface, not just /up. Use a separate path-scoped Access "
+                 + "application, or leave MonitoringAudience empty.";
         return null;
     }
 }

@@ -151,13 +151,17 @@ proven by tests that spawn real second processes (`LockProbe`,
   heartbeat file — touched every minute by a probe that checks the
   obsidian-headless unit — to be fresh. Missing or stale = mutations
   blocked. Reads stay up.
-- **Startup**: missing vault root; lock dir, audit path, or metrics path
-  equal to or inside the vault (realpath-canonicalized, symlinked ancestors
-  included); bad Access config; unfetchable signing keys; invalid sync
-  mode — all refuse startup rather than degrade. `Sync:Mode` DEFAULTS to
-  `heartbeat`, so a forgotten config line refuses startup instead of
-  silently ungating mutations. A case-insensitive vault filesystem fails
-  `knapper doctor` (production gate) and warns at server startup (dev).
+- **Startup**: missing vault root; a vault root the process cannot write;
+  lock dir, audit path, or metrics path equal to or inside the vault
+  (realpath-canonicalized, symlinked ancestors included); bad Access config
+  — including a `MonitoringAudience` equal to `Audience`, which would hand
+  the monitoring credential the whole vault surface; unfetchable signing
+  keys; invalid sync mode — all refuse startup rather than degrade.
+  `Sync:Mode` DEFAULTS to `heartbeat`, so a forgotten config line refuses
+  startup instead of silently ungating mutations. A case-insensitive vault
+  filesystem fails `knapper doctor` (production gate) and warns at server
+  startup (dev) — but a probe that cannot write at all is a refusal, not a
+  warning: booting would serve reads while every mutation failed.
 - **Monitoring** (brief §8, outside the CT): `KnapperMetrics` snapshots
   bounded counters — tool outcomes, query timeouts, stale-write
   rejections, truncation, generation-changed responses, audit-append

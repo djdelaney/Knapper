@@ -130,7 +130,27 @@ var resolvedSyncOpts = app.Services.GetRequiredService<IOptions<SyncOptions>>().
 if (resolvedMcpOpts.Access.Validate() is { } accessConfigError)
     throw new InvalidOperationException(accessConfigError);
 
-if (CaseSensitivityProbe.IsCaseInsensitive(app.Services.GetRequiredService<VaultPathResolver>().Root))
+var vaultRoot = app.Services.GetRequiredService<VaultPathResolver>().Root;
+bool vaultIsCaseInsensitive;
+try
+{
+    vaultIsCaseInsensitive = CaseSensitivityProbe.IsCaseInsensitive(vaultRoot);
+}
+catch (Exception probeFailure) when (probeFailure is IOException or UnauthorizedAccessException)
+{
+    // REFUSE, not warn. The probe's only write is a zero-byte temp file in the
+    // vault root, so a failure here means Knapper cannot write the vault at
+    // all. Booting anyway would serve reads while every mutation failed at run
+    // time — the fail-open shape these boot checks exist to prevent. Both types
+    // are named because UnauthorizedAccessException does NOT derive from
+    // IOException; it is the same pair the probe's own cleanup already handles.
+    throw new InvalidOperationException(
+        $"cannot write to the vault root '{vaultRoot}' — the case-sensitivity probe could not create "
+        + $"its temp file ({probeFailure.Message}). Knapper requires write access to the vault root; "
+        + "check ownership and mode.", probeFailure);
+}
+
+if (vaultIsCaseInsensitive)
 {
     // Warning, not refusal: macOS dev boxes are legitimately case-insensitive
     // and the vaults there are fixtures. Production (`knapper doctor`, which
