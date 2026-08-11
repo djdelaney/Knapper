@@ -37,7 +37,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `AuditLogPath` | — (required by Mcp) | Append-only JSONL. MUST be outside the vault (enforced). |
 | `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault (enforced). |
 | `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). |
-| `RipgrepPath` | `rg` | The search engine binary. |
+| `RipgrepPath` | `rg` | The search engine binary. **Must be ripgrep 15+** — older builds report `"searches": 0` for a query with no matches, emptying the `scanned_files` evidence behind every "no match". `knapper doctor` fails on anything older; Debian's apt package is still 14.x. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |
 | `MaxOutputBytes` | 1000000 | Match-text byte budget per search page. |

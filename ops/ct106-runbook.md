@@ -38,7 +38,17 @@ Test cron entries with `env -i` and cron's real PATH.
 ## 3. Runtimes + service user
 
 ```sh
-apt install ripgrep git                       # rg is the query engine; pin via apt
+apt install git
+# ripgrep 15+ from the RELEASE build, NOT apt: Debian 13 ships 14.x, which
+# reports "searches": 0 for a query with no matches and so empties the
+# scannedFiles evidence behind every "no match" answer. `knapper doctor`
+# fails on anything older. Pin the version; never float latest.
+RG=15.2.0
+curl -sSLf -o /tmp/rg.tar.gz \
+  "https://github.com/BurntSushi/ripgrep/releases/download/${RG}/ripgrep-${RG}-x86_64-unknown-linux-musl.tar.gz"
+tar xzf /tmp/rg.tar.gz -C /tmp
+install "/tmp/ripgrep-${RG}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+rg --version                                  # must report 15.x or newer
 # Node 22 (NodeSource) for the Obsidian CLI:
 npm install -g obsidian-headless@<PINNED>     # pin the version; never float latest
 useradd -r -m -d /home/knapper -s /usr/sbin/nologin knapper

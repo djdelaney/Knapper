@@ -15,6 +15,7 @@ using Knapper.Core.Git;
 using Knapper.Core.Locking;
 using Knapper.Core.Mutation;
 using Knapper.Core.Options;
+using Knapper.Core.Query;
 using Knapper.Core.Vault;
 using Microsoft.Extensions.Configuration;
 
@@ -121,13 +122,27 @@ int Doctor()
     Check("Vault:MetricsPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
-    Check($"ripgrep runs ({vaultOptions.RipgrepPath})", () =>
+    Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ ({vaultOptions.RipgrepPath})", () =>
     {
         var psi = new System.Diagnostics.ProcessStartInfo { FileName = vaultOptions.RipgrepPath, RedirectStandardOutput = true };
         psi.ArgumentList.Add("--version");
         using var p = System.Diagnostics.Process.Start(psi);
-        p!.WaitForExit(5000);
-        return p.ExitCode == 0;
+        var version = p!.StandardOutput.ReadToEnd();
+        p.WaitForExit(5000);
+        if (p.ExitCode != 0)
+            return false;
+        // Thrown, not returned false: Check appends the message, and WHICH rg
+        // was found is the whole diagnosis — "too old" without a version sends
+        // the operator back to the shell to find out.
+        var firstLine = version.Split('\n')[0].Trim();
+        if (RipgrepVersion.ParseMajor(version) is not { } major)
+            throw new InvalidOperationException($"unrecognized `rg --version` output: '{firstLine}'");
+        if (major < RipgrepVersion.MinimumMajor)
+            throw new InvalidOperationException(
+                $"found '{firstLine}', need {RipgrepVersion.MinimumMajor}+ — older rg reports \"searches\": 0 " +
+                "for a query with no matches, which empties the scannedFiles evidence behind every " +
+                "\"no match\" answer. Install a 15.x release build; Debian's apt package is still 14.x.");
+        return true;
     });
     Check("git repo is LOCAL-ONLY — no remote (brief §10, hard prohibition)", () =>
         string.IsNullOrWhiteSpace(vaultOptions.RootPath)

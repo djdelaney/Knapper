@@ -243,6 +243,20 @@ format by default.
   killed stream reports the lower bound, not an invention). Budget hits
   surface as `truncated` + cursor; a time budget that produced nothing is a
   typed `QueryTimeout`, never an empty "no match".
+- **rg is always handed an explicit search path (`.`).** Given none, rg
+  decides between recursing the working directory and reading STDIN by
+  inspecting stdin — and a server under systemd has no terminal. The stdin
+  branch returns zero matches over an empty stream and it is reported as an
+  ordinary exhaustive "no match". Paths then come back `./note.md`;
+  `NormalizeRgPath` strips the prefix, because a vault path is the identity
+  behind cursor fingerprints, prefix scoping, and the lister differential.
+- **ripgrep 15+ is part of the query contract, not a packaging choice.**
+  rg 14 and earlier report `"searches": 0` in the JSON summary for a query
+  that matched nothing, so `scanned_files` — the evidence that "no match"
+  means exhaustively searched — collapses to zero while the envelope still
+  claims `truncated: false`. Nothing errors. `knapper doctor` FAILS below 15
+  (`RipgrepVersion`), CI pins a release build, and the runbook installs one:
+  Debian's apt package is still 14.x.
 - **Cursors are bound to their query** (fingerprint of the filter fields).
   Honoring a cursor against different filters would omit or duplicate
   records across pages — that's why the mismatch is a typed `InvalidCursor`,
