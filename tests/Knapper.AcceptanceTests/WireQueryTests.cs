@@ -219,8 +219,10 @@ public sealed class WireQueryTests : IAsyncLifetime
     private List<(string Path, int Line, int Column)> LocalRgMatches(string pattern, string? scope = null)
     {
         var args = new List<string> { "--json", "--sort=path", "-e", pattern };
-        if (scope is not null)
-            args.Add(scope);
+        // Name a target, exactly as the server does. Handed no path, rg may
+        // search stdin instead of the directory — the oracle would then return
+        // nothing and "disagree" with a server that was perfectly correct.
+        args.Add(scope ?? ".");
         var records = new List<(string, int, int)>();
         foreach (var line in LocalRg([.. args]))
         {

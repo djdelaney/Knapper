@@ -44,13 +44,21 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # The query layer shells out to a real ripgrep; the suite is not
-      # self-contained without it.
-      - name: Install ripgrep
+      # The query layer shells out to a real ripgrep, so the suite is not
+      # self-contained without one — and the VERSION is part of the contract.
+      # rg 14 reports "searches": 0 in its JSON summary for a query with no
+      # matches, which empties scannedFiles: the evidence that "no match" means
+      # "the scope was exhaustively searched" rather than "nothing was looked
+      # at". rg 15 counts them correctly. apt still ships 14.x, so pin the
+      # release binary and test the configuration the code actually assumes.
+      - name: Install ripgrep (pinned)
         run: |
-          sudo apt-get update && sudo apt-get install -y ripgrep
-          # Logged deliberately: rg's behaviour differs across versions, and
-          # this is a different one from any dev machine.
+          RG_VERSION=15.2.0
+          RG_DIR="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSLf -o /tmp/rg.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_DIR}.tar.gz"
+          tar xzf /tmp/rg.tar.gz -C /tmp
+          sudo install "/tmp/${RG_DIR}/rg" /usr/local/bin/rg
           rg --version
 
       - name: Build
