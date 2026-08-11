@@ -13,6 +13,11 @@ observed.
 
 On the Proxmox host:
 
+- **Before `pct create`**: `casesensitivity` is inherited from the parent
+  dataset at creation and is immutable afterwards, so check the PARENT —
+  `zfs get casesensitivity <parent-dataset>` must read `sensitive`. If it
+  does not, fix or choose a different parent and create the CT under that;
+  doing this first turns a destroy-and-rebuild into a no-op.
 - Debian 13 unprivileged CT, VMID 106, rootfs on `local-zfs`, 2 cores /
   2–4 GB RAM / 16 GB. DHCP reservation first; `onboot: 1`,
   `startup: order=` after the other guests.
@@ -21,11 +26,12 @@ On the Proxmox host:
 - **Pin DNS**: `pct set 106 --nameserver "<lan-resolver> 1.1.1.1"` — a blank
   field inherits the host's Tailscale MagicDNS, a black hole in a CT.
   Re-check `/etc/resolv.conf` after a reboot.
-- **Prove the rootfs is case-SENSITIVE before anything populates it.** On ZFS
-  `casesensitivity` is fixed at dataset CREATION and cannot be changed
-  afterwards, so discovering it from a `knapper doctor` failure (§5) means
-  destroying and rebuilding the CT with a synced vault already in it:
-  `zfs get casesensitivity <rootfs-dataset>` must report `sensitive`.
+- **Confirm the rootfs itself came out case-SENSITIVE**, not just its parent:
+  `zfs get casesensitivity <rootfs-dataset>` must report `sensitive`. If the
+  parent check above was skipped and this reads `insensitive`, the remedy is
+  destroy the CT, fix the parent, create again — the property cannot be
+  changed in place, and discovering it from a `knapper doctor` failure (§5)
+  means doing that with a synced vault already inside.
 - **Verify `tmpdir: /var/tmp` in `/etc/vzdump.conf`** on the host (should
   exist from an earlier CT on this host — verify, don't assume), then prove backup BEFORE `.git`
   exists: `vzdump 106 --storage <backup-storage>` + `zstd -t` the artifact.
@@ -34,6 +40,17 @@ On the Proxmox host:
   first scheduled run, and that any offsite replication picked it up. A
   guest-selection of "all" is a configuration, not evidence. Also before
   `.git` exists.
+- **Prove a RESTORE, not just a backup.** Everything above proves an archive
+  exists and is not corrupt; none of it proves anything can be got back out,
+  and this CT holds the only copy of vault git history (`.git` never syncs —
+  §7). Restore the artifact to a scratch VMID, confirm `/vault/.git` is
+  present in the restored container and that `git log` reads, then destroy
+  the scratch CT. Re-run this after `.git` exists too — the first pass proves
+  the mechanism, the second proves it carries the irreplaceable part.
+  `zstd -t` is an integrity check on a container archive; it says nothing
+  about whether the repository inside survived the unprivileged-CT `tmpdir`
+  handling. Same principle as the bullet above, one step further down the
+  chain: an untested restore is a configuration, not evidence.
 
 ## 2. OS baseline (brief §11)
 
@@ -177,12 +194,14 @@ systemctl daemon-reload
 # NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
 # with no .git, and the repo is not created until §7. It starts there.
 systemctl enable --now knapper-heartbeat.timer knapper.service
-# doctor reads env, not the service unit — pass the SAME config the service runs with:
-sudo -u knapper env Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
-  Vault__AuditLogPath=/var/lib/knapper/audit.jsonl Vault__MetricsPath=/var/lib/knapper/metrics.json \
-  Vault__CommitStampPath=/var/lib/knapper/commit-stamp \
-  Sync__Mode=heartbeat Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat \
+# doctor reads env, not the service unit — so ASK THE UNIT for its environment
+# instead of retyping it. A hand-copied list is a second source of truth that
+# drifts silently: doctor then passes against a configuration nothing runs.
+# (Word-splitting is fine here because no value contains a space; if one ever
+# does, quote it.)
+sudo -u knapper env $(systemctl show knapper.service -p Environment --value) \
   /opt/knapper/cli/knapper doctor                 # must be all-ok
+systemctl show knapper.service -p Environment --value   # eyeball it once: is this the config you meant?
 curl -s 127.0.0.1:3535/health | jq .status        # "ok"
 sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/
 ```
@@ -278,12 +297,19 @@ afterwards through the tools), never against real notes:
    if that was a deliberate choice.
 6. Watch for the redirect-URI / DCR failure class during claude.ai
    connector setup (bit this homelab's previous MCP go-live).
+7. **Nothing may mutate the live vault until §7 completes.** Ingress is up
+   from here, but the repo does not exist yet, so any write landing in this
+   window is outside git history permanently — history begins at `git-init`.
+   Nothing in §6.5 or §8b writes to Helios by design (the verifier is
+   read-only, §8b uses a disposable copy); this line makes that a constraint
+   rather than a happy accident. Connect no agent surface before §9.
 
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh
-CLI_ENV="Vault__RootPath=/vault Vault__LockDirectory=/var/lib/knapper/locks \
-  Vault__CommitStampPath=/var/lib/knapper/commit-stamp"
+# Same rule as §5: take the environment from the unit that will run this job,
+# so the hand-run seed and the timer's runs cannot diverge.
+CLI_ENV=$(systemctl show knapper-commit.service -p Environment --value)
 # shellcheck disable=SC2086
 sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
 # Seed the monitor's freshness stamp with one commit BY HAND, then start the
@@ -292,6 +318,13 @@ sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
 sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper commit
 systemctl enable --now knapper-commit.timer
 ```
+
+That environment is deliberately smaller than §5's, and the difference is not
+an omission: `GitCommitJob` takes neither the audit log nor the sync gate, so
+`knapper commit` writes NO audit entry (the commit is its own record) and is
+NOT gated on sync health. Root path, lock directory and the commit stamp are
+the whole of what it reads — which is exactly what `knapper-commit.service`
+carries.
 
 - Local-only. **NO remote until Dan closes the credential sweep.**
 - `knapper commit` takes the vault-wide lock and refuses credential-shaped
@@ -302,6 +335,13 @@ systemctl enable --now knapper-commit.timer
   revert vault-wide.
 - `pct snapshot 106 pre-upgrade-YYYYMMDD` before any bump (`pct` takes the
   VMID, not the CT's name).
+- **Rehearse the rollback once, before cutover**, on the same principle §8
+  applies to alerts: an unexercised recovery path is not a trusted one, and
+  this one would otherwise first run during an incident. Extract the previous
+  tarball over `/opt/knapper`, restart, confirm `knapper verify --url` still
+  passes, then return to current and verify again. It also proves the
+  previous tarball is still on disk and still readable — the part most likely
+  to have quietly stopped being true.
 
 ## 8. Monitoring (brief §8 — OUTSIDE the CT, on the Proxmox host)
 
@@ -334,9 +374,22 @@ mail on recovery. This matters most for the conflict-file case — `/up` stays
 503 until a HUMAN reconciles, which is days, and a mail every five minutes
 for three days is how a monitor gets filtered into a folder nobody reads. The
 exit code still reflects live state on every run, so `systemctl` and the
-journal never see the suppression. Set `TEST_MAILTO` to a distinct address
-and point `MAILTO` at it while running the failure drills below, so injected
-failures cannot later be mistaken for real ones.
+journal never see the suppression. Because the unit exits non-zero for as
+long as the failure lasts, confirm the host does not mail on unit failure and
+that `knapper-monitor.service` has no `OnFailure=` handler — otherwise the
+flood the cadence just removed comes back through systemd instead, and the
+suppression looks broken when it is being bypassed.
+
+**Which variable carries which mail**, because the two are not
+interchangeable: `TEST_MAILTO` is consulted by `--test` and nothing else.
+The drills below are REAL induced failures, so they travel the normal alert
+path — `MAILTO` — and routing them away from the live alert stream means
+editing `MAILTO` in the config for the duration. That edit is the risk in
+this whole section (see the closing checklist in §9): a monitor left pointed
+at the drill address keeps running, keeps exiting non-zero, keeps looking
+healthy in `systemctl`, and mails every genuine alert to a mailbox nobody
+reads — a silent indefinite failure introduced by the procedure that tests
+for silent indefinite failures.
 
 What it checks:
 
@@ -365,6 +418,13 @@ Exercise EVERY failure path before trusting the monitor: stop knapper,
 stop cloudflared, stop the commit timer, revoke the service token — one
 mail each, then one recovery mail as each is restored.
 
+Then the **positive control**, which is what actually closes this section:
+restore `MAILTO` to the real alert address, induce ONE more failure, confirm
+it arrives THERE, and clear it. The drills prove failures are detected; only
+this proves they still reach the people who act on them. §6 applies the same
+rule to the denial matrix — a refusal test that never confirms the allow case
+proves nothing about the allow case.
+
 ## 8b. Behavioral smoke test (disposable vault — before any connector sees Helios)
 
 The acceptance suite proves the SERVER honors its contract; this session
@@ -379,7 +439,10 @@ shell. This session answers exactly those four.
 
 **Setup.** Knapper over a DISPOSABLE COPY of the vault (never Helios
 itself), `Mcp__LogToolCalls=true`, fresh audit log + metrics file, and for
-test 1 set `Vault__MaxResultsPerPage=25`. Attach one real agent surface
+test 1 set `Vault__MaxResultsPerPage=25` — then **restore it to the
+production value before test 2**, so tests 2–4 exercise the page size agents
+will actually meet (test 4 reads counts and files modes, where a 25-item page
+would change what the log shows). Attach one real agent surface
 (Claude Code via the connector). Seed: ≥60 matches for one term spread
 over many notes; one note with an unterminated frontmatter fence whose
 (broken) frontmatter matches test 3's query; a handful of
@@ -418,3 +481,23 @@ Add the connector to every agent surface; verify query parity; remove local
 Helios folders from agent workspaces; install the routing instruction (brief
 §14) outside the vault; swap the vault's own CLAUDE.md to the MCP-only rule
 (done in-vault, not from here); verify an outage produces a hard stop.
+
+**Restore every temporary setting before calling this done.** Each was
+introduced by a test several sections apart from every other, and each fails
+silently if left:
+
+- [ ] `MailReport` back to `on-change` (§2)
+- [ ] `MAILTO` back to the real alert address, proven by the §8 positive
+      control — not just edited back
+- [ ] `Vault__MaxResultsPerPage` back to the production value (§8b)
+- [ ] scratch restore CT destroyed (§1); `_deploy-check/` scratch subtree
+      removed through the tools (§5); disposable §8b vault deleted
+- [ ] `/opt/knapper` back on the current release if the §7 rollback
+      rehearsal ran
+
+**If cutover is abandoned**, the two irreversible-feeling steps are not: put
+the local Helios folders back in the agent workspaces that had them, and
+restore the vault's own CLAUDE.md from git history (`knapper commit` has been
+snapshotting since §7, which is what makes this a revert rather than a
+reconstruction). Reverse them in that order, then stop the connector — never
+the other way round, or agents lose both paths at once.

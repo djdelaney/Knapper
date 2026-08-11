@@ -11,7 +11,10 @@ WorkingDirectory=/opt/knapper/cli
 ExecStart=/opt/knapper/cli/knapper commit
 Environment=Vault__RootPath=/vault
 Environment=Vault__LockDirectory=/var/lib/knapper/locks
-Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
+# No Vault__AuditLogPath here, deliberately: the commit job writes no audit
+# entry — the commit itself IS the record, and GitCommitJob takes neither the
+# audit log nor the sync gate. A path listed here would only imply otherwise,
+# and send someone hunting for entries that were never going to appear.
 # The external monitor's git-freshness signal: touched (fsynced) on every
 # successful run including "nothing to commit" — last-commit age can't tell
 # a quiet vault from a dead timer.
