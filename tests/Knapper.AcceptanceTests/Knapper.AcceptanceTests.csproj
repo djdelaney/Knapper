@@ -25,9 +25,24 @@
          probes. These tests never load Knapper types in-process on purpose:
          the whole point is the black box. -->
     <ProjectReference Include="..\..\src\Knapper.Mcp\Knapper.Mcp.csproj" />
-    <!-- Same reason: `knapper verify` is exercised as the SHIPPED binary
-         against a real server over a real socket, not as a method call. -->
-    <ProjectReference Include="..\..\src\Knapper.Cli\Knapper.Cli.csproj" />
+    <!-- The CLI is exercised as the SHIPPED binary too, but it is spawned from
+         ITS OWN output directory and deliberately NOT copied here. This
+         project inherits Microsoft.AspNetCore.App through the Mcp reference,
+         so the SDK resolves Microsoft.Extensions.Configuration.* as
+         framework-provided and omits the package copies whenever the shared
+         framework is at least as new as the pinned package version. `knapper`
+         is a plain console app whose runtimeconfig knows nothing of ASP.NET,
+         so a copy sitting here starts and dies on a missing assembly — which
+         is machine-dependent, and therefore green locally and red on CI
+         (measured: local shared framework 10.0.8 vs CI 10.0.10 against the
+         10.0.10 packages). ReferenceOutputAssembly=false keeps the build
+         ordering and copies nothing; KnapperCliDll below names the real one. -->
+    <ProjectReference Include="..\..\src\Knapper.Cli\Knapper.Cli.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="KnapperCliDll"
+                      Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\src\Knapper.Cli\bin\$(Configuration)\$(TargetFramework)\knapper.dll'))" />
   </ItemGroup>
 
 </Project>

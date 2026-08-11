@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 
 namespace Knapper.AcceptanceTests;
@@ -71,9 +72,20 @@ public sealed class VerifyCommandTests : IDisposable
         Snapshot(_vaultDir).ShouldBe(before);
     }
 
+    /// <summary>
+    /// The CLI's OWN build output, stamped in by the csproj — not a copy in
+    /// this project's directory. See the ProjectReference comment there: a
+    /// copy here is missing its configuration assemblies whenever the shared
+    /// framework wins conflict resolution, which depends on the machine.
+    /// </summary>
+    private static string CliDll() =>
+        typeof(VerifyCommandTests).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .Single(a => a.Key == "KnapperCliDll").Value!;
+
     private static (int ExitCode, string Output) RunVerify(int port)
     {
-        var dll = Path.Combine(AppContext.BaseDirectory, "knapper.dll");
+        var dll = CliDll();
         File.Exists(dll).ShouldBeTrue($"CLI binary not found at {dll}");
 
         var psi = new ProcessStartInfo
