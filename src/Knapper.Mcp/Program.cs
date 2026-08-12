@@ -293,12 +293,15 @@ await app.RunAsync().ConfigureAwait(false);
 
 static void ConfigureServerInfo(ModelContextProtocol.Server.McpServerOptions opts)
 {
-    var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+    // BuildInfo, not GetEntryAssembly(): under `dotnet test` the entry assembly
+    // is the test host, so the in-process suites were asserting against the
+    // runner's version — and it is the same string /health, /up and
+    // `knapper version` report, which is what makes comparing them a check.
     opts.ServerInfo = new Implementation
     {
         Name = "knapper",
         Title = "Knapper (Obsidian vault)",
-        Version = version,
+        Version = BuildInfo.Version,
     };
     // Folded into the client model's system prompt at initialize — the ONE
     // place to establish the mental model and the trust rules.

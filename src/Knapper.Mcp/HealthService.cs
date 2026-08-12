@@ -67,7 +67,7 @@ public sealed class HealthService(
 
     public Report Check()
     {
-        var version = typeof(HealthService).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        var version = BuildInfo.Version;
 
         var vaultReachable = Directory.Exists(resolver.Root);
         var conflictFiles = vaultReachable ? conflicts.ScanAll() : [];

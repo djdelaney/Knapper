@@ -148,6 +148,12 @@ Tool errors are structured MCP errors whose message leads with the code:
   unhealthy, ripgrep missing, audit unwritable, conflict files present.
 - `knapper status` / `knapper doctor` — one-screen summary / checks with
   exit codes for scripting.
+- `knapper version` — the build identity of that binary, alone on stdout:
+  `0.2.0+g1f5ff1c`, or `0.2.0+g1f5ff1c.dirty` when built from a tree with
+  uncommitted changes. The same string `/health`, `/up` and
+  `initialize.serverInfo.version` report, so comparing the deployed service
+  against the CLI on the box is a real check. Releases are cut with
+  `ops/release.sh` (see `docs/extending.md`).
 - `knapper verify --url <url>` — checks a DEPLOYED server from the outside,
   as a real MCP client over the same transport agents use. **Read-only, and
   it must stay that way**: it is pointed at the production vault, where a
@@ -162,11 +168,25 @@ Tool errors are structured MCP errors whose message leads with the code:
   those ingress checks print `skip` — the same-box exemption is the thing
   they would be testing. Exit 0 = all passed.
 
+  It also always checks that `/up` and the MCP endpoint report the SAME
+  build — one URL reaching two processes (a stale unit still bound to the
+  port) is otherwise invisible, and every other green check would be
+  describing whichever one answered.
+
   ```sh
   CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
   CF_MONITOR_CLIENT_ID=… CF_MONITOR_CLIENT_SECRET=… \
     knapper verify --url https://mcp.example.com/
   ```
+
+  `--expect-version X.Y.Z` adds the post-upgrade check: **is the service
+  running the build that was just installed?** A restart onto the old binary
+  passes every other check here, because the old build satisfies the same
+  contract. A bare `X.Y.Z` matches any build of that release except a
+  `.dirty` one; pass the full `X.Y.Z+g<ref>` to demand one exact build.
+  `--expect-this-version` uses the version of the `knapper` binary being run,
+  so invoking the CLI out of the freshly-unpacked tarball needs nothing typed
+  by hand (runbook §10.3).
 - The audit log (`Vault:AuditLogPath`) is JSONL, one entry per mutation
   attempt including rejections: timestamp, client, request id, op, path,
   outcome, before/after SHA. `knapper audit-tail 50` shows the recent end.

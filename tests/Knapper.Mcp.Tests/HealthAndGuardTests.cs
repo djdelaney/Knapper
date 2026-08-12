@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Knapper.Core;
 
 namespace Knapper.Mcp.Tests;
 
@@ -40,6 +41,32 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         body.ShouldNotContain("audit.jsonl");
         body.ShouldNotContain("generation");
         body.ShouldNotContain("root");
+    }
+
+    /// <summary>
+    /// /health, /up and initialize.serverInfo.version are three surfaces of one
+    /// process and must report one string — that identity is what makes
+    /// `knapper verify` able to say "the URL that answers /up is the process
+    /// serving the vault", and what lets an operator compare the deployed
+    /// version against `knapper version` on the box. Three independent reads of
+    /// the assembly would drift apart without anything failing: each would keep
+    /// returning something version-shaped.
+    /// </summary>
+    [Fact]
+    public async Task Every_surface_reports_the_same_build()
+    {
+        using var client = _factory.CreateClient();
+        var health = JsonDocument.Parse(await client.GetStringAsync("/health")).RootElement;
+        var up = JsonDocument.Parse(await client.GetStringAsync("/up")).RootElement;
+
+        health.GetProperty("version").GetString().ShouldBe(BuildInfo.Version);
+        up.GetProperty("version").GetString().ShouldBe(BuildInfo.Version);
+
+        // Over the wire, where the client actually reads it. This previously
+        // came from Assembly.GetEntryAssembly(), which under `dotnet test` is
+        // the test host — so the assertion would have been about the runner.
+        await using var mcp = await McpSurfaceTests.ConnectAsync(_factory);
+        mcp.ServerInfo.Version.ShouldBe(BuildInfo.Version);
     }
 
     [Fact]

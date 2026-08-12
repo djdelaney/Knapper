@@ -7,24 +7,35 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-VERSION=$(sed -n 's/.*<Version>\(.*\)<\/Version>.*/\1/p' Directory.Build.props)
-# An absent or malformed <Version> would ship "knapper--linux-x64.tar.gz"
-# and the manifest gate below would still pass — validate the shape here.
-case "$VERSION" in
-    [0-9]*.[0-9]*) ;;
-    *) echo "publish FAILED: could not extract a valid <Version> from Directory.Build.props (got '$VERSION')" >&2
-       exit 1 ;;
-esac
-[ "$(printf '%s' "$VERSION" | wc -l)" -eq 0 ] || {
-    echo "publish FAILED: <Version> extraction produced multiple lines" >&2
-    exit 1
-}
+# ops/version.sh is THE build identity, shared with the MSBuild stamping target
+# and release.sh, and it validates <Version>'s shape (an absent or malformed one
+# would otherwise ship "knapper--linux-x64.tar.gz" past the manifest gate below).
+# The full form carries the git revision, so the artifact filename says which
+# BUILD it is and not merely which release: knapper-0.2.0+g1f5ff1c-linux-x64.tar.gz,
+# matching what the binaries inside it report at every runtime surface. A tarball
+# built off uncommitted edits names itself ".dirty" and cannot be mistaken for
+# the tagged one — before it reaches a machine, not after.
+VERSION=$(./ops/version.sh --full)
 STAGE=artifacts/stage
 rm -rf "$STAGE"
 mkdir -p "$STAGE/ops"
 
-dotnet publish src/Knapper.Mcp -c Release -r linux-x64 --self-contained -o "$STAGE/mcp"
-dotnet publish src/Knapper.Cli -c Release -r linux-x64 --self-contained -o "$STAGE/cli"
+case "$VERSION" in
+    *.dirty) echo "publish WARNING: building from a tree with uncommitted changes — this artifact is" >&2
+             echo "  named '.dirty' and cannot be reproduced from any tag. Fine for a test install;" >&2
+             echo "  cut releases with ops/release.sh from a clean tree." >&2 ;;
+esac
+
+# The version is PASSED IN rather than recomputed per project, so the tarball
+# name and the string the binaries report come from one evaluation. Recomputing
+# would let a file saved between these two publishes stamp the CLI ".dirty" and
+# the server not, from a single run — two versions in one artifact, and the
+# post-deploy check comparing them would be comparing the wrong things.
+# The value already contains '+', which is what makes the stamping target in
+# Directory.Build.props defer to it instead of appending a second revision.
+STAMP="-p:InformationalVersion=$VERSION"
+dotnet publish src/Knapper.Mcp -c Release -r linux-x64 --self-contained "$STAMP" -o "$STAGE/mcp"
+dotnet publish src/Knapper.Cli -c Release -r linux-x64 --self-contained "$STAMP" -o "$STAGE/cli"
 cp -R ops/systemd "$STAGE/ops/systemd"
 cp ops/sync-heartbeat.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/sync-heartbeat.sh"

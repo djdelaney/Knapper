@@ -145,8 +145,45 @@ of those findings are in git history.
   editing both files.
 - `TreatWarningsAsErrors` repo-wide. Unix-only (`SupportedOSPlatform`
   linux+macos in `Directory.Build.props`) — don't add Windows guards.
-- One repo-wide `<Version>` in `Directory.Build.props`, surfaced through
-  `initialize.serverInfo.version` and the CLI.
+## Versioning and releases
+
+One carrier: `<Version>` in `Directory.Build.props`. Everything downstream is
+derived, and **adding a second carrier is the thing not to do** — a second
+place to spell the version is a way for the two to disagree while both look
+authoritative. (Mailvec has two, `manifest.json` and the props file, and pays
+for it with a drift check that refuses to bump when they diverge.)
+
+The chain:
+
+```
+Directory.Build.props <Version>          the one carrier
+  → ops/version.sh                       + git revision → 0.2.0+g1f5ff1c[.dirty]
+    → KnapperStampRevision (props)       → AssemblyInformationalVersion, all assemblies
+      → Knapper.Core.BuildInfo           the one read
+        → serverInfo.version, /health, /up, `knapper version`
+    → ops/publish.sh                     the artifact filename
+```
+
+- **Bump with `ops/release.sh`** (`--patch` default, `--minor`, `--major`;
+  `--ship` pushes, waits for green CI, and tags only on success). Never edit
+  the property by hand: the script is what keeps the property, the commit and
+  the tag describing one build, and it refuses a bump whose tag already exists.
+- **`--minor` for any client-facing contract change**: a tool name or shape, a
+  new error code, a config knob deployments must set. Tool names are a client
+  contract — a rename is a version bump, not a refactor.
+- **Read the version through `BuildInfo`, never `Assembly.GetName().Version`.**
+  That is `AssemblyVersion`: four numeric parts, so it silently drops the
+  revision and any prerelease suffix and reports an off-tag build as the
+  release. Nor `GetEntryAssembly()` — under `dotnet test` that is the test host.
+- **The `.dirty` suffix is load-bearing.** It is what makes a build off
+  uncommitted edits distinguishable from the tagged release at the artifact
+  filename and at every runtime surface, and what
+  `knapper verify --expect-version 0.2.0` refuses. Publish releases from a
+  clean tagged tree.
+- `VersionSurfaceTests` (Core) pins the derivation and the single carrier;
+  `HealthAndGuardTests.Every_surface_reports_the_same_build` pins that the
+  three reporting surfaces agree. Both failure modes are otherwise silent —
+  each surface keeps returning something version-shaped.
 
 ## Ideas already scoped (not yet built)
 

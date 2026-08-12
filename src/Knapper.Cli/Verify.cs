@@ -31,12 +31,19 @@ internal static class Verify
     internal static int Run(string[] args)
     {
         string? url = null, clientId = null, clientSecret = null, monitorId = null, monitorSecret = null;
+        string? expectVersion = null;
         for (var i = 1; i < args.Length; i++)
         {
             var value = i + 1 < args.Length ? args[i + 1] : null;
             switch (args[i])
             {
                 case "--url": url = value; i++; break;
+                case "--expect-version": expectVersion = value; i++; break;
+                // The version this very binary was built from. The upgrade
+                // case in one flag: unpack a tarball, run its own knapper
+                // against the URL, and the check is "is the service running
+                // the build I just installed" with nothing typed by hand.
+                case "--expect-this-version": expectVersion = BuildInfo.Version; break;
                 case "--client-id": clientId = value; i++; break;
                 case "--client-secret": clientSecret = value; i++; break;
                 case "--monitor-client-id": monitorId = value; i++; break;
@@ -58,22 +65,34 @@ internal static class Verify
         {
             Console.Error.WriteLine(
                 "usage: knapper verify --url <https://mcp.example.com/> [--client-id ID --client-secret SECRET] " +
-                "[--monitor-client-id ID --monitor-client-secret SECRET]\n" +
+                "[--monitor-client-id ID --monitor-client-secret SECRET] " +
+                "[--expect-version X.Y.Z | --expect-this-version]\n" +
                 "  Service-token credentials also read from CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET and " +
                 "CF_MONITOR_CLIENT_ID/CF_MONITOR_CLIENT_SECRET.");
             return 2;
         }
 
-        return new Checker(endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret))
+        return new Checker(endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret), expectVersion)
             .RunAsync().GetAwaiter().GetResult();
 
         static (string Id, string Secret)? Token(string? id, string? secret) =>
             string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(secret) ? null : (id, secret);
     }
 
-    private sealed class Checker(Uri endpoint, (string Id, string Secret)? owner, (string Id, string Secret)? monitor)
+    private sealed class Checker(
+        Uri endpoint,
+        (string Id, string Secret)? owner,
+        (string Id, string Secret)? monitor,
+        string? expectVersion)
     {
         private int _failures;
+
+        // What /up reported, kept so the MCP surface's version can be compared
+        // against it. Two surfaces of ONE process must agree; if they don't,
+        // the tunnel is routing /up and the MCP endpoint to different
+        // processes — a stale unit still bound on the port, say — and every
+        // other green check here is describing whichever one happened to answer.
+        private string? _upVersion;
 
         // A loopback URL is the same-box exemption's own target: Access is
         // bypassed there by design (AccessOptions.AllowLoopback), so the
@@ -157,6 +176,14 @@ internal static class Verify
                 }
                 var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 AssertUpDisclosesBooleansOnly(body);
+                // Case-insensitive like the disclosure assert above: the
+                // serializer's casing policy is not this check's contract.
+                // Presence is already guaranteed — the assert just required it.
+                using var document = JsonDocument.Parse(body);
+                _upVersion = document.RootElement.EnumerateObject()
+                    .Where(p => string.Equals(p.Name, "version", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Value.GetString())
+                    .FirstOrDefault();
             }).ConfigureAwait(false);
 
             if (monitor is null)
@@ -209,6 +236,79 @@ internal static class Verify
             }
         }
 
+        /// <summary>
+        /// The upgrade question every other check here leaves open: is the
+        /// service running the build that was just installed? A restart onto
+        /// the OLD binary — unit not reloaded, tarball unpacked beside the live
+        /// directory rather than into it — passes every surface check in this
+        /// file, because the old build satisfies the same contract. Only the
+        /// version distinguishes them, and only if someone compares it.
+        /// </summary>
+        private void VersionChecks(string reported)
+        {
+            // /up and the MCP endpoint are two surfaces of one process. Always
+            // checked, expectation or not: it costs nothing and it is the check
+            // that catches a second, stale process still answering on the port.
+            if (_upVersion is null)
+            {
+                Skip("/up and the MCP surface are the same build", "/up did not answer — fix the failure above first");
+            }
+            else
+            {
+                Check("/up and the MCP surface are the same build", () =>
+                {
+                    if (!string.Equals(_upVersion, reported, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"/up reports '{_upVersion}' but the MCP endpoint reports '{reported}' — one URL is " +
+                            "reaching two different processes; check for a stale unit still bound to the port");
+                    }
+                });
+            }
+
+            if (expectVersion is null)
+            {
+                Skip($"the deployed build is the expected one (it reports '{reported}')",
+                     "no --expect-version/--expect-this-version given — say which build you installed and this is checked");
+                return;
+            }
+
+            Check($"the deployed build is '{expectVersion}'", () =>
+            {
+                // An expectation carrying '+' names an exact build and is
+                // compared exactly. A bare X.Y.Z is what an operator types from
+                // the tag, so it matches any build OF that release — except a
+                // dirty one, which is refused: "0.2.0" asked for the release,
+                // and a tree with uncommitted edits is not it. That refusal is
+                // the entire reason the suffix exists.
+                if (expectVersion.Contains('+', StringComparison.Ordinal))
+                {
+                    if (!string.Equals(reported, expectVersion, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"the service reports '{reported}' — the installed build is not the expected one; " +
+                            "the restart did not pick up the new binary, or the wrong tarball was unpacked");
+                    }
+                    return;
+                }
+
+                var release = reported.Split('+')[0];
+                if (!string.Equals(release, expectVersion, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"the service reports '{reported}', expected release '{expectVersion}' — the restart did " +
+                        "not pick up the new binary, or the wrong tarball was unpacked");
+                }
+                if (reported.EndsWith(".dirty", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"the service reports '{reported}': the right release, but built from a tree with " +
+                        "uncommitted changes — it is not the tagged build and cannot be reproduced from the tag. " +
+                        "Rebuild from a clean checkout, or pass the exact string to --expect-version to accept it");
+                }
+            });
+        }
+
         // ---- the MCP surface itself ---------------------------------------
 
         private async Task SurfaceAsync()
@@ -228,6 +328,8 @@ internal static class Verify
                     Skip("the remaining tool checks", "no MCP session — fix the failure above first");
                     return;
                 }
+
+                VersionChecks(client.ServerInfo.Version);
 
                 Check("initialize carries the routing instruction and mutation protocol", () =>
                 {

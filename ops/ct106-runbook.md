@@ -31,6 +31,7 @@ resolve it, don't pick a winner.**
 | 8 | monitor + conf (on the HOST) | + monitor timer | as §6 | **`MAILTO` → drill address**; `/up` token replaced |
 | 8b | smoke unit, disposable vault outside `/vault`, Access app 3 | + `knapper-smoke` :3536 | + smoke hostname | smoke unit/vault/route/app/connector; `LogToolCalls`; page-size override |
 | 9 | production | `knapper`, `obsidian-headless`, 2 timers, monitor | prod hostname only | **all of the above must be zero** |
+| 10 | + the PREVIOUS release's tarball, retained | as §9 | as §9 | — (steady state; repeats once per release) |
 
 **Peak surface is §8b**: 2 Knappers, 2 hostnames, 2 ports, 3 Access apps, 3
 service tokens, 2 vaults, 2 audit logs, 2 archives, 6 live deviations. That
@@ -537,11 +538,11 @@ carries.
   is most of what fails during a real rollback.
 
   What it cannot prove is a VERSION downgrade, because there is no earlier
-  version yet. That belongs to the first real upgrade: snapshot, install,
-  verify, and if verify fails, roll back to the retained previous tarball and
-  make `knapper verify --url` passing the acceptance criterion for the
-  rollback itself. Deferring silently is the only bad answer here; deferring
-  in writing is fine.
+  version yet. That belongs to the first real upgrade, and §10 is now the
+  written procedure for it: snapshot, install, verify against the expected
+  version, and if verify fails, roll back to the retained previous tarball
+  with `knapper verify --url` passing as the acceptance criterion for the
+  rollback itself.
 
 ## 8. Monitoring (brief §8 — OUTSIDE the CT, on the Proxmox host)
 
@@ -797,3 +798,108 @@ pct exec 106 -- git -C /vault show <ref>:CLAUDE.md
 ```
 
 Same virtue as §1's restore drill, which is host-side end to end.
+
+## 10. Upgrading (every release after the first)
+
+The version is the whole mechanism here. `ops/release.sh` bumps the one
+carrier, the `Version` property in `Directory.Build.props`; every binary is stamped with
+it plus the git revision, and the service reports that string at
+`initialize.serverInfo.version`, `/health`, `/up` and `knapper version`. So
+"which build is running" is answerable, and §10.3 is where it gets answered.
+
+**Cut the release on the dev box, from a CLEAN tagged tree:**
+
+```sh
+ops/release.sh --patch          # or --minor for a tool-surface or config change
+# push to main, wait for green CI, then run the printed tag commands
+#   (or: ops/release.sh --patch --ship, which does that and tags only on green)
+git checkout v<v> && git status --porcelain    # MUST print nothing
+ops/publish.sh                                 # → artifacts/knapper-<v>+g<ref>-linux-x64.tar.gz
+```
+
+Publishing from a dirty tree stamps the artifact AND the running service
+`.dirty` — deliberately, and §10.3 refuses it. That is not pedantry: a build
+carrying uncommitted edits cannot be reproduced from the tag, so the tag stops
+describing what is in production and every later "is this the fix?" question
+becomes unanswerable.
+
+### 10.1 Before touching the CT
+
+```sh
+pct snapshot 106 pre-upgrade-<term>            # §7's rule: pct takes the VMID
+pct exec 106 -- /opt/knapper/cli/knapper version   # RECORD this — the rollback target
+pct exec 106 -- ls /opt/knapper/*.tar.gz       # the retained previous artifact
+```
+
+Record the running version before, not after. Once the new tarball is
+unpacked, the only evidence of what you were on is what you wrote down — the
+old binary is gone, and the tag alone will not tell you which build the CT
+actually had.
+
+### 10.2 Install
+
+`knapper-commit.timer` fires on a schedule and `knapper commit` takes the
+vault-wide lock; stopping it first means the upgrade cannot land mid-snapshot.
+
+```sh
+scp knapper-<v>+g<ref>-linux-x64.tar.gz root@<ct-address>:/opt/knapper/
+pct exec 106 -- systemctl stop knapper-commit.timer knapper.service
+pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper
+# systemd units ship IN the tarball and can change between releases; the
+# running unit is NOT updated by unpacking over /opt/knapper.
+pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper.service /opt/knapper/ops/systemd/knapper.service'
+# reconcile any diff BY HAND — /etc holds this deployment's edits (AllowedHosts,
+# the Access AUD, Sync__MaxAgeSeconds), and copying the shipped unit over them
+# reverts all three at once, silently, into a service that still starts.
+pct exec 106 -- systemctl daemon-reload
+pct exec 106 -- systemctl start knapper.service knapper-commit.timer
+```
+
+### 10.3 Prove the restart took
+
+The check the rest of this runbook cannot make. A restart onto the OLD binary
+— unit not reloaded, tarball unpacked beside `/opt/knapper` rather than into
+it — passes every other check in this file, because the old build satisfies
+the same contract:
+
+```sh
+knapper verify --url https://<smoke-hostname>/ --expect-version <v>
+```
+
+Read-only, as always (`knapper verify` may never write; the vault here is
+Helios over Sync). `--expect-version <v>` takes the bare release and accepts
+any build of it except a `.dirty` one; pass the full `<v>+g<ref>` string to
+demand that exact build. Running the check from the tarball's own CLI makes it
+`--expect-this-version`, with nothing typed by hand:
+
+```sh
+/opt/knapper/cli/knapper verify --url https://<smoke-hostname>/ --expect-this-version
+```
+
+A failure here means the service is not the build just installed. Do not
+"restart again and see" — go to §10.4.
+
+Also confirm `knapper doctor` still passes: a release can add a dependency
+gate (ripgrep's minimum major is the precedent) that the CT does not satisfy.
+
+### 10.4 Rollback
+
+The acceptance criterion for the rollback is the same check, aimed at the old
+version — not "the service came back up":
+
+```sh
+pct exec 106 -- systemctl stop knapper.service knapper-commit.timer
+pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper   # the RETAINED previous artifact
+pct exec 106 -- systemctl daemon-reload
+pct exec 106 -- systemctl start knapper.service knapper-commit.timer
+knapper verify --url https://<smoke-hostname>/ --expect-version <v>   # the version recorded in §10.1
+```
+
+`pct rollback 106 pre-upgrade-<term>` is the heavier option and reverts the VAULT with
+it — every note written since the snapshot goes too, and Sync will then
+propagate that loss to Dan's devices. Use the tarball path unless the vault
+itself is what is damaged.
+
+Keep the previous release's tarball on the CT after every upgrade. Retaining
+exactly one is the point: it is the artifact §10.4 needs, and it is what makes
+"roll back" a two-minute operation rather than a rebuild from a tag.

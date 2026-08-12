@@ -56,11 +56,41 @@ dotnet test Knapper.slnx                            # includes the black-box acc
 dotnet test tests/Knapper.AcceptanceTests           # REAL server processes over real HTTP (brief §13)
 dotnet test tests/Knapper.Core.Tests --filter "FullyQualifiedName~CrossProcessLockTests"
 dotnet run --project src/Knapper.Cli -- doctor      # config/dependency checks (env: Vault__RootPath etc.)
+ops/release.sh --patch --ship                       # bump + commit + tag on green CI (see below)
 ops/publish.sh                                      # linux-x64 tarball for CT 106
 ```
 
 Deployment: `ops/ct106-runbook.md` (condensed from the brief; the brief's
 §11 corrections are mandatory reading before building the CT).
+
+## Cutting a release
+
+Land the work first — `ops/release.sh` bumps a version, it does not ship
+code. Then, in order:
+
+```sh
+ops/release.sh --minor --ship   # bump <Version> → commit → push main →
+                                # wait for CI on THAT commit → tag v0.2.0 only if green
+git checkout v0.2.0
+git status --porcelain          # MUST print nothing before publishing
+ops/publish.sh                  # → artifacts/knapper-0.2.0+g<sha>-linux-x64.tar.gz
+```
+
+Then runbook §10: snapshot, record the running version, install, and prove the
+restart took with `knapper verify --url … --expect-version 0.2.0`.
+
+- `--patch` is the default. `--minor` for anything client-facing — a tool name
+  or shape, a new error code, a config knob deployments must set. Tool names
+  are a client contract; a rename is a version bump, not a refactor.
+- Without `--ship` it bumps and commits only, then prints the `git tag`/`git
+  push` commands to run once CI is green. Never tag a commit CI has not passed.
+- It refuses to run with uncommitted edits to `Directory.Build.props` (so the
+  bump commit carries nothing else), refuses a bump whose tag already exists,
+  and `--ship` refuses to run off main.
+- **Publish from the clean tagged tree.** A dirty tree stamps the artifact and
+  the running service `.dirty`, and `--expect-version 0.2.0` refuses it — a
+  build carrying uncommitted edits cannot be reproduced from the tag, so the
+  tag stops describing production. Full rationale: `docs/extending.md`.
 
 `Knapper.slnx` (not `.sln`) is the solution file — .NET 10 emits the new XML
 format by default.
@@ -75,6 +105,22 @@ format by default.
   repo-wide in `Directory.Build.props`): the mutation contract stands on
   flock(2), link(2), rename(2), and Unix file modes. Don't add Windows guards
   or a Windows code path.
+- **`<Version>` in `Directory.Build.props` is the ONE version carrier, and
+  `Knapper.Core.BuildInfo` is the ONE read of it.** Bump it with
+  `ops/release.sh`, never by hand. Everything downstream is derived:
+  `ops/version.sh` appends the git revision, the `KnapperStampRevision` target
+  stamps `AssemblyInformationalVersion`, and `BuildInfo` feeds
+  `serverInfo.version`, `/health`, `/up`, `knapper version` and the artifact
+  filename. Three ways to break this silently, all of which still produce a
+  version-shaped string: reading `Assembly.GetName().Version` (that is
+  `AssemblyVersion` — four numeric parts, so the revision and any prerelease
+  suffix vanish and an off-tag build reports itself as the release);
+  `GetEntryAssembly()` (the test host, under `dotnet test`); or adding a
+  second carrier for the two to disagree about. The `.dirty` suffix is
+  load-bearing — it is the only thing distinguishing a build off uncommitted
+  edits from the tagged release, and `knapper verify --expect-version` refuses
+  it. Pinned by `VersionSurfaceTests` and
+  `HealthAndGuardTests.Every_surface_reports_the_same_build`.
 - **A case-SENSITIVE vault filesystem is a hard production requirement.**
   Per-path lock identity is SHA-256 of the path STRING; batch duplicate
   rejection, move same-path checks, and search prefixes are string compares —

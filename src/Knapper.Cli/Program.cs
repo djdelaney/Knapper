@@ -6,6 +6,7 @@
 //   knapper status              one-screen operational summary
 //   knapper doctor              config/dependency checks; exit 1 on any failure
 //   knapper audit-tail [n]      last n audit entries (default 20)
+//   knapper version             the build identity of THIS binary
 //   knapper verify --url …      READ-ONLY checks against a DEPLOYED server
 //
 // Configuration: appsettings.json next to the binary (same schema as the MCP
@@ -39,6 +40,7 @@ try
         "status" => Status(),
         "doctor" => Doctor(),
         "audit-tail" => AuditTail(args.Length > 1 && int.TryParse(args[1], out var n) ? n : 20),
+        "version" or "--version" or "-v" => Version(),
         "verify" => Knapper.Cli.Verify.Run(args),
         _ => Usage(),
     };
@@ -52,8 +54,17 @@ catch (KnapperException e)
 int Usage()
 {
     Console.Error.WriteLine(
-        "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|verify --url <url> [--client-id ID --client-secret SECRET]>");
+        "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|version|" +
+        "verify --url <url> [--expect-version X.Y.Z] [--client-id ID --client-secret SECRET]>");
     return 2;
+}
+
+// Bare string on stdout, nothing else: this is read by scripts (the runbook
+// compares it against what the deployed server reports) as often as by people.
+int Version()
+{
+    Console.WriteLine(BuildInfo.Version);
+    return 0;
 }
 
 (VaultPathResolver Resolver, VaultLockManager Locks) Open()
