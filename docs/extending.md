@@ -240,3 +240,18 @@ line (accuracy nit, documented); the batch-read worst-case memory ceiling
 (designed scale); `CreateDirectory` holding no per-path lock (no content
 involved); resolver-gate rejections staying unaudited (no vault object to
 audit).
+
+Also closed: **birth time is not preserved on the Linux CT, and nothing
+here reads it.** `ob sync` restores mtime but not btime — the package ships
+btime-setting binaries for darwin and win32 only, because Linux has no API
+to set a file's creation time, so a synced note on CT 106 is born at
+download time while its mtime stays correct. Verified 2026-08-12 during
+deployment (birth 23:00:56 = the download, mtime 18:53:13 = the source
+edit). Knapper never reads creation time on any surface: `read_file` and
+`stat` report mtime, `list_files` filters on `mtimeAfter`/`mtimeBefore`,
+and `VaultReadService`/`VaultFileLister`/`FileAgeSyncGate` all read
+`LastWriteTimeUtc`. The sole `Created` in the codebase is a
+`FileSystemWatcher` event kind, which is an event name, not a timestamp
+read. Permanent, cosmetic, and outside every contract — re-opens only if a
+tool ever starts exposing or filtering on creation time, which would mean
+that tool reports a value that is wrong in production and right in dev.
