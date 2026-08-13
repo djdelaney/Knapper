@@ -193,10 +193,15 @@ if (ripgrepProbe.Error is { } ripgrepError)
 }
 else if (!RipgrepVersion.IsSupported(ripgrepProbe.Output!))
 {
+    // The resolved PATH is logged too: the failure mode is two rg builds on
+    // one box (a pinned /usr/local/bin/rg beside an apt /usr/bin/rg), where
+    // the version alone says a wrong one answered but not which.
     startupLogger.LogWarning(
-        "ripgrep is older than the required major version {Minimum} (found '{Found}'). Searches still " +
-        "run, but a query with no matches reports scanned_files 0, so \"no match\" carries no evidence " +
-        "that the scope was searched. Install a current release build; Debian's apt package is older.",
+        "ripgrep at {Resolved} is older than the required major version {Minimum} (found '{Found}'). " +
+        "Searches still run, but a query with no matches reports scanned_files 0, so \"no match\" " +
+        "carries no evidence that the scope was searched. Install a current release build; Debian's " +
+        "apt package is older.",
+        ripgrepProbe.ResolvedPath,
         RipgrepVersion.MinimumMajor,
         ripgrepProbe.Output!.Split('\n')[0].Trim());
 }

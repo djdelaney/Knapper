@@ -132,11 +132,29 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
 `ops/ct106-runbook.md` is checked by `ops/runbook-lint.sh` in CI: every fenced
 `sh` block must parse, every bare `§N` must resolve to a heading in that file
 (brief references are written `brief §N`), every `<placeholder>` must be in the
-script's declared list, and the smoke unit must keep pointing away from
-`/vault`. Adding a placeholder means adding it there too — that is the cost of
-the list being something a deployment can key on. What the lint cannot check is
-whether a procedure is correct or in the right order; six review rounds' worth
-of those findings are in git history.
+script's declared list, no `pct exec` command line may carry an unwrapped glob,
+`<smoke-hostname>` may not appear at or after §9, and the smoke unit must keep
+pointing away from `/vault`. Adding a placeholder means adding it there too —
+that is the cost of the list being something a deployment can key on. What the
+lint cannot check is whether a procedure is correct or in the right order; six
+review rounds' worth of those findings are in git history.
+
+The last two checks were added after the first real §5 install and §10 upgrade
+(2026-08-13), and both encode the same lesson the identity table already
+states in prose — most of what goes wrong late in that document is a reference
+resolving to the wrong member of a pair, or to a shell that is not there:
+
+- **`pct exec` runs the command with NO shell in the container.** A glob is
+  expanded by the CALLING shell against the Proxmox HOST's filesystem, so
+  `pct exec 106 -- ls /opt/knapper/*.tar.gz` reports "No such file or
+  directory" identically whether the artifact exists or not — and the natural
+  reading is the opposite of the truth. Wrap it: `pct exec … -- sh -c '…'`.
+  Pipes and redirects are *not* flagged; those legitimately belong to the host
+  side.
+- **`<smoke-hostname>` dies at §9.** The smoke instance, its tunnel route and
+  its Access app are all torn down there, so a §10 command aimed at that name
+  fails at connect — which reads like the upgrade having broken the service.
+  §10 targets the production hostname.
 
 ## Build conventions
 
@@ -170,6 +188,26 @@ is the whole point — writing the deliberate omissions down is what stops "not
 shipped" and "forgotten" from being the same state. The enumeration is
 `git ls-files -co --exclude-standard`, so the gate fires on an uncommitted new
 file too, and never on ignored droppings.
+
+**A file that lands in `/etc` needs the third gate too.** `ops/check-installed.sh`
+is the deploy-time twin: it runs inside the CT from the unpacked artifact and
+reports every shipped unit and drop-in as identical / DIFFERS / NOT INSTALLED,
+exit 0/1/2. The two gates cover the two halves of one bug — a hand-maintained
+list that must agree with the set of files that ship, with nothing enforcing it.
+The build-time half closed in v0.2.1; the deploy-time half was still open when
+§10 was first run for real (four of six shipped units were named in the
+runbook's diff list, and the two omissions happened to be identical in that
+release). `check-installed.sh` DERIVES its set from the artifact, so a new unit
+needs nothing added to it — that is the design, and adding an enumeration back
+is the thing not to do. Tested in the shell tier
+(`tests/shell/test_check_installed.sh`), which asserts the derivation
+specifically.
+
+Deliberately, it reports and never copies: reconciling a diff means merging
+this deployment's edits (AllowedHosts, the Access AUD, the two `Sync__` knobs)
+with the release's, and `knapper.service` therefore DIFFERS forever and
+legitimately. Exit 1 means "a human decides"; exit 2 — something shipped that
+was never installed — is the one that is never expected.
 
 ## Versioning and releases
 
@@ -278,7 +316,20 @@ Directory.Build.props <Version>          the one carrier
 
   **Dan's call.** On the measurements, (1) is now the recommendation: it is
   the only one that removes the cause rather than hiding the symptom, and
-  its downside is a file, not a blind spot.
+  its downside is a file, not a blind spot. The objection to it — "that puts
+  real keys on disk for a feature nothing uses" — is weak in exactly
+  proportion to the "nothing uses": keys protecting nothing have no exposure
+  value, and the missing XML encryptor (EventId 35) is therefore not an
+  at-rest question today.
+
+  ⚠️ **That argument expires the moment Data Protection gains a real
+  consumer** — antiforgery tokens, cookie auth, `IDataProtector` called from
+  anywhere in this codebase. The keys stop being inert on that day, the absent
+  encryptor becomes a genuine at-rest question, and nothing about the key ring
+  itself will have changed to announce it. So whoever makes that true owns
+  re-opening this, and the trigger belongs in the same commit as the feature.
+  This is the one entry here whose reasoning depends on a fact about the rest
+  of the system rather than on a measurement.
 
 ## Open decisions (owners, and what re-opens them)
 

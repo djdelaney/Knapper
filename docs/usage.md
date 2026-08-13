@@ -37,7 +37,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `AuditLogPath` | — (required by Mcp) | Append-only JSONL. MUST be outside the vault (enforced). |
 | `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault (enforced). |
 | `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). |
-| `RipgrepPath` | `rg` | The search engine binary. **Must be ripgrep 15+** — older builds report `"searches": 0` for a query with no matches, emptying the `scanned_files` evidence behind every "no match". `knapper doctor` fails on anything older; Debian's apt package is still 14.x. |
+| `RipgrepPath` | `rg` | The search engine binary. **Must be ripgrep 15+** — older builds report `"searches": 0` for a query with no matches, emptying the `scanned_files` evidence behind every "no match". `knapper doctor` fails on anything older and names the absolute path it resolved (or, on a miss, the `PATH` it searched — the service's `PATH` is systemd's, not the operator's shell's); Debian's apt package is still 14.x. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |
 | `MaxOutputBytes` | 1000000 | Match-text byte budget per search page. |
@@ -150,6 +150,16 @@ Tool errors are structured MCP errors whose message leads with the code:
   unhealthy, ripgrep missing, audit unwritable, conflict files present, or a
   vault walk that could not COMPLETE (unreadable directory, or the scan's
   wall-clock budget expiring).
+- **A stale sync heartbeat alone takes `/up` to 503.** `/up`'s `sync.ok` *is*
+  the sync gate's own answer, so the instant mutations start being refused
+  `[MutationBlocked]` for a heartbeat older than `Sync:MaxAgeSeconds`, `/up`
+  degrades — there is no window in which writes are blocked and the monitor is
+  silent. That is the property worth having, and it means every fail-closed
+  outage past the budget pages whoever owns `MAILTO`. A blip shorter than the
+  budget produces no alert at all (the heartbeat never goes stale), and a
+  sustained one mails once, then at most once per `RENOTIFY_SECONDS`, then once
+  on recovery. Note the converse does not hold: `sync.ok` true does not mean
+  every write will succeed — see `sync.mutationsAllowed` below.
 - **Oversized files are the one warning that rides inside a 200.** Nothing is
   blocked by a file Sync will not carry, so the monitor reads
   `.oversized.ok` from the body rather than the status code. A scan that could
@@ -189,7 +199,10 @@ Tool errors are structured MCP errors whose message leads with the code:
   locked 13 names (a partially-registered surface answers without
   complaint), the routing instruction, scan evidence on a no-match search
   (the live ripgrep-15 check), the completeness envelope, whole-file SHAs,
-  and a typed `[NotFound]` from the mutation surface. Through a tunnel it
+  and a typed `[NotFound]` from the mutation surface. The tool line reports
+  the count it saw (`ok tools/list is EXACTLY the locked surface (13 tools)`)
+  — the set comparison is the stronger check, but a deployment checklist that
+  asks for a number should not have to go get it from a second call. Through a tunnel it
   also checks the ingress contract: unauthenticated callers refused,
   `/health` 404 from outside, `/up` disclosing booleans only, and the
   monitoring token refused at the vault surface. Against a loopback URL

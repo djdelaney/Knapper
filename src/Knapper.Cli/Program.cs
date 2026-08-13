@@ -138,16 +138,19 @@ int Doctor()
     Check("Vault:MetricsPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
-    // The DETECTED version is in the label, not just in the failure message:
-    // a wrong rg is then caught by reading doctor's output, instead of by
-    // someone remembering why the version matters.
-    // Probed BEFORE the check so the detected version can go in the label:
+    // The DETECTED version AND the resolved path are in the label, not just in
+    // the failure message: a wrong rg is then caught by reading doctor's
+    // output, instead of by someone remembering why the version matters.
+    // Probed BEFORE the check so both can go in the label:
     // on a pass, `doctor` then names the rg it actually found, and a wrong
     // build is caught by reading the output rather than by remembering that
-    // the version matters at all.
+    // the version matters at all. On a failure the label says where it looked,
+    // because the PATH doctor inherits from the operator's shell is not the
+    // PATH systemd gives the service — see RipgrepVersion.Probe.
     var probe = RipgrepVersion.Read(vaultOptions.RipgrepPath);
     var firstLine = probe.Output?.Split('\n')[0].Trim() ?? "not found";
-    Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ ({vaultOptions.RipgrepPath} → {firstLine})", () =>
+    Check($"ripgrep runs and is {RipgrepVersion.MinimumMajor}+ " +
+          $"({vaultOptions.RipgrepPath} → {RipgrepVersion.Describe(vaultOptions.RipgrepPath, probe)})", () =>
     {
         // Thrown, not returned false: Check appends the message, and WHICH rg
         // was found is the whole diagnosis — "too old" without a version sends

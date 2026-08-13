@@ -340,6 +340,12 @@ internal static class Verify
                         throw new InvalidOperationException("instructions do not state the mutation protocol");
                 });
 
+                // The COUNT rides on the ok line even though the set comparison
+                // below is the stronger check: the deployment checklist this
+                // runbook is worked from asks for a tool count, and without it
+                // printed here that number has to be fetched from a second
+                // tools/list call by hand — a check re-derived by the operator
+                // is a check that can be re-derived wrong.
                 await CheckAsync("tools/list is EXACTLY the locked surface", async () =>
                 {
                     var names = (await client.ListToolsAsync().ConfigureAwait(false)).Select(t => t.Name).ToList();
@@ -353,6 +359,7 @@ internal static class Verify
                             (unexpected.Count > 0 ? $"; UNEXPECTED: {string.Join(", ", unexpected)}" : "") +
                             (names.Count == 0 ? " — zero tools is the WithTools overload trap, not a config problem" : ""));
                     }
+                    return $"{names.Count} tools";
                 }).ConfigureAwait(false);
 
                 await CheckAsync("a no-match search still reports exhaustive scan evidence", async () =>
@@ -505,12 +512,20 @@ internal static class Verify
         private void Check(string what, Action probe) =>
             CheckAsync(what, () => { probe(); return Task.CompletedTask; }).GetAwaiter().GetResult();
 
-        private async Task CheckAsync(string what, Func<Task> probe)
+        private Task CheckAsync(string what, Func<Task> probe) =>
+            CheckAsync(what, async () => { await probe().ConfigureAwait(false); return (string?)null; });
+
+        /// <summary>
+        /// The probe may return one short string of EVIDENCE, appended to the
+        /// ok line — a number the check already had to compute, so that reading
+        /// the output answers "how many?" as well as "was it right?".
+        /// </summary>
+        private async Task CheckAsync(string what, Func<Task<string?>> probe)
         {
             try
             {
-                await probe().ConfigureAwait(false);
-                Console.WriteLine($"ok    {what}");
+                var detail = await probe().ConfigureAwait(false);
+                Console.WriteLine($"ok    {what}" + (detail is null ? "" : $" ({detail})"));
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {

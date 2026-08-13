@@ -1,0 +1,122 @@
+#!/bin/sh
+# Tests for ops/check-installed.sh — the deploy-time reconciliation report.
+#
+# What is worth testing here is not the diffing (that is diff's job) but the
+# two claims the script makes that a human would otherwise have to trust:
+# that the set of files checked is DERIVED from what shipped rather than
+# enumerated, and that the three states are distinguishable by exit code. The
+# enumerated list this replaces was wrong the first time it was run for real,
+# and it was wrong silently — the omitted units happened to match.
+set -u
+
+SCRIPT="$(cd "$(dirname "$0")/../.." && pwd)/ops/check-installed.sh"
+FAILURES=0
+TMPROOT=$(mktemp -d)
+trap 'rm -rf "$TMPROOT"' EXIT
+
+fail() {
+    echo "   FAIL: $1" >&2
+    FAILURES=$((FAILURES + 1))
+}
+
+# A fake unpacked artifact + a fake /etc. Sets $SHIPPED, $ETC, $LOGROTATE.
+new_case() {
+    CASE="$TMPROOT/$1"
+    SHIPPED="$CASE/opt/ops/systemd"
+    LOGROTATE_SRC="$CASE/opt/ops/logrotate"
+    ETC="$CASE/etc/systemd/system"
+    LOGROTATE="$CASE/etc/logrotate.d"
+    mkdir -p "$SHIPPED" "$LOGROTATE_SRC" "$ETC" "$LOGROTATE"
+    ROOT="$CASE/opt"
+}
+
+run_check() {
+    "$SCRIPT" --root "$ROOT" --systemd-dir "$ETC" --logrotate-dir "$LOGROTATE" >"$CASE/out" 2>&1
+    STATUS=$?
+    OUT=$(cat "$CASE/out")
+}
+
+# ---- 1. everything installed and identical → exit 0 ----------------------
+new_case identical
+printf 'a\n' > "$SHIPPED/knapper.service"
+printf 'b\n' > "$SHIPPED/knapper-commit.timer"
+printf 'c\n' > "$LOGROTATE_SRC/knapper-sync-log"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+cp "$SHIPPED/knapper-commit.timer" "$ETC/knapper-commit.timer"
+cp "$LOGROTATE_SRC/knapper-sync-log" "$LOGROTATE/knapper-sync-log"
+run_check
+[ "$STATUS" -eq 0 ] || fail "identical tree exited $STATUS, expected 0"
+printf '%s' "$OUT" | grep -q 'knapper.service: identical' || fail "identical unit not reported as identical"
+# The logrotate drop-in is checked too. It looks inert next to the units and is
+# not: losing copytruncate starves the heartbeat, which blocks every mutation.
+printf '%s' "$OUT" | grep -q 'knapper-sync-log: identical' || fail "logrotate drop-in was not checked"
+
+# ---- 2. an installed file that differs → exit 1, and the diff is printed --
+new_case differs
+printf 'Environment=Mcp__AllowedHosts__0=mcp.example.com\n' > "$SHIPPED/knapper.service"
+printf 'Environment=Mcp__AllowedHosts__0=real.example.com\n' > "$ETC/knapper.service"
+run_check
+[ "$STATUS" -eq 1 ] || fail "a differing unit exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'knapper.service: DIFFERS' || fail "a differing unit was not reported"
+# The diff itself, not just the verdict: reconciliation is by hand, and a
+# verdict with no diff sends the operator to run diff themselves.
+printf '%s' "$OUT" | grep -q 'real.example.com' || fail "DIFFERS did not print the diff"
+
+# ---- 3. a shipped file that was never installed → exit 2 -----------------
+# The failure this script exists for. A release that adds a unit installs
+# nothing by itself, and the omission is invisible until the thing the unit was
+# for does not happen.
+new_case missing
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'new\n' > "$SHIPPED/knapper-newthing.timer"
+run_check
+[ "$STATUS" -eq 2 ] || fail "an uninstalled shipped unit exited $STATUS, expected 2"
+printf '%s' "$OUT" | grep -q 'knapper-newthing.timer: NOT INSTALLED' || fail "uninstalled unit not reported"
+
+# ---- 4. NOT INSTALLED outranks DIFFERS ----------------------------------
+new_case missing_and_differs
+printf 'a\n' > "$SHIPPED/knapper.service"
+printf 'z\n' > "$ETC/knapper.service"
+printf 'new\n' > "$SHIPPED/knapper-newthing.timer"
+run_check
+[ "$STATUS" -eq 2 ] || fail "missing+differing exited $STATUS, expected 2 (missing outranks)"
+
+# ---- 5. the .example template has no installed counterpart ---------------
+# knapper-smoke.service.example is installed by hand under a different name at
+# §8b and gone by §9. Comparing it would report NOT INSTALLED forever, which is
+# how a check that is always red becomes a check nobody reads.
+new_case example_template
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'template\n' > "$SHIPPED/knapper-smoke.service.example"
+run_check
+[ "$STATUS" -eq 0 ] || fail "the .example template was checked; exit $STATUS, expected 0"
+printf '%s' "$OUT" | grep -q 'example' && fail "the .example template appeared in the report"
+
+# ---- 6. the file set is DERIVED, not enumerated --------------------------
+# The whole point. A unit nobody wrote into any list must still be checked —
+# that is what makes this different from the runbook prose it replaces.
+new_case derived
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'invented\n' > "$SHIPPED/some-unit-nobody-listed.service"
+cp "$SHIPPED/some-unit-nobody-listed.service" "$ETC/some-unit-nobody-listed.service"
+run_check
+[ "$STATUS" -eq 0 ] || fail "derived case exited $STATUS, expected 0"
+printf '%s' "$OUT" | grep -q 'some-unit-nobody-listed.service: identical' \
+    || fail "a unit no list names was not checked — the set is not derived"
+
+# ---- 7. a missing source tree refuses rather than reporting a clean run --
+# Every file would otherwise read as "shipped: none", and a report over an
+# empty set is a green run that looked at nothing.
+new_case no_artifact
+rm -rf "$ROOT/ops/systemd"
+run_check
+[ "$STATUS" -eq 2 ] || fail "a missing artifact exited $STATUS, expected 2"
+
+if [ "$FAILURES" -ne 0 ]; then
+    echo "check-installed: $FAILURES assertion(s) failed" >&2
+    exit 1
+fi
+exit 0

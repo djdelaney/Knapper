@@ -178,7 +178,10 @@ takes over the sendmail path.
 ## 3. Runtimes + service user
 
 ```sh
-apt install git
+# jq is not in the Debian 13 LXC base and §5's health check pipes into it.
+# A missing jq there fails as `jq: command not found` with the curl having
+# already succeeded, which reads like the health endpoint being broken.
+apt install git jq
 # ripgrep 15+ from the RELEASE build, NOT apt: Debian 13 ships 14.x, which
 # reports "searches": 0 for a query with no matches and so empties the
 # scannedFiles evidence behind every "no match" answer. `knapper doctor`
@@ -201,6 +204,19 @@ and locking misbehave), and **only on a case-SENSITIVE filesystem** (ext4
 is; per-path lock identity and duplicate detection assume distinct strings
 are distinct files — `knapper doctor` fails otherwise). §1 already proved
 this for a ZFS rootfs, where it cannot be fixed after the fact.
+
+⛔ **`sudo` is NOT installed on a stock Debian 13 LXC**, so every
+`sudo -u knapper …` you may be reaching for fails with `command not found`.
+This document uses **`runuser -u knapper --`** throughout instead. Do not
+`apt install sudo` to make the habit work: `runuser` is the purpose-built
+tool for root→service-account (no PAM, no policy file, no setuid binary),
+and a container with no interactive users has no other reason to carry sudo.
+Where the target reads the service user's home — anything invoking `ob` —
+pass `HOME` explicitly, because `runuser -u … --` does not set it:
+
+```sh
+runuser -u knapper -- env HOME=/home/knapper ob sync-status --path /vault
+```
 
 ## 3b. Make the journal persistent (BEFORE the service runs)
 
@@ -272,8 +288,8 @@ ob sync-status --path /vault --json    # verify before proceeding
 Every `ob` command defaults to the **current directory** — pass
 `--path /vault` on all of them, always. Run the verification with the
 service's own user and environment
-(`sudo -u knapper env HOME=/home/knapper ob sync-status --path /vault`),
-not just from an interactive root shell.
+(`runuser -u knapper -- env HOME=/home/knapper ob sync-status --path /vault`
+— `runuser`, not `sudo`; see §3), not just from an interactive root shell.
 
 - `--conflict-strategy conflict`: conflict FILES, never auto-merge — the
   MCP's conflict gate depends on it.
@@ -362,8 +378,16 @@ does not exist until the Access app does. That edit carries its own
 is the cheapest way to confirm the unit still says what you think.
 
 ```sh
-# on the dev box: ops/publish.sh; scp the tarball
-tar -xzf knapper-<v>-linux-x64.tar.gz -C /opt/knapper
+# On the dev box: ops/publish.sh, then
+#   scp artifacts/knapper-<v>+g<ref>-linux-x64.tar.gz root@<ct-address>:/opt/knapper/
+#
+# ⛔ /opt/knapper, NOT /tmp. The location is load-bearing and the failure is
+# silent: §10.4's rollback reads /opt/knapper/*.tar.gz, and /tmp is cleared on
+# boot — so extracting from /tmp works perfectly, and a reboot between now and
+# the first upgrade removes the only two-minute rollback path, with nothing
+# complaining until the moment it is needed. §9's checklist re-asserts that the
+# tarball is still there for exactly this reason.
+tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper
 cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
 # ob's sync.log has no rotation of its own and the heartbeat reads it.
 # copytruncate is mandatory (ob holds the fd) — see §4.
@@ -389,6 +413,19 @@ systemctl enable --now knapper-heartbeat.timer knapper.service
 # are read at exec time and never appear in this property, so if these units
 # ever gain one, the CLI silently gets a partial environment — and the guard
 # below would not catch it. Both call sites (§5 and §7) need revisiting then.
+#
+# ⛔ PATH IS NOT IN `Environment=`, and it is the one variable that matters here
+# that the capture above cannot supply. knapper.service sets none, so the
+# SERVICE inherits systemd's manager PATH — which includes /usr/local/bin, where
+# §3 pinned ripgrep. This invocation inherits the OPERATOR's PATH instead: over
+# SSH that is a login PATH and it coincidentally works, over `pct exec` it is
+# /sbin:/bin:/usr/sbin:/usr/bin and doctor reports `rg → not found` on a CT
+# whose /health simultaneously reports ripgrep 15.2.0. Read alone that FAIL says
+# the release broke ripgrep detection, and the obvious response is a rollback.
+# Note `env VAR=x cmd` ADDS to the environment rather than replacing it, so the
+# unit's values arrive while PATH stays wrong — the case guard cannot see this.
+# Hence pinning it, to systemd's manager value:
+SYSTEMD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 KNAPPER_ENV=$(systemctl show knapper.service -p Environment --value)
 echo "$KNAPPER_ENV"     # eyeball it once: is this the config you meant?
 case "$KNAPPER_ENV" in
@@ -397,13 +434,21 @@ case "$KNAPPER_ENV" in
   # read this environment, so on a bad capture they would pass and the run
   # would look clean with doctor never having executed at all.
   *Vault__RootPath=*)
-      sudo -u knapper env $KNAPPER_ENV /opt/knapper/cli/knapper doctor &&   # must be all-ok
-      curl -s 127.0.0.1:3535/health | jq .status &&                         # "ok"
-      sudo -u knapper /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/ ;;
+      runuser -u knapper -- env PATH="$SYSTEMD_PATH" $KNAPPER_ENV \
+          /opt/knapper/cli/knapper doctor &&                                 # must be all-ok
+      curl -s 127.0.0.1:3535/health | jq .status &&                          # "ok"
+      runuser -u knapper -- /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/ ;;
   *) echo "REFUSING: no usable environment from knapper.service — wrong unit name, or not loaded." \
           "Fix this before continuing; nothing below proves anything without it." >&2 ;;
 esac
 ```
+
+`doctor`'s ripgrep line names the binary it resolved
+(`rg → /usr/local/bin/rg → ripgrep 15.2.0 …`), so this is also where you
+confirm the pinned build from §3 is the one in use rather than an apt 14.x —
+and where a `not found` says which PATH it searched instead of leaving you to
+guess. That is the check that makes the paragraph above diagnosable rather than
+merely avoidable.
 
 These blocks are written to be pasted into an interactive root shell, so no
 guard here calls `exit` — that would close the shell rather than stop the
@@ -423,7 +468,9 @@ point.
 
 Acceptance before ingress — the deployment-specific half, none of which any
 repo test can reach. Do it in a scratch subtree (`_deploy-check/`, removed
-afterwards through the tools), never against real notes.
+afterwards through the tools where the tools can — the conflict fixture and
+the folder itself are the two exceptions, see the conflict gate below), never
+against real notes.
 
 ⚠️ **This scratch is SYNCED. §8b's is not.** The word covers two different
 things in this runbook and only one of them is contained: `_deploy-check/`
@@ -436,6 +483,49 @@ lived, and confirm at §9 that the DELETION propagated rather than merely
 happened on the CT. (The conflict fixture also degrades `/up` vault-wide
 while it exists — harmless here because the monitor arrives in §8, but a
 reason not to re-run these gates casually afterwards.)
+
+**How to issue a mutation**, since four of the five gates below turn on one and
+nothing else in this runbook produces one: the CLI is read-only
+(`git-init|commit|status|doctor|audit-tail|version|verify`, and `verify` is
+deliberately read-only — §5 above), so the gates are driven as raw JSON-RPC
+`tools/call` over the loopback same-box exemption. Two details that cannot be
+guessed from the code: responses come back as **SSE** (`data: {…}` — strip the
+prefix before `jq`), and the transport is **stateless**, so no `Mcp-Session-Id`
+is issued and nothing has to be echoed back on the next call.
+
+```sh
+mcp() {   # one JSON-RPC call in, one JSON object out
+  curl -sS -X POST http://127.0.0.1:3535/ \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "$1" | sed -n 's/^data: //p'
+}
+
+# THE PROBE. A conditional edit against a path that cannot exist: every gate is
+# checked before the lock and the fresh read, so this reaches the gate and
+# writes NOTHING even when the gate is open. Use it for every gate below rather
+# than a vault_create — /vault is Helios, and a probe that lands a file when the
+# gate unexpectedly passes replicates that file to Dan's devices.
+mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+  "name":"vault_edit","arguments":{
+    "path":"_deploy-check/no-such-note.md",
+    "expectSha256":"0000000000000000000000000000000000000000000000000000000000000000",
+    "edits":[{"old":"x","new":"y"}]}}}' | jq -r '.result.content[0].text'
+```
+
+Read the bracketed code, not the prose:
+
+| Gate state | Expected code |
+|---|---|
+| gate CLOSED (sync unhealthy, or a conflict file) | `[MutationBlocked]` |
+| gate open, probe path absent | `[NotFound]` — the gate passed, nothing was written |
+
+For the **conflict gate** the probe has to name the real files, since that gate
+is per-path: aim the same call at the scratch note and at its
+`(Conflicted copy …)` sibling, still with the all-zero `expectSha256`. Refused
+reads `[MutationBlocked]`; not refused reads `[PreconditionFailed]`, which
+means the gate let it through — the SHA check is what stops it, one step later,
+and still without a write.
 
 - **Sync gate, stopped**: `systemctl stop obsidian-headless` → within
   `Sync__MaxAgeSeconds` a mutation must fail `[MutationBlocked]`; restart and
@@ -453,12 +543,26 @@ reason not to re-run these gates casually afterwards.)
   nft add table inet knapper_drill
   nft add chain inet knapper_drill out '{ type filter hook output priority 0; }'
   nft add rule inet knapper_drill out tcp dport 443 drop
-  # wait ~95s: ob needs ~57s to notice, then the probe must stop touching
+
+  # ── two DIFFERENT waits; the drill reads as broken if they are conflated ──
+  # (a) ~95s — ob needs ~57s to notice, then one tick for the probe to withhold
+  #     its touch. This is when the SIGNAL is observable:
   systemctl is-active obsidian-headless          # still active — that is the point
-  tail -3 ~knapper/.config/obsidian-headless/sync/*/sync.log
-  # a mutation must now fail [MutationBlocked]
+  tail -3 ~knapper/.config/obsidian-headless/sync/*/sync.log   # the disconnect
+  journalctl -u knapper-heartbeat --since -3m | grep withheld  # the probe agreed
+  # (b) ~357s from the cut — the heartbeat must age past Sync__MaxAgeSeconds
+  #     (300s) before anything is REFUSED. Only now does a mutation fail
+  #     [MutationBlocked]; issued at (a) it SUCCEEDS, correctly, and reads as a
+  #     failed gate. Arithmetic: ~57s (ob) + up to one 60s tick + 300s ≈ 417s
+  #     worst case, ~357s typical — and every term is measured or pinned.
   nft delete table inet knapper_drill
   ```
+
+  ⚠️ **The wait to observe the signal is not the wait to observe the refusal.**
+  Withholding the touch is all the probe does; the REFUSAL is Knapper reading
+  a heartbeat older than `Sync__MaxAgeSeconds`, five more minutes downstream.
+  Doing (b) at (a)'s timing produces a successful mutation and looks like the
+  gate failing open, which is the opposite of what happened.
 
   ⚠️ Block the **port, not the IP** from `ss`. `ob` reconnects to a different
   Cloudflare edge on recovery (`172.67.74.64` → `104.26.0.147` observed), so a
@@ -501,6 +605,19 @@ reason not to re-run these gates casually afterwards.)
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.
+
+  ⚠️ **This fixture can only be removed out-of-band, and that is correct.**
+  `vault_delete` on a conflict file is refused by the very gate under test —
+  agents never resolve Sync conflicts, a human does — so the fixture needs
+  `rm`. The scratch subtree needs `rmdir` for a different reason: there is no
+  `vault_rmdir` in the 13-tool surface and there is not meant to be. Folder
+  CREATION is a deliberate act with a tool behind it; folder REMOVAL has no
+  tool at all, because a recursive delete is the one operation whose blast
+  radius an anchored, hash-conditioned contract cannot bound. The asymmetry is
+  intended. So §5's "removed afterwards through the tools" holds for the
+  scratch NOTES and not for these two — and §9's checklist still applies to
+  all of it: `rm` on the CT is not gone until Sync has propagated the deletion
+  to a second device.
 - **No fallback**: `systemctl stop knapper` → the client hard-fails; confirm
   no agent silently reaches the filesystem instead.
 - **Two-process write races** (stale edit, simultaneous create) belong to
@@ -585,12 +702,18 @@ case "$CLI_ENV" in
   *Vault__RootPath=*) ;;
   *) echo "REFUSING: no usable environment from knapper-commit.service" >&2; exit 1 ;;
 esac
+# `runuser`, not `sudo` — stock Debian 13 LXC has no sudo (§3). PATH is pinned
+# to systemd's manager value for the same reason as §5: `git` is what this one
+# needs to find, and the PATH this inherits is the operator's, not the unit's.
 # shellcheck disable=SC2086
-sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper git-init
+runuser -u knapper -- env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin \
+    $CLI_ENV /opt/knapper/cli/knapper git-init
 # Seed the monitor's freshness stamp with one commit BY HAND, then start the
 # timer. In that order: `knapper commit` fails on a vault with no .git, and
 # §8's staleness alert is undefined until the stamp exists at all.
-sudo -u knapper env $CLI_ENV /opt/knapper/cli/knapper commit
+# shellcheck disable=SC2086
+runuser -u knapper -- env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin \
+    $CLI_ENV /opt/knapper/cli/knapper commit
 systemctl enable --now knapper-commit.timer
 ```
 
@@ -750,7 +873,21 @@ last one does not restore cleanly:
    subdirectory of `/vault`, confirm `/up` answers **503** rather than 500,
    then `chmod 755` it back. Note `.trash/` is never walked — a soft-deleted
    over-ceiling file is invisible to this check by design.
-5. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
+5. **Stale sync takes `/up` DOWN** — worth exercising because it decides
+   whether every fail-closed outage pages the operator, and because it is the
+   one drill §5 has already left you rehearsed for. `/up`'s `sync.ok` is the
+   sync gate's own answer, so the moment mutations start being refused
+   `[MutationBlocked]`, `/up` answers **503** and this arrives as check 1's
+   mail — there is no window where writes are blocked and the monitor is
+   silent, which is the property worth having. Re-run §5's egress-severing
+   drill (`nft` block on 443), wait the ~357s of §5's arithmetic, confirm the
+   mail, then remove the table and confirm the recovery mail.
+
+   The cadence layer is what keeps this from being noise: a sync outage that
+   persists mails once, then at most once per `RENOTIFY_SECONDS`, then once on
+   recovery. A blip shorter than the budget produces no mail at all, because
+   the heartbeat never goes stale.
+6. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
    is not restored, it is **replaced**: issue a new one on the path-scoped
    `/up` app from §6.4 and write it into `/etc/knapper-monitor.conf` (chmod
    600, on the host). Until it is, the monitor keeps alerting, which looks
@@ -946,7 +1083,15 @@ becomes unanswerable.
 ```sh
 pct snapshot 106 pre-upgrade-<term>            # §7's rule: pct takes the VMID
 pct exec 106 -- /opt/knapper/cli/knapper version   # RECORD this — the rollback target
-pct exec 106 -- ls /opt/knapper/*.tar.gz       # the retained previous artifact
+# ⛔ `sh -c` is load-bearing on any line with a glob. `pct exec` runs the
+# command with NO shell in the container, so the glob is never expanded there;
+# the CALLING shell tries it first, against the Proxmox HOST's filesystem, and
+# passes a literal `*` through. `ls` then reports
+#   ls: cannot access '/opt/knapper/*.tar.gz': No such file or directory
+# IDENTICALLY whether the artifact exists or not — and the natural reading is
+# "no retained artifact, better go make one", which is the opposite of the
+# truth. Every glob, brace and redirect below is wrapped for the same reason.
+pct exec 106 -- sh -c 'ls -l /opt/knapper/*.tar.gz'   # the retained previous artifact
 ```
 
 Record the running version before, not after. Once the new tarball is
@@ -963,31 +1108,45 @@ vault-wide lock; stopping it first means the upgrade cannot land mid-snapshot.
 scp knapper-<v>+g<ref>-linux-x64.tar.gz root@<ct-address>:/opt/knapper/
 pct exec 106 -- systemctl stop knapper-commit.timer knapper.service
 pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper
-# systemd units ship IN the tarball and can change between releases; the
-# running unit is NOT updated by unpacking over /opt/knapper.
-pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper.service /opt/knapper/ops/systemd/knapper.service'
-# reconcile any diff BY HAND — /etc holds this deployment's edits (AllowedHosts,
-# the Access AUD, Sync__MaxAgeSeconds, Sync__MaxFileBytes), and copying the
-# shipped unit over them reverts them all at once, silently, into a service
-# that still starts.
-# Same trap, other units and the logrotate drop-in: all live in /etc and none
-# are updated by unpacking. knapper-heartbeat.service in particular carries the
-# probe's environment, so a release that changes it leaves the OLD one running.
-pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper-heartbeat.service /opt/knapper/ops/systemd/knapper-heartbeat.service'
-# ⛔ The TIMERS too. Easy to skip because they look inert next to the services,
-# and they are not: knapper-heartbeat.timer's AccuracySec is a term in the
-# fail-closed budget (a missing one silently doubles the inter-tick gap), and
-# a timer whose period drifts changes what every downstream threshold means.
-pct exec 106 -- sh -c 'diff -u /etc/systemd/system/knapper-heartbeat.timer /opt/knapper/ops/systemd/knapper-heartbeat.timer'
-pct exec 106 -- sh -c 'diff -u /etc/systemd/system/knapper-commit.timer /opt/knapper/ops/systemd/knapper-commit.timer'
-pct exec 106 -- sh -c 'diff -u /etc/logrotate.d/knapper-sync-log /opt/knapper/ops/logrotate/knapper-sync-log'
+
+# systemd units and the logrotate drop-in ship IN the tarball and can change
+# between releases; NONE of them is updated by unpacking over /opt/knapper.
+# This reports every shipped file as identical / DIFFERS / NOT INSTALLED, and
+# it DERIVES that set from the artifact rather than from a list — the list this
+# replaced named four of the six units that ship, and the two it omitted
+# happened to be identical in v0.3.0, which is luck, not process.
+pct exec 106 -- sh /opt/knapper/ops/check-installed.sh
+# exit 0  nothing to do
+# exit 1  something DIFFERS — reconcile BY HAND. knapper.service differs
+#         FOREVER and legitimately: /etc holds this deployment's edits
+#         (AllowedHosts, the Access AUD, Sync__MaxAgeSeconds,
+#         Sync__MaxFileBytes), and copying the shipped unit over them reverts
+#         them all at once, silently, into a service that still starts. Read
+#         each diff and merge the release's change into /etc's version.
+#         knapper-heartbeat.service carries the probe's environment and
+#         knapper-heartbeat.timer's AccuracySec is a term in the fail-closed
+#         budget, so neither is inert however inert it looks.
+# exit 2  something shipped is NOT INSTALLED. Never expected: a release that
+#         adds a unit installs nothing by itself, and the omission stays
+#         invisible until the thing that unit was for does not happen.
+
 pct exec 106 -- systemctl daemon-reload
+# ⚠️ knapper-commit.timer ONLY if §7 has run — it fires `knapper commit`, which
+# fails on a vault with no .git, every 30 minutes. The first upgrade can land
+# before §7; §5 carries the same caveat for the same reason.
 pct exec 106 -- systemctl start knapper.service knapper-commit.timer
 # Timer changes take effect on daemon-reload, but VERIFY rather than assume —
-# the whole point of the diff above is that /etc may not have been updated:
+# the whole point of the report above is that /etc may not have been updated:
 pct exec 106 -- systemctl show knapper-heartbeat.timer -p AccuracyUSec
 # AccuracyUSec=1s   ← 1min means the new timer never reached /etc
 ```
+
+`check-installed.sh` is the deploy-time twin of `publish.sh`'s build-time
+coverage gate, and it exists because they are one bug wearing two costumes: a
+hand-maintained list that must agree with the set of files that ship, with
+nothing enforcing it. The build-time half closed in `v0.2.1`; this is the other
+half. Same question is worth asking at §8, §9 and in monthly maintenance —
+"does `/etc` still match what shipped?" — and the answer is one command.
 
 ### 10.3 Prove the restart took
 
@@ -997,8 +1156,17 @@ it — passes every other check in this file, because the old build satisfies
 the same contract:
 
 ```sh
-knapper verify --url https://<smoke-hostname>/ --expect-version <v>
+CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
+  knapper verify --url https://mcp.example.com/ --expect-version <v>
 ```
+
+⛔ **The PRODUCTION hostname, not §8b's smoke one.** The smoke instance, its
+route and its Access app are torn down at §9 (that is a checklist item), so by
+the time §10 ever runs there is nothing at the smoke hostname — and a `verify`
+against a dead name fails at connect, which reads like the upgrade having
+broken the service. Run it from the dev box or the Proxmox host, with the ROOT
+app's service token, exactly as §6.5 does: from the CT a loopback URL works
+too, but it skips every ingress check.
 
 Read-only, as always (`knapper verify` may never write; the vault here is
 Helios over Sync). `--expect-version <v>` takes the bare release and accepts
@@ -1007,11 +1175,22 @@ demand that exact build. Running the check from the tarball's own CLI makes it
 `--expect-this-version`, with nothing typed by hand:
 
 ```sh
-/opt/knapper/cli/knapper verify --url https://<smoke-hostname>/ --expect-this-version
+pct exec 106 -- /opt/knapper/cli/knapper verify \
+    --url http://127.0.0.1:3535/ --expect-this-version
 ```
+
+Note the loopback URL there: that form runs the just-unpacked binary ON the CT,
+which is the whole point of `--expect-this-version` (nothing typed by hand), and
+it is the one place in §10 where skipping the ingress checks is fine — §10.3 is
+asking which BUILD answered, and the tunnelled run above already asked the rest.
+`verify` prints which checks it skipped and why; read those lines.
 
 A failure here means the service is not the build just installed. Do not
 "restart again and see" — go to §10.4.
+
+The `tools/list` line reports the count it saw (`ok tools/list is EXACTLY the
+locked surface (13 tools)`), so the acceptance checklist's "13 tool names" is
+answered by this run rather than by a second `tools/list` call by hand.
 
 Also confirm `knapper doctor` still passes: a release can add a dependency
 gate (ripgrep's minimum major is the precedent) that the CT does not satisfy.
@@ -1026,8 +1205,16 @@ pct exec 106 -- systemctl stop knapper.service knapper-commit.timer
 pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper   # the RETAINED previous artifact
 pct exec 106 -- systemctl daemon-reload
 pct exec 106 -- systemctl start knapper.service knapper-commit.timer
-knapper verify --url https://<smoke-hostname>/ --expect-version <v>   # the version recorded in §10.1
+CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
+  knapper verify --url https://mcp.example.com/ --expect-version <v>   # the version recorded in §10.1
 ```
+
+Rolling back the BINARY does not roll back `/etc`. If §10.2's report was
+reconciled by hand — a unit edited to match the new release — re-run
+`pct exec 106 -- sh /opt/knapper/ops/check-installed.sh` after the old tarball
+is unpacked and undo anything the old build does not understand. A config knob
+a release introduced is the case that bites: the old binary ignores it
+silently, and the deployment then runs with a setting nothing reads.
 
 `pct rollback 106 pre-upgrade-<term>` is the heavier option and reverts the VAULT with
 it — every note written since the snapshot goes too, and Sync will then

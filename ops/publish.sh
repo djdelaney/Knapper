@@ -40,6 +40,11 @@ dotnet publish src/Knapper.Cli -c Release -r linux-x64 --self-contained "$STAMP"
 cp -R ops/systemd "$STAGE/ops/systemd"
 cp ops/sync-heartbeat.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/sync-heartbeat.sh"
+# The deploy-time twin of this script's coverage gate below: it runs INSIDE the
+# CT, from the unpacked artifact, and answers "does /etc still match what
+# shipped?" — so it has to travel in the artifact it checks.
+cp ops/check-installed.sh "$STAGE/ops/"
+chmod +x "$STAGE/ops/check-installed.sh"
 # The Proxmox-host monitor installs FROM THIS ARCHIVE (runbook §8) — a
 # tarball without it cannot perform the documented installation.
 cp -R ops/monitor "$STAGE/ops/monitor"
@@ -62,6 +67,7 @@ for required in \
     ./mcp/Knapper.Mcp \
     ./cli/knapper \
     ./ops/sync-heartbeat.sh \
+    ./ops/check-installed.sh \
     ./ops/logrotate/knapper-sync-log \
     ./ops/systemd/knapper.service \
     ./ops/systemd/knapper-commit.service \

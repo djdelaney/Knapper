@@ -63,7 +63,38 @@ for ph in $(grep -oE '<[a-zA-Z][^ >]*>' "$DOC" | tr -d '<>' | sort -u); do
         || fail "undeclared placeholder <$ph> — add it to KNOWN in this script, or use an existing one"
 done
 
-# ---- 5. the smoke instance never points at the live vault ---------------
+# ---- 5. `pct exec` lines with a glob are wrapped in a shell -------------
+# `pct exec` runs the command with NO shell in the container. A glob is
+# therefore expanded by the CALLING shell, against the Proxmox HOST's
+# filesystem, and a literal `*` is passed through — so
+#   pct exec 106 -- ls /opt/knapper/*.tar.gz
+# reports "No such file or directory" IDENTICALLY whether the file exists or
+# not. §10.1's retained-artifact check shipped this way and read as "no
+# artifact, go make one" at the exact moment the artifact was there (found by
+# running §10 for the first time, 2026-08-13). Pipes and redirects are NOT
+# flagged: those legitimately belong to the host side of the command.
+# Line-initial only: this is about COMMANDS, and prose mentioning `pct exec`
+# next to markdown bold would otherwise trip it on the asterisks.
+GLOB_LINES=$(grep -nE '^[[:space:]]*pct exec' "$DOC" | grep -F '*' | grep -v 'sh -c')
+if [ -n "$GLOB_LINES" ]; then
+    printf '%s\n' "$GLOB_LINES" >&2
+    fail "a 'pct exec' line contains a glob but no 'sh -c' — pct exec has no shell in the container, so the host expands it and a literal '*' passes through (see §10.1)"
+fi
+
+# ---- 6. the smoke hostname does not outlive its teardown ----------------
+# The identity table's dominant late-document failure: a reference resolving to
+# the wrong member of a pair. §8b's smoke instance, its route and its Access app
+# are all torn down in §9's checklist, so any §10 command aimed at
+# <smoke-hostname> targets a name that no longer resolves — and `verify` failing
+# at connect reads like the upgrade having broken the service. §10.3 and §10.4
+# both shipped this way.
+LATE_SMOKE=$(awk '/^## (9|10)\./{s=1} s && /<smoke-hostname>/{print FILENAME":"NR": "$0}' "$DOC")
+if [ -n "$LATE_SMOKE" ]; then
+    printf '%s\n' "$LATE_SMOKE" >&2
+    fail "<smoke-hostname> is referenced at or after §9, where §9's checklist has already torn the smoke instance down — §10 targets the PRODUCTION hostname"
+fi
+
+# ---- 7. the smoke instance never points at the live vault ---------------
 # The one invariant of §8b that would be catastrophic rather than annoying.
 if grep -q 'Vault__RootPath=/vault' ops/systemd/knapper-smoke.service.example; then
     fail "knapper-smoke.service.example points at /vault — its vault MUST live outside Helios"

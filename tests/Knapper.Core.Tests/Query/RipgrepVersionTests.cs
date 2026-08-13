@@ -73,6 +73,77 @@ public sealed class RipgrepVersionTests
 
         probe.Output.ShouldBeNull();
         probe.Error.ShouldNotBeNull();
+        probe.ResolvedPath.ShouldBeNull();
+        // An explicit path searches no PATH, and saying it did would send the
+        // operator off editing the wrong thing.
+        probe.SearchPath.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The probe says WHICH binary answered. On CT 106 `doctor` reported
+    /// `rg → not found` while /health on the same box reported ripgrep 15.2.0:
+    /// the service inherits systemd's manager PATH (which has /usr/local/bin),
+    /// the operator's `pct exec` shell does not. Read alone, that FAIL says the
+    /// release broke ripgrep detection, and the obvious response is a rollback.
+    /// </summary>
+    [Fact]
+    public void A_bare_command_reports_the_absolute_binary_that_answered()
+    {
+        var probe = RipgrepVersion.Read("rg");
+
+        probe.Error.ShouldBeNull();
+        probe.ResolvedPath.ShouldNotBeNull();
+        Path.IsPathRooted(probe.ResolvedPath).ShouldBeTrue();
+        File.Exists(probe.ResolvedPath).ShouldBeTrue();
+        // The rg in use is named on the ok line, so "is the pinned build the
+        // one running?" is answered by reading doctor rather than inferring it
+        // from a version number.
+        RipgrepVersion.Describe("rg", probe).ShouldStartWith(probe.ResolvedPath!);
+    }
+
+    [Fact]
+    public void A_command_that_is_not_on_PATH_reports_the_PATH_it_searched()
+    {
+        var probe = RipgrepVersion.Read("knapper-no-such-command");
+
+        probe.ResolvedPath.ShouldBeNull();
+        probe.SearchPath.ShouldBe(Environment.GetEnvironmentVariable("PATH"));
+        // The PATH is IN the message: that string is the whole diagnosis, and
+        // an operator reading only the FAIL line must not have to go get it.
+        // `doctor` appends Error to its label, so the FAIL line carries it.
+        probe.Error.ShouldNotBeNull();
+        probe.Error!.ShouldContain("PATH=");
+        // Describe contributes the location only — saying the reason twice on
+        // one line reads like two separate problems.
+        RipgrepVersion.Describe("knapper-no-such-command", probe).ShouldBe("not found");
+    }
+
+    [Fact]
+    public void A_file_that_exists_but_is_not_executable_is_not_a_ripgrep()
+    {
+        // The same predicate drives the PATH walk, which is why it matters that
+        // it reads the mode rather than mere existence: a shell keeps searching
+        // past a non-executable hit, and a stray data file named `rg` early in
+        // PATH would otherwise turn a working deployment into a permission
+        // error with no explanation attached. Asserted through the explicit-path
+        // branch so this test never touches the process-wide PATH.
+        var directory = Directory.CreateTempSubdirectory("knapper-rg-probe").FullName;
+        try
+        {
+            var decoy = Path.Combine(directory, "rg");
+            File.WriteAllText(decoy, "not a binary\n");
+            File.SetUnixFileMode(decoy, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            var probe = RipgrepVersion.Read(decoy);
+
+            probe.Output.ShouldBeNull();
+            probe.ResolvedPath.ShouldBeNull();
+            probe.Error.ShouldNotBeNull();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
