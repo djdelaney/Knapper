@@ -153,14 +153,13 @@ format by default.
   deadlock structurally impossible. A new lock kind must slot into this
   hierarchy, not beside it.
 - **Lock files are opened via raw `open(2)`/`creat(2)` interop
-  (`Posix.OpenLockFile`), never `FileStream`.** The .NET Unix runtime
-  emulates FileShare with flock locks of its own during open, which contend
-  with a real lock holder and turn "wait for the lock" into an IOException at
-  open time (`FileShare.ReadWrite | Delete` does NOT disable it — measured
-  here). And the 3-arg `open(2)` must never come back: its mode parameter is
-  variadic, and Apple's arm64 ABI passes variadics on the stack, so a fixed
-  3-arg P/Invoke creates lock files with garbage permissions (errno 13 on the
-  next open). `creat(2)` is the non-variadic create.
+  (`Posix.OpenLockFile`), never `FileStream`.** The .NET Unix runtime takes
+  its own flock locks during FileStream open, which contend with a real
+  lock holder and turn "wait for the lock" into an IOException at open time
+  (`FileShare.ReadWrite | Delete` does NOT disable it — measured here). And
+  never reintroduce a 3-arg `open(2)` P/Invoke: its variadic mode parameter
+  mis-passed on Apple's arm64 ABI here, creating lock files with garbage
+  permissions. `creat(2)` is the non-variadic create.
 - **flock releases on process death — that's why it was chosen** over lock
   files whose stale presence outlives a crash. Pinned by
   `CrossProcessLockTests.A_dead_lock_holder_does_not_wedge_the_vault`.
@@ -270,38 +269,26 @@ format by default.
   nothing is blocked, and a permanent alert nobody can clear is how a monitor
   gets ignored (`OversizedBackstopTests`).
 - **The size ceiling is SYMMETRIC, and the download half is an OPEN hole.**
-  Measured 2026-08-13: a >5MB file created on a Mac never reaches CT 106 at
-  all. So it is not oversized-and-present, it is ABSENT — the scanner above
-  cannot see it by construction, and `truncated: false` then claims an
-  exhaustive scope over a vault silently missing a note that exists in
-  Helios. This is the one known way the completeness envelope lies, it is
-  in the QUERY layer rather than the mutation layer, and nothing detects it
-  today. Do not let the oversized backstop read as covering it. Tracked in
-  `docs/extending.md`; ob's `sync.log` is the only local evidence candidate.
+  A >5MB file created elsewhere never reaches CT 106 at all — ABSENT, not
+  oversized-and-present — so the scanner cannot see it and `truncated:
+  false` can claim exhaustiveness over a vault silently missing a note.
+  The one known way the completeness envelope lies; the oversized backstop
+  does NOT cover it. Detail: `docs/extending.md`.
 - **A vault walk that could not COMPLETE is a third state, and every health
   surface must carry it.** `OversizedFiles.Scan` throws — unreadable
   directory, or the `DefaultBudget` wall clock expiring — rather than
   returning the short list, so "could not tell" can never arrive looking like
-  "scanned, none found". The state is load-bearing in both directions:
-  `/health` reports `oversized.scanned` / `vault.conflictScanComplete`, plus a
-  `scanError` labelled `io:` or `timeout:` — the two causes need OPPOSITE
-  responses (transient vs the vault having outgrown the budget) and are
-  otherwise identical on every surface — while `/up`'s lone `ok` booleans mean
-  *probed and fine*, and unknown DEGRADES on BOTH walks. The line is FINDING vs
-  BROKEN INSTRUMENT, not transient vs permanent: a finding is information about
-  the vault (conflict files block writes, so 503; oversized files block
-  nothing, so a 200 the monitor reads out of the body), a walk that could not
-  complete is no measurement at all. Do NOT re-justify this as "an error that
-  clears itself" — an unreadable directory persists exactly as long as a
-  conflict file does, and alert fatigue is the monitor's cadence rules' job
-  (one mail per failure-set change, a reminder at most daily, one on
-  recovery), not the status code's. Two ways this went wrong
-  here, both shipped: caching an empty list and returning it on the FIRST
-  failed scan, so a cold cache plus one IO error reported the vault clean at
-  exactly the moment a monitor polls a fresh start; and letting the conflict
-  walk's exception escape `Check()`, so an unreadable directory answered 500
-  and broke `/health`'s own 200/503 contract. Never cache the unknown, and
-  never let a walk failure reach the endpoint as an exception.
+  "scanned, none found". `/health` reports the incomplete state
+  (`oversized.scanned` / `vault.conflictScanComplete`, plus a `scanError`
+  labelled `io:` vs `timeout:` — the causes need opposite responses);
+  `/up`'s `ok` booleans mean *probed and fine*, and unknown DEGRADES on BOTH
+  walks. The line is FINDING vs BROKEN INSTRUMENT: a finding is information
+  about the vault (conflicts block writes → 503; oversized files block
+  nothing → 200, the monitor reads the body), a failed walk is no
+  measurement at all — it persists exactly as long as a conflict file does,
+  and alert fatigue is the monitor cadence rules' job, not the status
+  code's. Never cache the unknown, and never let a walk failure reach the
+  endpoint as an exception (both shipped here once).
 - **Every vault walk filters `FileAttributes.ReparsePoint`.** Symlinks are
   rejected everywhere else (resolver, lock manager) and skipped by every
   lister; the oversized scan was the one exception, so a directory-symlink
@@ -332,19 +319,18 @@ format by default.
   fallback, ever.
 - **The heartbeat TICK is a term in the fail-closed budget, so
   `knapper-heartbeat.timer` pins `AccuracySec=1s`.** Withholding the touch is
-  the only way Knapper learns sync is unhealthy, so total exposure ≈ ob's ~57s
-  detection latency + the inter-tick gap + `Sync__MaxAgeSeconds` (300s, sized
-  against a 60s tick). systemd's DEFAULT accuracy is 1min, which on a 60s
-  period measured gaps up to 116s on CT 106 — nearly halving the margin, with
-  nothing failing and nothing logged; the visible symptom is a two-minute blip
-  blocking every mutation and reading like a Knapper bug. Dropping that line,
-  or changing the period without moving `MaxAgeSeconds`, moves the budget
-  silently. And `ops/sync-heartbeat.sh` LOGS every withheld touch (stdout, one
-  line, our own words — never text lifted from ob's log, which interleaves
-  vault filenames): `journalctl -u knapper-heartbeat | grep withheld` is the
-  deployment's only durable record of how close it has come to the limit.
-  ob's own log cannot answer it — it prints `Disconnected from server` on
-  clean shutdown too.
+  the only way Knapper learns sync is unhealthy, so total exposure ≈ ob's
+  detection latency + the inter-tick gap + `Sync__MaxAgeSeconds` (300s,
+  sized against a 60s tick). systemd's DEFAULT accuracy is 1min — on a 60s
+  period that silently nearly halves the margin (measured 116s gaps on CT
+  106, presenting as a two-minute blip blocking every mutation and reading
+  like a Knapper bug). Dropping `AccuracySec=1s`, or changing the period
+  without moving `MaxAgeSeconds`, moves the budget silently. And
+  `ops/sync-heartbeat.sh` LOGS every withheld touch in our own words (never
+  text lifted from ob's log, which interleaves vault filenames): `journalctl
+  -u knapper-heartbeat | grep withheld` is the deployment's only durable
+  record of exposure — ob's log prints `Disconnected from server` on clean
+  shutdown too, so it cannot answer it.
 - **`GitCommitJob` is the vault's only committer, and it snapshots under
   the vault-wide commit lock** — so a prepared-but-unverified batch write
   can never be captured. Local-only repo; NO remote until the credential
