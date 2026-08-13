@@ -3,7 +3,8 @@
 # Output: artifacts/knapper-<version>-linux-x64.tar.gz containing
 #   mcp/   — Knapper.Mcp (self-contained)
 #   cli/   — knapper (self-contained)
-#   ops/   — systemd units, sync-heartbeat.sh, and the HOST-side monitor kit
+#   ops/   — systemd units, sync-heartbeat.sh, the logrotate drop-in, and the
+#            HOST-side monitor kit
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -43,6 +44,9 @@ chmod +x "$STAGE/ops/sync-heartbeat.sh"
 # tarball without it cannot perform the documented installation.
 cp -R ops/monitor "$STAGE/ops/monitor"
 chmod +x "$STAGE/ops/monitor/knapper-monitor.sh"
+# Deliberately NOT chmod +x: a logrotate drop-in is config, and it lands in
+# /etc/logrotate.d/ where 0644 is what the tool expects. cp -R preserves it.
+cp -R ops/logrotate "$STAGE/ops/logrotate"
 
 mkdir -p artifacts
 TARBALL="artifacts/knapper-$VERSION-linux-x64.tar.gz"
@@ -50,12 +54,15 @@ tar -czf "$TARBALL" -C "$STAGE" .
 rm -rf "$STAGE"
 
 # Content gate: every path the runbook installs must exist in the archive.
-# A missing path fails the PUBLISH, not the deployment.
+# A missing path fails the PUBLISH, not the deployment. This list catches the
+# other direction from the coverage gate below: a file DELETED from the repo
+# while the runbook still tells an operator to install it.
 MANIFEST=$(tar -tzf "$TARBALL")
 for required in \
     ./mcp/Knapper.Mcp \
     ./cli/knapper \
     ./ops/sync-heartbeat.sh \
+    ./ops/logrotate/knapper-sync-log \
     ./ops/systemd/knapper.service \
     ./ops/systemd/knapper-commit.service \
     ./ops/systemd/knapper-commit.timer \
@@ -72,6 +79,53 @@ do
         echo "publish FAILED: $required missing from $TARBALL" >&2
         exit 1
     }
+done
+
+# Coverage gate: nothing under ops/ leaves the repo silently.
+#
+# The gate above proves the paths the runbook NAMES arrived; it can say nothing
+# about a file nobody remembered to name. That is how the logrotate drop-in was
+# lost: committed for a deployment, never added to the stage copy, and the
+# runbook's `cp /opt/knapper/ops/logrotate/...` on CT 106 was the first thing to
+# notice. Explicit staging makes omission the DEFAULT — safe, because nothing
+# unreviewed can slip into an artifact, but silent, because "not shipped" and
+# "forgotten" look identical from here.
+#
+# So: every file under ops/ is either in the archive or on the list below. The
+# list is the point. Writing the deliberate omissions down is what separates
+# them from the accidental ones.
+NOT_SHIPPED='
+ops/ct106-runbook.md
+ops/publish.sh
+ops/release.sh
+ops/runbook-lint.sh
+ops/version.sh
+'
+
+# git ls-files rather than find: `-co --exclude-standard` is tracked PLUS
+# untracked-but-not-ignored, so a newly added ops/ file trips this gate before
+# it is even committed, while .DS_Store and editor droppings never do. Outside
+# a checkout there is no index to read; the gate says so instead of passing
+# quietly, since a gate that skips itself in silence is the failure it exists
+# to prevent.
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    OPS_FILES=$(git ls-files -co --exclude-standard -- ops)
+else
+    echo "publish WARNING: not a git checkout — the ops/ coverage gate did not run" >&2
+    OPS_FILES=''
+fi
+
+for opsfile in $OPS_FILES; do
+    if printf '%s\n' "$MANIFEST" | grep -qx "./$opsfile"; then continue; fi
+    case "$NOT_SHIPPED" in
+        *"
+$opsfile
+"*) continue ;;
+    esac
+    echo "publish FAILED: $opsfile is in the repo but not in $TARBALL." >&2
+    echo "  Stage it (cp into \$STAGE/ops) if the deployment needs it, or add it" >&2
+    echo "  to NOT_SHIPPED in this script if it is deliberately host-side only." >&2
+    exit 1
 done
 
 echo "$TARBALL"

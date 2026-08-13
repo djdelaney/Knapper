@@ -145,6 +145,32 @@ of those findings are in git history.
   editing both files.
 - `TreatWarningsAsErrors` repo-wide. Unix-only (`SupportedOSPlatform`
   linux+macos in `Directory.Build.props`) — don't add Windows guards.
+
+### Adding a file under `ops/`
+
+`ops/publish.sh` stages what ships explicitly, so a new file is omitted by
+default. That is the right default — nothing unreviewed slips into an artifact
+— but it used to be silent, and `ops/logrotate/knapper-sync-log` shipped
+missing in v0.2.0 because of it: committed, never staged, and the runbook's
+`cp` from `/opt/knapper` on CT 106 was the first thing to notice.
+
+Two gates now stand on either side of that:
+
+- The **required-path list** (paths the runbook installs) fails the publish if
+  a named file is absent from the archive — it catches a file DELETED from the
+  repo while the runbook still tells an operator to install it.
+- The **coverage gate** fails the publish if any file under `ops/` is neither
+  in the archive nor on `NOT_SHIPPED` — it catches a file ADDED to the repo and
+  never staged. `NOT_SHIPPED` is the runbook, `publish.sh`, `release.sh`,
+  `runbook-lint.sh` and `version.sh`: repo-side tooling with no business on a
+  deployed host.
+
+So adding a file under `ops/` means deciding, in the script, which it is. That
+is the whole point — writing the deliberate omissions down is what stops "not
+shipped" and "forgotten" from being the same state. The enumeration is
+`git ls-files -co --exclude-standard`, so the gate fires on an uncommitted new
+file too, and never on ignored droppings.
+
 ## Versioning and releases
 
 One carrier: `<Version>` in `Directory.Build.props`. Everything downstream is
