@@ -5,7 +5,7 @@
          Surfaced to MCP clients via initialize.serverInfo.version.
          Bump it with `ops/release.sh`, never by hand — the script is what
          keeps the tag, the commit, and this property describing one build. -->
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
