@@ -217,7 +217,7 @@ internal static class Verify
             using var document = JsonDocument.Parse(body);
             var properties = document.RootElement.EnumerateObject()
                 .Select(p => p.Name.ToLowerInvariant()).OrderBy(n => n, StringComparer.Ordinal).ToList();
-            string[] expected = ["audit", "conflicts", "ripgrep", "status", "sync", "vault", "version"];
+            string[] expected = ["audit", "conflicts", "oversized", "ripgrep", "status", "sync", "vault", "version"];
             if (!properties.SequenceEqual(expected))
             {
                 throw new InvalidOperationException(

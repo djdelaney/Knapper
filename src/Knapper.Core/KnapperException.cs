@@ -60,6 +60,17 @@ public enum VaultErrorCode
     /// <summary>File exceeds the configured read cap. Explicit rejection — never a silently truncated "complete" file.</summary>
     TooLarge,
 
+    /// <summary>
+    /// The write would produce a file Obsidian Sync refuses to carry
+    /// (<c>Sync__MaxFileBytes</c>). TERMINAL, unlike <see cref="MutationBlocked"/>:
+    /// retrying never succeeds, because nothing about the vault's state is
+    /// going to change. Distinct from <see cref="TooLarge"/>, which is the
+    /// READ cap. Measured on CT 106 2026-08-13: Sync logs "File too large to
+    /// sync (… max 5.00 MB)" and then "Fully synced" in the same millisecond,
+    /// so the file is stranded locally with every health signal green.
+    /// </summary>
+    TooLargeToSync,
+
     /// <summary>Underlying filesystem or OS failure.</summary>
     IoError,
 }

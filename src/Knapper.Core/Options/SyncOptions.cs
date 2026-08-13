@@ -22,4 +22,29 @@ public sealed class SyncOptions
     public string HeartbeatPath { get; set; } = "";
 
     public int MaxAgeSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// The largest file Obsidian Sync will carry. A write producing more than
+    /// this is refused with <see cref="VaultErrorCode.TooLargeToSync"/> rather
+    /// than landing a note that verifies locally, commits to git, reports
+    /// success, and never reaches a single device.
+    ///
+    /// ⚠️ This is a property of the SYNC PLAN, not of Knapper — that is why it
+    /// is configurable rather than a constant, and why raising it is a
+    /// deployment decision. Set it to match your plan's per-file ceiling.
+    ///
+    /// The default is DELIBERATELY CONSERVATIVE. `ob` reports "max 5.00 MB",
+    /// which is ambiguous between 5,000,000 and 5,242,880, and nobody has
+    /// bisected the real boundary (CT 106, 2026-08-13). The two errors are not
+    /// symmetric: set too low, some writes that would have synced are refused,
+    /// loudly and with a typed error naming the limit; set too high, files in
+    /// the gap pass the guard and are stranded silently — reproducing the exact
+    /// failure the guard exists to prevent, now with a false sense of coverage.
+    /// Do not raise this to 5 * 1024 * 1024 without measuring first.
+    ///
+    /// Applies in every <see cref="Mode"/>, including "open": a guard with a
+    /// mode-shaped hole in it is a bypass. A test or dev vault needing larger
+    /// files raises the number explicitly, where it is visible.
+    /// </summary>
+    public long MaxFileBytes { get; set; } = 5_000_000;
 }

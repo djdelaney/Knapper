@@ -37,13 +37,29 @@ public sealed class HealthService(
     /// <summary>Probe bound. A hung rg must degrade health, not hang /up.</summary>
     internal int RipgrepTimeoutMs = 5_000;
 
+    /// <summary>
+    /// The oversized scan walks the vault, and /up is the monitor's liveness
+    /// probe — it must not pay an O(vault) cost per request. Same
+    /// success-and-failure-cached-alike shape is NOT used here: unlike the rg
+    /// probe there is no "unknown" state, so both answers cache.
+    /// </summary>
+    internal TimeSpan OversizedTtl = TimeSpan.FromSeconds(60);
+
     public sealed record Report(
         string Status,
         string Version,
         VaultInfo Vault,
         SyncInfo Sync,
         RipgrepInfo Ripgrep,
-        AuditInfo Audit);
+        AuditInfo Audit,
+        OversizedInfo Oversized);
+
+    /// <summary>
+    /// Files Obsidian Sync will not carry. /health only — it names paths, and
+    /// covers files that arrived from Dan's devices as well as Knapper's own
+    /// writes, which the mutation guard cannot see.
+    /// </summary>
+    public sealed record OversizedInfo(int Count, long LimitBytes, IReadOnlyList<string> Files);
 
     public sealed record VaultInfo(bool Reachable, string Root, long Generation, IReadOnlyList<string> ConflictFiles);
 
@@ -61,7 +77,8 @@ public sealed class HealthService(
         UpBool Sync,
         UpBool Ripgrep,
         UpBool Audit,
-        UpBool Conflicts);
+        UpBool Conflicts,
+        UpBool Oversized);
 
     public sealed record UpBool(bool Ok);
 
@@ -88,7 +105,15 @@ public sealed class HealthService(
 
         var rgVersion = RipgrepVersion();
         var auditWritable = AuditWritable();
+        var oversized = vaultReachable ? Oversized() : [];
 
+        // Oversized files DELIBERATELY do not degrade status. A conflict file
+        // blocks mutations until a human reconciles it, so 503 is the honest
+        // code; an oversized file blocks nothing and the rest of the vault
+        // syncs normally. A permanent 503 is a permanent alert, and the
+        // monitor's own cadence rules exist because an alert nobody can clear
+        // gets filtered into a folder nobody reads. It rides as a warning the
+        // monitor reports on transition instead.
         var healthy = vaultReachable && rgVersion is not null && auditWritable
             && mutationsAllowed && conflictFiles.Count == 0;
 
@@ -98,7 +123,8 @@ public sealed class HealthService(
             new VaultInfo(vaultReachable, resolver.Root, generation.Current, conflictFiles),
             new SyncInfo(syncOptions.Value.Mode, mutationsAllowed, heartbeatAge, blockedReason),
             new RipgrepInfo(rgVersion is not null, rgVersion),
-            new AuditInfo(auditWritable, vaultOptions.Value.AuditLogPath));
+            new AuditInfo(auditWritable, vaultOptions.Value.AuditLogPath),
+            new OversizedInfo(oversized.Count, syncOptions.Value.MaxFileBytes, oversized));
     }
 
     public UpReport CheckUp()
@@ -111,7 +137,45 @@ public sealed class HealthService(
             new UpBool(report.Sync.MutationsAllowed),
             new UpBool(report.Ripgrep.Available),
             new UpBool(report.Audit.Writable),
-            new UpBool(report.Vault.ConflictFiles.Count == 0));
+            new UpBool(report.Vault.ConflictFiles.Count == 0),
+            new UpBool(report.Oversized.Count == 0));
+    }
+
+    private IReadOnlyList<string> _oversized = [];
+    private long _oversizedScannedAt; // Stopwatch timestamp; 0 = never scanned
+
+    /// <summary>
+    /// Vault files Obsidian Sync refuses to carry. This is the BACKSTOP, not
+    /// the guard: the mutation service refuses Knapper's own oversized writes,
+    /// but a file can arrive over-ceiling from Dan's Macs or the Obsidian app,
+    /// and nothing else would ever notice — Sync logs the rejection and prints
+    /// "Fully synced" in the same millisecond.
+    ///
+    /// Dot-directories are skipped for the same reason queries skip them: .git
+    /// packfiles and .obsidian plugin bundles routinely exceed the ceiling,
+    /// none of them sync, and reporting them would be permanent noise.
+    /// </summary>
+    private IReadOnlyList<string> Oversized()
+    {
+        if (_oversizedScannedAt != 0 && Stopwatch.GetElapsedTime(_oversizedScannedAt) < OversizedTtl)
+            return _oversized;
+
+        IReadOnlyList<string> found;
+        try
+        {
+            found = OversizedFiles.Scan(resolver.Root, syncOptions.Value.MaxFileBytes);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A partial walk must not be reported as "none found" — that is
+            // the same lie as an empty search claiming exhaustive coverage.
+            // Keep the previous answer and re-scan next time.
+            return _oversized;
+        }
+
+        _oversized = found;
+        _oversizedScannedAt = Stopwatch.GetTimestamp();
+        return _oversized;
     }
 
     private string? RipgrepVersion()

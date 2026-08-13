@@ -188,6 +188,35 @@ int Doctor()
     {
         Console.WriteLine("warn  sync gate is OPEN — dev only; production sets Sync:Mode=heartbeat");
     }
+    // WARN, not FAIL. doctor's failures stop a deployment, and an oversized
+    // file blocks nothing: the rest of the vault syncs normally and no human
+    // has to reconcile anything (unlike a conflict file). It still has to be
+    // said out loud, because Sync will not — it logs the rejection and prints
+    // "Fully synced" in the same millisecond, so the file is stranded with
+    // every signal green. Same reasoning as /up carrying this as a warning
+    // rather than a 503.
+    if (!string.IsNullOrWhiteSpace(vaultOptions.RootPath) && Directory.Exists(vaultOptions.RootPath))
+    {
+        try
+        {
+            var oversized = OversizedFiles.Scan(vaultOptions.RootPath, syncOptions.MaxFileBytes);
+            if (oversized.Count > 0)
+            {
+                Console.WriteLine(
+                    $"warn  {oversized.Count} file(s) exceed Sync:MaxFileBytes ({syncOptions.MaxFileBytes}) — " +
+                    "Obsidian Sync will not carry these, and says nothing when it refuses them:");
+                foreach (var f in oversized.Take(20))
+                    Console.WriteLine($"      {f}");
+                if (oversized.Count > 20)
+                    Console.WriteLine($"      … and {oversized.Count - 20} more");
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // "Could not tell" is not "none found".
+            Console.WriteLine($"warn  could not scan for oversized files: {e.Message}");
+        }
+    }
     return failures == 0 ? 0 : 1;
 
     void Check(string what, Func<bool> probe)

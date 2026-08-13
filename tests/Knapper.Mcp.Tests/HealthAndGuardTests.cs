@@ -34,13 +34,20 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         var body = await up.Content.ReadAsStringAsync();
         var root = JsonDocument.Parse(body).RootElement;
         root.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ShouldBe(
-            ["audit", "conflicts", "ripgrep", "status", "sync", "vault", "version"]);
+            ["audit", "conflicts", "oversized", "ripgrep", "status", "sync", "vault", "version"]);
         // The disclosures /up exists to avoid: no filesystem paths, no
         // conflict filenames, no generation counter.
         body.ShouldNotContain(_factory.VaultDir);
         body.ShouldNotContain("audit.jsonl");
         body.ShouldNotContain("generation");
         body.ShouldNotContain("root");
+
+        // "oversized" is a BOOLEAN here, never the count or the filenames —
+        // a count is on the generation-counter side of the line /up draws,
+        // and a filename is vault content. Both live on /health.
+        root.GetProperty("oversized").EnumerateObject().Select(p => p.Name).ShouldBe(["ok"]);
+        body.ShouldNotContain("limitBytes");
+        body.ShouldNotContain("count");
     }
 
     /// <summary>

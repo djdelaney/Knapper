@@ -250,6 +250,24 @@ format by default.
   phase is not cross-file atomic (documented; git history is recovery), and
   duplicate paths are rejected because flock is per-descriptor — a second
   acquisition of the same path would self-deadlock.
+- **Every write path checks `Sync__MaxFileBytes` against the POST-TRANSFORM
+  bytes** (`RequireSyncable`, from `Mutate`, `Create`, and each batch plan).
+  Obsidian Sync silently refuses any file over its per-file ceiling: it logs
+  the rejection and prints "Fully synced" in the SAME millisecond, so an
+  oversized note verifies on disk, commits to git, returns a success receipt,
+  leaves every health signal green — and reaches no device. Content
+  verification is structurally blind to it, because nothing local is wrong.
+  Two silent ways to break it: check the INPUT size instead (the real case is
+  a small anchored insert into a note already near the ceiling), or "tidy"
+  the 5,000,000 default up to 5*1024*1024 — `ob` reports an ambiguous
+  "max 5.00 MB" that nobody has bisected, and the errors are not symmetric:
+  too low refuses writes loudly, too high strands them silently. Batch checks
+  during VALIDATE, so an oversized item fails the batch untouched. Pinned by
+  `SyncSizeLimitTests`. `/health` and `knapper doctor` are the backstop for
+  files that arrive over-ceiling from a device, and they share ONE scanner
+  (`OversizedFiles.Scan`) so they cannot drift into disagreeing; oversized
+  never degrades `/up` to 503 — nothing is blocked, and a permanent alert
+  nobody can clear is how a monitor gets ignored (`OversizedBackstopTests`).
 - **Multi-path locks acquire in sorted order** (`AcquirePathLocks`), global
   shared first — the fixed order is the deadlock-freedom proof. New lock
   users slot into this hierarchy.

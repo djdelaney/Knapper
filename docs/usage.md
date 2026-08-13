@@ -68,6 +68,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Mode` | `heartbeat` | `heartbeat` (production default — refuses startup without `HeartbeatPath`, so a forgotten env line fails closed) or `open` (dev-only explicit opt-out, logged warning). |
 | `HeartbeatPath` | — | File the sync probe touches; mutations require it fresh. |
 | `MaxAgeSeconds` | 300 | Staleness threshold. Missing file = blocked (fail closed). |
+| `MaxFileBytes` | 5000000 | Largest file Obsidian Sync will carry; a write producing more is refused `TooLargeToSync`. A property of your **Sync plan**, not of Knapper — set it to match. The default is the conservative reading of `ob`'s ambiguous "max 5.00 MB" (5,000,000, not 5,242,880; unbisected as of 2026-08-13). Errors are asymmetric: too low refuses writes loudly, too high strands them **silently**. Applies in every `Mode` — a guard with a mode-shaped hole is a bypass. |
 
 ## Connecting clients
 
@@ -135,6 +136,7 @@ Tool errors are structured MCP errors whose message leads with the code:
 | `InvalidArgument`, `InvalidCursor` | Malformed request; cursors only work with the query that made them. |
 | `QueryTimeout` | Budget elapsed with zero progress — narrow the scope. |
 | `TooLarge` | File exceeds the read cap; never silently truncated. |
+| `TooLargeToSync` | The write would produce a file Obsidian Sync refuses to carry (`Sync__MaxFileBytes`). **TERMINAL — do not retry**, unlike `MutationBlocked`: nothing about the vault's state will change. Split the note. Measured post-transform, so a small insert into a note near the ceiling hits it. |
 | `IoError` | Filesystem/OS failure (or rg/git missing). |
 | `Internal` | Unexpected server error (a bug, not your request). Details are in the server log, never on the wire. |
 | `QueryCancelled` | The request was cancelled at the transport before completion. |

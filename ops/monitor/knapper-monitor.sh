@@ -7,7 +7,9 @@
 #   1. /up through the PUBLIC tunnel with the monitoring service token —
 #      must answer 200. 503 or unreachable covers: vault unreachable, sync
 #      unhealthy, rg missing, audit unwritable, conflict files present,
-#      knapper down, tunnel down, Access misconfigured.
+#      knapper down, tunnel down, Access misconfigured. Its BODY additionally
+#      carries an oversized-file warning, which is a 200 by design (nothing is
+#      blocked) and so has to be read rather than inferred from the code.
 #   2. Git snapshot freshness via the commit STAMP inside the CT — the
 #      stamp is touched on every successful `knapper commit` run including
 #      "nothing to commit". Deliberate deviation from the brief's
@@ -119,7 +121,8 @@ send_mail() {
 }
 
 # ---- 1. /up through the tunnel ------------------------------------------
-HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+UP_BODY=$(mktemp)
+HTTP_CODE=$(curl -s -o "$UP_BODY" -w '%{http_code}' \
     --max-time "$CURL_TIMEOUT" \
     -H "CF-Access-Client-Id: ${CF_CLIENT_ID}" \
     -H "CF-Access-Client-Secret: ${CF_CLIENT_SECRET}" \
@@ -127,6 +130,25 @@ HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
 if [ "$HTTP_CODE" != "200" ]; then
     fail "/up returned HTTP ${HTTP_CODE} (expected 200) at ${UP_URL} — knapper degraded/down, tunnel down, or Access rejecting the monitor token"
 fi
+
+# ---- 1b. oversized files: a WARNING carried inside a 200 -----------------
+# Obsidian Sync silently refuses any file over its per-file ceiling — it logs
+# the rejection and prints "Fully synced" in the same millisecond, so a
+# stranded file leaves every other signal green. Knapper refuses its OWN
+# oversized writes; this catches one that arrived from a Mac or the Obsidian
+# app, which the mutation guard cannot see.
+#
+# Deliberately NOT a 503 on the server side: nothing is blocked, the rest of
+# the vault syncs, and no human has to reconcile anything the way a conflict
+# file demands. It rides here instead, where the existing cadence rules turn
+# it into one mail on transition plus an occasional reminder. jq is checked
+# again because check 3 owns the "jq missing" alert; a second one would be noise.
+if [ "$HTTP_CODE" = "200" ] && command -v jq >/dev/null 2>&1; then
+    if [ "$(jq -r '.oversized.ok // "absent"' < "$UP_BODY")" = "false" ]; then
+        fail "vault contains file(s) Obsidian Sync will NOT carry — they exist on the CT, commit to git, and reach no device. Run \`knapper doctor\` in the CT to name them"
+    fi
+fi
+rm -f "$UP_BODY"
 
 # ---- 2. commit-stamp freshness inside the CT ----------------------------
 STAMP_MTIME=$(pct exec "$CT_ID" -- stat -c %Y "$STAMP_PATH" 2>/dev/null)

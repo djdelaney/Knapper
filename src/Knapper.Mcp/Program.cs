@@ -102,6 +102,7 @@ builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<ConflictDetector>(),
     sp.GetRequiredService<ISyncGate>(),
     sp.GetRequiredService<VaultOptions>(),
+    sp.GetRequiredService<IOptions<SyncOptions>>().Value,
     sp.GetRequiredService<AuditLog>()));
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();

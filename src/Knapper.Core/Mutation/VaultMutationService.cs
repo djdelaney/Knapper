@@ -25,9 +25,35 @@ public sealed class VaultMutationService(
     ConflictDetector conflicts,
     ISyncGate syncGate,
     VaultOptions options,
+    SyncOptions syncOptions,
     AuditLog? audit = null)
 {
     private TimeSpan LockTimeout => TimeSpan.FromMilliseconds(options.LockTimeoutMs);
+
+    /// <summary>
+    /// Refuse a write Obsidian Sync would silently strand. Measured against
+    /// the POST-TRANSFORM bytes, and post-transform is the whole point: the
+    /// case that bites is a small anchored insert into a note already near the
+    /// ceiling, where the INPUT is a few KB. Byte length, not string length —
+    /// these are already the UTF-8 bytes headed for disk, so a note heavy in
+    /// non-ASCII cannot slip past a character count.
+    ///
+    /// Called from every write path (edit/append via Mutate, create, and each
+    /// batch plan) rather than from AtomicFile: batch must reject during its
+    /// validate phase, before the first byte lands, or a bad item aborts a
+    /// batch halfway. <see cref="MutationSurfaceTests"/> pins that every path
+    /// enforces it.
+    /// </summary>
+    private void RequireSyncable(VaultPath vp, byte[] after)
+    {
+        if (after.LongLength <= syncOptions.MaxFileBytes)
+            return;
+        throw new KnapperException(VaultErrorCode.TooLargeToSync,
+            $"{vp.Relative} would be {after.LongLength} bytes; Obsidian Sync carries at most " +
+            $"{syncOptions.MaxFileBytes} (Sync__MaxFileBytes). The write is refused: it would " +
+            "verify on disk and commit to git while never reaching any device. Split the note, " +
+            "or raise the limit if your Sync plan actually allows more.");
+    }
 
     /// <summary>
     /// Test seams for the move/delete link–unlink window. The per-path lock
@@ -117,6 +143,7 @@ public sealed class VaultMutationService(
             conflicts.AssertNotConflicted(vp);
             syncGate.AssertMutationsAllowed();
             var written = Encoding.UTF8.GetBytes(text);
+            RequireSyncable(vp, written);
             using (locks.AcquirePathLock(vp, LockTimeout))
             {
                 RequireAuditIntent("create", vp.Relative, ctx);
@@ -388,13 +415,17 @@ public sealed class VaultMutationService(
                 var vp = resolved[i];
                 try
                 {
-                    plans.Add(item.Kind switch
+                    var plan = item.Kind switch
                     {
                         BatchItemKind.Edit => PlanEdit(vp, item),
                         BatchItemKind.Append => PlanAppend(vp, item),
                         BatchItemKind.Create => PlanCreate(vp, item),
                         _ => throw new KnapperException(VaultErrorCode.InvalidArgument, $"unknown batch kind {item.Kind}"),
-                    });
+                    };
+                    // In the VALIDATE phase, so an oversized item fails the
+                    // whole batch untouched rather than aborting it halfway.
+                    RequireSyncable(plan.Item1, plan.Item3);
+                    plans.Add(plan);
                 }
                 catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
                 {
@@ -514,6 +545,7 @@ public sealed class VaultMutationService(
             using (locks.AcquirePathLock(vp, LockTimeout))
             {
                 var (before, after) = transform(vp);
+                RequireSyncable(vp, after);
                 var beforeSha = VaultHash.Sha256Hex(before);
                 RequireAuditIntent(op, vp.Relative, ctx);
                 AtomicFile.Replace(vp.Absolute, after, beforeSha);

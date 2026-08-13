@@ -40,13 +40,25 @@ public sealed class MutationVault : IDisposable
             AuditLogPath = AuditPath,
         };
         Service = new VaultMutationService(
-            Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, Audit);
+            Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, SyncOptions, Audit);
     }
+
+    /// <summary>
+    /// The size ceiling applies in every sync mode (a mode-shaped hole in a
+    /// guard is a bypass), so fixtures carry a real one. Tests that need to
+    /// exercise the limit shrink it rather than writing 5 MB of fixture.
+    /// </summary>
+    public SyncOptions SyncOptions { get; } = new();
 
     /// <summary>A service whose sync gate is closed — for fail-closed tests.</summary>
     public VaultMutationService BlockedService => new(
         Resolver, Locks, Generation, Conflicts,
-        new StaticSyncGate(false), Options, Audit);
+        new StaticSyncGate(false), Options, SyncOptions, Audit);
+
+    /// <summary>A service with a deliberately tiny sync ceiling.</summary>
+    public VaultMutationService ServiceWithMaxFileBytes(long max) => new(
+        Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options,
+        new SyncOptions { MaxFileBytes = max }, Audit);
 
     public string Write(string relative, string content)
     {

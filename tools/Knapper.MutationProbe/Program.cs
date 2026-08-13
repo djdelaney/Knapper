@@ -37,7 +37,8 @@ var service = new VaultMutationService(
     new VaultGenerationCounter(),
     new ConflictDetector(resolver),
     StaticSyncGate.Open,
-    options);
+    options,
+    new SyncOptions());
 
 try
 {
