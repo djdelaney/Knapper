@@ -209,6 +209,18 @@ with the release's, and `knapper.service` therefore DIFFERS forever and
 legitimately. Exit 1 means "a human decides"; exit 2 — something shipped that
 was never installed — is the one that is never expected.
 
+Each DIFFERS carries a plain-language legend ABOVE the diff, because a correctly
+oriented diff is still misread: `-`/`+` reads as removed/added to anyone not
+parsing the file headers, and the expensive misreading is the mirror of the one
+the state exists to catch — `+Environment=Mcp__AllowedHosts__0=mcp.example.com`
+read as "the release wants this, apply it", which reverts the deployment's own
+hostname to the shipped placeholder. So the report says which side is running,
+which side is shipped, that a `+` is not an instruction, and how many differing
+lines are known site config versus the release's actual change. `SITE_KEYS` in
+the script drives that classification and is **allowed to be incomplete**: an
+unknown key lands in "OUTSIDE known site config — read this", so incompleteness
+costs attention, never safety. Never add a rule that moves a line the other way.
+
 ## Versioning and releases
 
 One carrier: `<Version>` in `Directory.Build.props`. Everything downstream is

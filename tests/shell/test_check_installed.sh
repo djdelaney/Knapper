@@ -62,6 +62,39 @@ printf '%s' "$OUT" | grep -q 'knapper.service: DIFFERS' || fail "a differing uni
 # verdict with no diff sends the operator to run diff themselves.
 printf '%s' "$OUT" | grep -q 'real.example.com' || fail "DIFFERS did not print the diff"
 
+# ---- 2b. the diff says what it MEANS, above the diff ---------------------
+# The orientation is right, but -/+ reads as removed/added to anyone not
+# parsing the file headers, and the expensive misreading is the mirror of the
+# one the DIFFERS state exists to prevent: reading
+# `+Environment=Mcp__AllowedHosts__0=mcp.example.com` as "the release wants
+# this, apply it" reverts the deployment's own hostname to the placeholder.
+printf '%s' "$OUT" | grep -q "'-' = what is RUNNING here" \
+    || fail "no plain-language orientation line above the diff"
+printf '%s' "$OUT" | grep -q "NOT an instruction to apply it" \
+    || fail "the report does not say a '+' line is not an instruction"
+# The case above is PURE site config, and saying so is the point: the operator
+# needs "expected, keep yours" before reading a single -/+ line.
+printf '%s' "$OUT" | grep -q 'known site config — expected' \
+    || fail "an all-site-config diff was not classified as expected"
+
+# ---- 2c. a real release change is called out as the thing to merge -------
+# The other half, and the half that must never be swallowed: a key the site
+# list does not know lands in "OUTSIDE known site config", which is the
+# instruction to merge. Note the classification only ever moves lines TOWARD
+# more reading — an incomplete SITE_KEYS costs attention, never safety.
+new_case differs_offsite
+printf 'Environment=Mcp__AllowedHosts__0=mcp.example.com\nEnvironment=Knapper__NewKnob=true\n' \
+    > "$SHIPPED/knapper.service"
+printf 'Environment=Mcp__AllowedHosts__0=real.example.com\n' > "$ETC/knapper.service"
+run_check
+[ "$STATUS" -eq 1 ] || fail "a mixed diff exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'OUTSIDE known site config' \
+    || fail "a release change outside site config was not called out"
+# Counted, not merely mentioned — "1 of 3" is what tells the operator how much
+# of the diff below is theirs to keep.
+printf '%s' "$OUT" | grep -qE '1 of [0-9]+ differing line' \
+    || fail "the off-site line count was not reported"
+
 # ---- 3. a shipped file that was never installed → exit 2 -----------------
 # The failure this script exists for. A release that adds a unit installs
 # nothing by itself, and the omission is invisible until the thing the unit was

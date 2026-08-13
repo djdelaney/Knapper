@@ -65,6 +65,19 @@ fi
 DIFFERS=0
 MISSING=0
 
+# Settings /etc is authoritative for: a deployment fills these in and the
+# shipped unit carries a placeholder or a default. Used ONLY to classify the
+# lines of a diff, never to suppress one.
+#
+# ⚠️ This list is allowed to be incomplete, and the direction of its
+# incompleteness is the whole reason it is safe: a key missing from it lands in
+# "OUTSIDE known site config — read this", which is MORE reading, never less.
+# It must never grow a rule that moves a line the other way. Note this is not
+# the hand-maintained-list failure this script exists to close — that one is a
+# list of FILES that must agree with what ships, where an omission means a file
+# is never looked at. Here an omission means a line is looked at harder.
+SITE_KEYS='Mcp__AllowedHosts__|Mcp__Access__|Sync__MaxAgeSeconds|Sync__MaxFileBytes|Vault__RootPath|Vault__LockDirectory|Vault__AuditLogPath|Vault__MetricsPath|Vault__CommitStampPath'
+
 # Compare one shipped file against its installed counterpart. Reports every
 # file, including the identical ones: the value of this script is the claim
 # "every shipped file was looked at", and a report that prints only problems
@@ -83,8 +96,40 @@ compare() {
         echo "=== $_label: identical"
         return
     fi
-    echo "=== $_label: DIFFERS  (installed <, shipped >)"
-    diff -u "$_installed" "$_shipped"
+    # ── Say what the diff MEANS before showing it ──────────────────────────
+    #
+    # The orientation is right (installed on the left, shipped on the right),
+    # but `-`/`+` reads as removed/added to anyone not parsing the file
+    # headers, and the expensive misreading is
+    #
+    #   +Environment=Mcp__AllowedHosts__0=mcp.example.com
+    #     → "the new release wants this, I should apply it"
+    #
+    # which is how a deployment reverts its own hostname to the shipped
+    # placeholder — the exact silent revert the DIFFERS state exists to
+    # prevent, arriving through the report that was supposed to prevent it.
+    # So the legend goes in plain language, above the diff, at the moment it is
+    # most expensive to get wrong.
+    echo "=== $_label: DIFFERS"
+    _body=$(diff -u "$_installed" "$_shipped")
+    # `tail -n +3` drops diff's own --- / +++ file headers by POSITION. Matching
+    # them by prefix would also eat a removed content line beginning "-- ",
+    # which renders as "--- " and is indistinguishable from a header.
+    _changed=$(printf '%s\n' "$_body" | tail -n +3 | grep -E '^[-+]')
+    _total=$(printf '%s\n' "$_changed" | grep -c '[^[:space:]]')
+    _offsite=$(printf '%s\n' "$_changed" | grep -vE "$SITE_KEYS" | grep -c '[^[:space:]]')
+    echo "    '-' = what is RUNNING here      ($_installed)"
+    echo "    '+' = what this release SHIPS   ($_shipped)"
+    echo "    A '+' line is NOT an instruction to apply it. /etc is authoritative for this"
+    echo "    deployment's site config, and copying a shipped placeholder over a real value"
+    echo "    reverts it silently into a service that still starts."
+    if [ "$_offsite" -eq 0 ]; then
+        echo "    → all $_total differing line(s) are known site config — expected; keep what /etc has."
+    else
+        echo "    → $_offsite of $_total differing line(s) are OUTSIDE known site config. THAT is what"
+        echo "      this release changed: merge those into /etc and leave the rest alone."
+    fi
+    printf '%s\n' "$_body"
     DIFFERS=$((DIFFERS + 1))
 }
 

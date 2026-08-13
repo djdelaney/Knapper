@@ -1121,8 +1121,15 @@ pct exec 106 -- sh /opt/knapper/ops/check-installed.sh
 #         FOREVER and legitimately: /etc holds this deployment's edits
 #         (AllowedHosts, the Access AUD, Sync__MaxAgeSeconds,
 #         Sync__MaxFileBytes), and copying the shipped unit over them reverts
-#         them all at once, silently, into a service that still starts. Read
-#         each diff and merge the release's change into /etc's version.
+#         them all at once, silently, into a service that still starts.
+#         ⛔ READ THE LEGEND ABOVE EACH DIFF BEFORE READING THE DIFF. `-` is
+#         what is RUNNING here, `+` is what the release SHIPS — and a `+` line
+#         is NOT an instruction to apply it. `+Environment=Mcp__AllowedHosts__0=
+#         mcp.example.com` means the shipped TEMPLATE still carries the
+#         placeholder, and applying it reverts your hostname: the same silent
+#         revert, arriving through the report meant to prevent it. The script
+#         classifies each differing line and says which are known site config
+#         (keep yours) and which are the release's change (merge those).
 #         knapper-heartbeat.service carries the probe's environment and
 #         knapper-heartbeat.timer's AccuracySec is a term in the fail-closed
 #         budget, so neither is inert however inert it looks.
