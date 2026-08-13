@@ -277,6 +277,26 @@ if (accessEnabled)
     startupLogger.LogInformation(
         "Cloudflare Access assertion validation ENABLED (issuer {Issuer}, loopback bypass {Loopback}).",
         resolvedMcpOpts.Access.TeamDomain, resolvedMcpOpts.Access.AllowLoopback ? "on" : "off");
+
+    // The single-app collapse, said out loud. An EQUAL MonitoringAudience is
+    // refused at Validate(); an EMPTY one is a supported downgrade, so it warns
+    // — but it had no signal at all, and it is reached by DOING NOTHING, which
+    // makes it the likelier of the two by far. MonitoringAudiences() falls back
+    // to [Audience], so /up accepts the owner token and the monitor's
+    // credential — living in a config file on another machine — carries the
+    // whole vault. Every other surface stays green: doctor is all-ok, /health
+    // and /up are 200, and `knapper verify` SKIPS the asymmetry check because a
+    // single-app deployment has no CF_MONITOR_* pair to test with. Same shape
+    // as the Sync:Mode=open warning below and for the same reason: a downgrade
+    // that configures a control off, rather than breaking it, is invisible
+    // unless something says so.
+    if (string.IsNullOrWhiteSpace(resolvedMcpOpts.Access.MonitoringAudience))
+    {
+        startupLogger.LogWarning(
+            "Mcp:Access:MonitoringAudience is EMPTY — the single-app setup. /up accepts the owner " +
+            "audience, so the monitoring credential carries the WHOLE vault surface, not just /up. " +
+            "Two Access applications is the default; take one only deliberately (runbook §6.4).");
+    }
     // Fetch signing keys NOW or refuse to start — lazy retrieval fails into an
     // EventSource nobody hears while the server 401s every real caller.
     await AccessAuth.VerifySigningKeysAsync(app.Services, startupLogger).ConfigureAwait(false);

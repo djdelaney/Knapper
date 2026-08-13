@@ -58,7 +58,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Access:Enabled` | false | Cloudflare Access assertion validation at the origin. |
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
-| `Access:MonitoringAudience` | — | Optional second AUD accepted on `/up` only. Must differ from `Access:Audience` — equal values would give the monitoring credential the whole vault surface, so startup refuses. Leave empty for a single-app setup. |
+| `Access:MonitoringAudience` | — | Second AUD accepted on `/up` only. Must differ from `Access:Audience` — equal values would give the monitoring credential the whole vault surface, so startup **refuses**. Empty is the **single-app setup**: `/up` falls back to accepting the owner audience, so the monitor authenticates with the vault's own token and the credential in its config file on another machine carries every note. Supported, but a downgrade, not a neutral default — and note the asymmetry: an equal AUD refuses startup outright, while an empty one boots clean with `doctor` all-ok, `/health` and `/up` green, and `knapper verify` *skipping* the check that would catch it (no `CF_MONITOR_*` pair to test with). A startup **warning** is the only signal, so two apps is the default (runbook §6.2 creates both before the unit is edited). |
 | `Access:AllowLoopback` | true | Same-box health checks need no assertion. "Same-box" requires a loopback TCP peer AND a loopback Host header — tunneled requests proxied by cloudflared arrive from 127.0.0.1 but keep their public hostname, so they are always validated. |
 
 ### `Sync:*` — the mutation gate

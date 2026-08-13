@@ -51,7 +51,7 @@ done
 # failure this guards against was an instruction, in a checklist item.
 grep -nE 'knapper-monitor\.conf' "$DOC" | grep -v '|' | grep -iE 'claude code|connector' \
     | grep -viE 'unaffected|holds the root|is not|never' \
-    && fail "a line ties /etc/knapper-monitor.conf to Claude Code — those are different Access apps (§6.2 root vs §6.4 /up)"
+    && fail "a line ties /etc/knapper-monitor.conf to Claude Code — those are different Access apps (§6.2 creates both: the root app vs the path-scoped /up app)"
 
 # ---- 4. placeholders are declared ---------------------------------------
 # Every <thing> in the document should be substitutable and known. A new
@@ -103,6 +103,18 @@ grep -q 'Sync__Mode=open' ops/systemd/knapper-smoke.service.example \
     || fail "knapper-smoke.service.example lost Sync__Mode=open — its mutation tests would MutationBlock"
 grep -q 'Sync__Mode=heartbeat' ops/systemd/knapper.service \
     || fail "knapper.service is not Sync__Mode=heartbeat — the fail-closed gate is off in PRODUCTION"
+
+# ---- 8. the unit ships a placeholder for EVERY Access setting §6 needs --
+# It shipped three (Enabled, TeamDomain, Audience) where §6 needs four, and the
+# missing one was MonitoringAudience — so filling in the block the unit offers
+# lands you in the single-app collapse by accident: /up falls back to the owner
+# audience and the monitor's credential carries the whole vault, booting clean
+# with doctor all-ok. An operator configures what the file shows them; a
+# setting with no commented line is a setting that does not exist.
+for access_key in Enabled TeamDomain Audience MonitoringAudience; do
+    grep -qE "^#Environment=Mcp__Access__${access_key}=" ops/systemd/knapper.service \
+        || fail "knapper.service has no commented placeholder for Mcp__Access__${access_key} — §6.3 fills in all four in ONE edit, and a missing line is one an operator never sets"
+done
 
 [ "$FAILURES" -eq 0 ] && { echo "runbook-lint: ok"; exit 0; }
 echo "runbook-lint: $FAILURES problem(s)" >&2

@@ -43,7 +43,7 @@ document is a reference that resolves to the wrong member of a pair:
 | Identity | Belongs to | Never |
 |---|---|---|
 | Root Access app + token (§6.2), `CF_ACCESS_CLIENT_*` | Claude Code and the other connectors | the monitor |
-| `/up` path-scoped app + token (§6.4), `CF_MONITOR_CLIENT_*`, `/etc/knapper-monitor.conf` | the host-side monitor only | the vault surface, or Claude Code |
+| `/up` path-scoped app + token (§6.2), `CF_MONITOR_CLIENT_*`, `/etc/knapper-monitor.conf` | the host-side monitor only | the vault surface, or Claude Code |
 | Smoke app + token, `<smoke-hostname>` :3536 (§8b) | the smoke instance | production, and gone by §9 |
 | `106` / `knapper` / `mcp.example.com` | VMID for `pct` / the CT's own hostname / the public name | used interchangeably |
 | `_deploy-check/` (§5) | live-vault acceptance gates — **synced to Dan's devices** | mistaken for isolated |
@@ -640,33 +640,60 @@ and still without a write.
    tunnel config: Knapper's local-caller exemption is loopback peer AND
    loopback Host, and rewriting tunneled requests to `localhost` would
    dress them up as same-box callers.
-2. Cloudflare Access application for `mcp.example.com`: Managed OAuth
-   for claude.ai / Desktop / iOS connectors; a service token for Claude
-   Code. Rate-limit rule on the hostname.
-3. Origin validation ON (knapper.service): `Mcp__Access__Enabled=true`,
-   `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the Access app AUD) —
-   then `systemctl daemon-reload && systemctl restart knapper`. This is the
-   one unit edit §5 could not fold in, because the AUD does not exist until
-   the Access app does; re-run §5's `doctor` line afterwards so the captured
-   environment matches the unit again. The server refuses to start if it
-   cannot fetch the signing keys — that refusal is the feature. **`Mcp__AllowedHosts__0` must already be the
+2. **BOTH Access applications, before the unit is touched.** One Cloudflare
+   console session, two apps, two service tokens:
+
+   - **Root app** for `mcp.example.com`: Managed OAuth for claude.ai /
+     Desktop / iOS connectors; a service token for Claude Code. Rate-limit
+     rule on the hostname. Its AUD → `Mcp__Access__Audience`.
+   - **Path-scoped app** for `/up` → the external monitor, with its own
+     service token. Its AUD → `Mcp__Access__MonitoringAudience`, which is
+     accepted on `/up` and nowhere else.
+
+   ⛔ **Both, here, because §6.3 is ONE edit and ONE restart.** These used to
+   be two steps with the unit edit between them, which meant restarting into
+   an empty `MonitoringAudience` — the single-app collapse in §6.4 — and
+   living there until the second app existed. A build interrupted at that
+   point, or an operator reading §6.3 as "the Access edit", ends up in the
+   dangerous configuration by following the document. Write both AUDs down
+   now; §6.3 spends them together.
+3. Origin validation ON (knapper.service) — **the ONE unit edit, all four
+   values, one restart**: `Mcp__Access__Enabled=true`,
+   `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the root app's AUD),
+   `Mcp__Access__MonitoringAudience` (the `/up` app's) — then
+   `systemctl daemon-reload && systemctl restart knapper`. The unit ships all
+   four commented out; uncomment all four. This is the one edit §5 could not
+   fold in, because neither AUD exists until the apps do; re-run §5's `doctor`
+   line afterwards so the captured environment matches the unit again. The
+   server refuses to start if it cannot fetch the signing keys — that refusal
+   is the feature, and it warns if `MonitoringAudience` came out empty.
+   **`Mcp__AllowedHosts__0` must already be the
    real public hostname**: a tunneled request keeps that hostname, and the
    DNS-rebinding guard rejects every Host it does not recognize — with the
    shipped `mcp.example.com` placeholder still in place, ingress comes up
    and then refuses all of it. Verify through the tunnel, not from the CT:
    a loopback `curl` passes the guard no matter what this is set to.
-4. Second path-scoped Access app for `/up` → external monitor. Its AUD goes
-   in `Mcp__Access__MonitoringAudience`, which is accepted on `/up` and
-   nowhere else, and it must be a genuinely SEPARATE application: startup
-   refuses when it equals `Mcp__Access__Audience`, because equal AUDs give
-   the monitoring token the whole vault surface while the config still reads
-   like a path-scoped restriction.
+4. **Why two apps, and what one costs.** The `/up` app must be a genuinely
+   SEPARATE application: startup refuses when `Mcp__Access__MonitoringAudience`
+   equals `Mcp__Access__Audience`, because equal AUDs give the monitoring
+   token the whole vault surface while the config still reads like a
+   path-scoped restriction.
 
-   Leaving `MonitoringAudience` empty is the **single-app setup**, and it is
-   a downgrade with a name rather than a neutral choice: the monitor then
-   authenticates with the main app's token, so a credential living in a
-   config file on ANOTHER machine can read and mutate the whole vault. Two
-   apps is the default; take one only deliberately.
+   Leaving `MonitoringAudience` **empty** is the **single-app setup**, and it
+   is a downgrade with a name rather than a neutral choice: `/up` falls back
+   to accepting the owner audience, so the monitor authenticates with the
+   main app's token and a credential living in a config file on ANOTHER
+   machine can read and mutate the whole vault. Two apps is the default; take
+   one only deliberately.
+
+   ⚠️ Note the two failure modes are **not** symmetric, and the safer-looking
+   one is the trap. An EQUAL audience refuses startup — loud, immediate,
+   impossible to miss. An EMPTY one boots clean, `doctor` reads all-ok,
+   `/health` and `/up` are green, and `knapper verify` *skips* the asymmetry
+   check (a single-app deployment has no `CF_MONITOR_*` pair to test with).
+   A startup warning in the journal is the only signal, which is why §6.2
+   creates both apps and §6.3 spends both AUDs — the empty state is reached
+   by DOING NOTHING, and that makes it the likelier of the two by far.
 5. **Re-run the verifier through the tunnel** — from the dev box or the
    Proxmox host, NOT the CT (a loopback URL skips every ingress check):
 
@@ -896,7 +923,7 @@ last one does not restore cleanly:
    the heartbeat never goes stale.
 6. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
    is not restored, it is **replaced**: issue a new one on the path-scoped
-   `/up` app from §6.4 and write it into `/etc/knapper-monitor.conf` (chmod
+   `/up` app from §6.2 and write it into `/etc/knapper-monitor.conf` (chmod
    600, on the host). Until it is, the monitor keeps alerting, which looks
    exactly like the drill having broken something — hence doing it last.
 

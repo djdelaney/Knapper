@@ -42,10 +42,22 @@ Environment=Sync__MaxAgeSeconds=300
 Environment=Mcp__BindAddress=127.0.0.1
 Environment=Mcp__Port=3535
 Environment=Mcp__AllowedHosts__0=mcp.example.com
-# Access origin validation: set these when the Cloudflare Access app exists.
+# Access origin validation: set these when the Cloudflare Access apps exist —
+# BOTH of them, in one edit. Runbook §6.2 creates both before §6.3 edits this
+# file, so this block is filled in once and the service restarts once.
 #Environment=Mcp__Access__Enabled=true
 #Environment=Mcp__Access__TeamDomain=https://YOURTEAM.cloudflareaccess.com
 #Environment=Mcp__Access__Audience=YOUR_ACCESS_APP_AUD
+# ⛔ The FOURTH line is not optional dressing, and leaving it out is not the
+# neutral choice it looks like. Empty MonitoringAudience is the SINGLE-APP
+# COLLAPSE: /up then accepts the owner AUD, so the monitor authenticates with
+# the vault's own token and the credential sitting in /etc/knapper-monitor.conf
+# on ANOTHER machine can read and mutate every note. It boots clean, `doctor`
+# reads all-ok, `/health` and `/up` are green, and `knapper verify` SKIPS the
+# check that would catch it (no CF_MONITOR_* pair to test with). The server
+# logs a warning at startup and that is the only signal.
+# Two apps is the default. Take one only deliberately — runbook §6.4.
+#Environment=Mcp__Access__MonitoringAudience=YOUR_UP_APP_AUD
 
 # Hardening. ReadWritePaths lists exactly what the service may touch.
 NoNewPrivileges=true

@@ -63,8 +63,16 @@ public sealed class AccessOptionsTests
     [Fact]
     public void An_empty_monitoring_audience_is_accepted_and_narrows_to_the_owner()
     {
-        // Not configuring a monitoring app is the ordinary single-app case, not
-        // a misconfiguration: /up then accepts exactly the owner audience.
+        // The single-app setup: supported, so Validate() accepts it — but it is
+        // a DOWNGRADE, not a neutral choice, because /up then accepts the owner
+        // audience and the monitor authenticates with the vault's own token.
+        //
+        // Note how differently the two ways of getting this wrong behave, and
+        // that the safer-looking one is the trap: an EQUAL audience (above)
+        // refuses startup outright, while an empty one boots clean with every
+        // surface green. Startup logs a warning, which is the only signal there
+        // is — see Program.cs, and knapper.service ships a commented
+        // placeholder for this key so it is not reached by doing nothing.
         var options = Coherent();
         options.MonitoringAudience = "";
 
