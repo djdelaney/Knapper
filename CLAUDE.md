@@ -266,8 +266,43 @@ format by default.
   `SyncSizeLimitTests`. `/health` and `knapper doctor` are the backstop for
   files that arrive over-ceiling from a device, and they share ONE scanner
   (`OversizedFiles.Scan`) so they cannot drift into disagreeing; oversized
-  never degrades `/up` to 503 — nothing is blocked, and a permanent alert
-  nobody can clear is how a monitor gets ignored (`OversizedBackstopTests`).
+  files FOUND never degrade `/up` to 503 — nothing is blocked, and a permanent
+  alert nobody can clear is how a monitor gets ignored (`OversizedBackstopTests`).
+- **A vault walk that could not COMPLETE is a third state, and every health
+  surface must carry it.** `OversizedFiles.Scan` throws — unreadable
+  directory, or the `DefaultBudget` wall clock expiring — rather than
+  returning the short list, so "could not tell" can never arrive looking like
+  "scanned, none found". The state is load-bearing in both directions:
+  `/health` reports `oversized.scanned` / `vault.conflictScanComplete`, plus a
+  `scanError` labelled `io:` or `timeout:` — the two causes need OPPOSITE
+  responses (transient vs the vault having outgrown the budget) and are
+  otherwise identical on every surface — while `/up`'s lone `ok` booleans mean
+  *probed and fine*, and unknown DEGRADES on BOTH walks. The line is FINDING vs
+  BROKEN INSTRUMENT, not transient vs permanent: a finding is information about
+  the vault (conflict files block writes, so 503; oversized files block
+  nothing, so a 200 the monitor reads out of the body), a walk that could not
+  complete is no measurement at all. Do NOT re-justify this as "an error that
+  clears itself" — an unreadable directory persists exactly as long as a
+  conflict file does, and alert fatigue is the monitor's cadence rules' job
+  (one mail per failure-set change, a reminder at most daily, one on
+  recovery), not the status code's. Two ways this went wrong
+  here, both shipped: caching an empty list and returning it on the FIRST
+  failed scan, so a cold cache plus one IO error reported the vault clean at
+  exactly the moment a monitor polls a fresh start; and letting the conflict
+  walk's exception escape `Check()`, so an unreadable directory answered 500
+  and broke `/health`'s own 200/503 contract. Never cache the unknown, and
+  never let a walk failure reach the endpoint as an exception.
+- **Every vault walk filters `FileAttributes.ReparsePoint`.** Symlinks are
+  rejected everywhere else (resolver, lock manager) and skipped by every
+  lister; the oversized scan was the one exception, so a directory-symlink
+  cycle made it non-terminating — on the request path of `/health` and `/up`,
+  which the host monitor polls every 5 minutes. A new walk gets the filter AND
+  a wall-clock bound whose expiry degrades health rather than hanging it (the
+  same contract as `HealthService.RipgrepTimeoutMs`). Dot-entries stay skipped
+  at every depth, which is also why `.trash/` is invisible: deletes are soft,
+  so an over-ceiling file deleted through `vault_delete` still sits there, and
+  alerting on it would be an alert about a file the human already dealt with
+  and cannot clear through any tool.
 - **Multi-path locks acquire in sorted order** (`AcquirePathLocks`), global
   shared first — the fixed order is the deadlock-freedom proof. New lock
   users slot into this hierarchy.
@@ -285,6 +320,21 @@ format by default.
   and the sibling until a human reconciles. The sync gate (`ISyncGate`)
   fails mutations closed when continuous sync is unhealthy — no local
   fallback, ever.
+- **The heartbeat TICK is a term in the fail-closed budget, so
+  `knapper-heartbeat.timer` pins `AccuracySec=1s`.** Withholding the touch is
+  the only way Knapper learns sync is unhealthy, so total exposure ≈ ob's ~57s
+  detection latency + the inter-tick gap + `Sync__MaxAgeSeconds` (300s, sized
+  against a 60s tick). systemd's DEFAULT accuracy is 1min, which on a 60s
+  period measured gaps up to 116s on CT 106 — nearly halving the margin, with
+  nothing failing and nothing logged; the visible symptom is a two-minute blip
+  blocking every mutation and reading like a Knapper bug. Dropping that line,
+  or changing the period without moving `MaxAgeSeconds`, moves the budget
+  silently. And `ops/sync-heartbeat.sh` LOGS every withheld touch (stdout, one
+  line, our own words — never text lifted from ob's log, which interleaves
+  vault filenames): `journalctl -u knapper-heartbeat | grep withheld` is the
+  deployment's only durable record of how close it has come to the limit.
+  ob's own log cannot answer it — it prints `Disconnected from server` on
+  clean shutdown too.
 - **`GitCommitJob` is the vault's only committer, and it snapshots under
   the vault-wide commit lock** — so a prepared-but-unverified batch write
   can never be captured. Local-only repo; NO remote until the credential

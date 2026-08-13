@@ -4,6 +4,23 @@ Description=Run the Knapper sync-health probe every minute
 [Timer]
 OnBootSec=1min
 OnUnitActiveSec=1min
+# ⛔ NOT over-specification. systemd's default AccuracySec is 1min, which on a
+# 60s period means each firing may slip by up to a full period — measured on
+# CT 106 2026-08-13 over a quiet 9 minutes: gaps of 68/64/116/107/73/112s, mean
+# ~90s, max 116s, with RandomizedDelayUSec=0. Nearly double the nominal tick,
+# entirely accuracy slop.
+#
+# That gap is a direct term in the FAIL-CLOSED budget, because withholding the
+# touch is the only way Knapper learns sync is unhealthy — it bounds both how
+# stale the last healthy touch can be before an outage is noticed and how long
+# recovery takes to register. Total exposure ≈ 57s (ob's own detection latency,
+# measured) + the inter-tick gap + Sync__MaxAgeSeconds. At 1min accuracy a
+# ~2-minute blip blocks every agent mutation; at 1s it takes ~4 minutes, versus
+# the worst unprovoked disconnect measured here (60s). One line, ~3x the margin.
+#
+# The other timers do not need this: knapper-commit's budget is MAX_STAMP_AGE
+# (3900s) against a 30min period, where a minute of slop is noise.
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target

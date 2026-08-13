@@ -4,9 +4,15 @@
 #
 # The probe exits 3 for CANNOT EVALUATE (misconfiguration), which FAILS this
 # unit deliberately: `systemctl --failed` and the journal then name the cause.
-# Unhealthy-but-evaluated is a silent exit 0, so a transient disconnect does
-# not fail the unit. Note knapper-monitor.sh has no failed-unit check — the
-# alert still arrives as /up 503 via the stale heartbeat, without the cause.
+# Unhealthy-but-evaluated is exit 0, so a transient disconnect does not fail
+# the unit — but it is NOT silent: every withheld touch logs one line naming
+# why, which is the only durable record of how close this deployment has come
+# to its fail-closed limit:
+#
+#   journalctl -u knapper-heartbeat --since -7d | grep withheld
+#
+# Note knapper-monitor.sh has no failed-unit check — the alert still arrives as
+# /up 503 via the stale heartbeat, without the cause.
 [Unit]
 Description=Knapper sync-health heartbeat probe
 

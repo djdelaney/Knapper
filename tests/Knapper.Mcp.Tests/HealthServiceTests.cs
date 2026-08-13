@@ -2,6 +2,7 @@ using Knapper.Core.Generation;
 using Knapper.Core.Mutation;
 using Knapper.Core.Options;
 using Knapper.Core.Vault;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Knapper.Mcp.Tests;
@@ -38,7 +39,8 @@ public sealed class HealthServiceTests : IDisposable
         };
         return new HealthService(
             resolver, _generation, new ConflictDetector(resolver), StaticSyncGate.Open,
-            Options.Create(vaultOptions), Options.Create(new SyncOptions { Mode = "open" }))
+            Options.Create(vaultOptions), Options.Create(new SyncOptions { Mode = "open" }),
+            NullLogger<HealthService>.Instance)
         {
             RipgrepTtl = TimeSpan.Zero, // every Check re-probes
         };
@@ -127,6 +129,95 @@ public sealed class HealthServiceTests : IDisposable
 
         reports.ShouldAllBe(r => r.Audit.Writable, "no probe may see another probe as a sharing violation");
         Directory.EnumerateFiles(auditDir).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A false clean is invisible by construction: nobody investigates a
+    /// report that says "checked, all clear". The cache starts EMPTY, so a
+    /// walk that throws on the very first call used to return that empty
+    /// list — "could not tell" rendered as "scanned, none found", with
+    /// /up's oversized.ok true. Worst case is well aligned with reality:
+    /// the cold cache exists immediately after a start, which is exactly
+    /// when a monitor polls and when transient IO problems are likeliest.
+    ///
+    /// Non-root, like the read-only audit-dir test above: mode 000 is what
+    /// makes the walk throw.
+    /// </summary>
+    [Fact]
+    public void A_scan_that_fails_on_the_FIRST_call_reports_unknown_not_clean()
+    {
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var health = NewService(rg, Path.Combine(_outsideDir, "audit"));
+
+        var unreadable = Path.Combine(_vaultDir, "Locked");
+        Directory.CreateDirectory(unreadable);
+        File.SetUnixFileMode(unreadable, UnixFileMode.None);
+        try
+        {
+            var report = health.Check();
+
+            report.Oversized.Scanned.ShouldBeFalse();
+            report.Oversized.Count.ShouldBe(0); // 0 counted, NOT 0 present
+            report.Status.ShouldBe("degraded");
+
+            // The same directory defeats the conflict walk, which used to
+            // throw straight out of Check() — /health answered 500 and broke
+            // its own 200/503 contract before the oversized scan even ran.
+            report.Vault.ConflictScanComplete.ShouldBeFalse();
+
+            // Both causes are labelled. An IO failure is usually transient;
+            // a budget expiry never is. Identical on every other surface,
+            // opposite responses, so the payload must tell them apart.
+            report.Oversized.ScanError.ShouldStartWith("io:");
+            report.Vault.ConflictScanError.ShouldStartWith("io:");
+        }
+        finally
+        {
+            RestoreWritable(unreadable);
+        }
+    }
+
+    /// <summary>
+    /// The oversized walk failing ALONE — the permission test above defeats
+    /// both walks at once, so on its own it cannot show which probe reported
+    /// the unknown. An expired budget reaches only this one.
+    /// </summary>
+    [Fact]
+    public void A_walk_that_runs_out_of_budget_degrades_health_rather_than_hanging_it()
+    {
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var health = NewService(rg, Path.Combine(_outsideDir, "audit"));
+        health.OversizedBudget = TimeSpan.Zero;
+        File.WriteAllText(Path.Combine(_vaultDir, "note.md"), "small\n");
+
+        var report = health.Check();
+
+        report.Oversized.Scanned.ShouldBeFalse();
+        report.Status.ShouldBe("degraded");
+        report.Oversized.ScanError.ShouldStartWith("timeout:");
+        report.Vault.ConflictScanComplete.ShouldBeTrue(); // the other walk is unaffected
+        report.Vault.ConflictScanError.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The unknown state must not stick: a failure is never cached, or the
+    /// probe would keep answering "could not tell" for a TTL after the vault
+    /// became readable again — a self-clearing fault that stops self-clearing.
+    /// </summary>
+    [Fact]
+    public void A_failed_scan_is_not_cached()
+    {
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var health = NewService(rg, Path.Combine(_outsideDir, "audit"));
+        health.OversizedBudget = TimeSpan.Zero;
+
+        health.Check().Oversized.Scanned.ShouldBeFalse();
+
+        health.OversizedBudget = OversizedFiles.DefaultBudget;
+        var report = health.Check();
+        report.Oversized.Scanned.ShouldBeTrue();
+        report.Oversized.ScanError.ShouldBeNull(); // the reason clears with the state
+        report.Status.ShouldBe("ok");
     }
 
     private static void RestoreWritable(string dir)

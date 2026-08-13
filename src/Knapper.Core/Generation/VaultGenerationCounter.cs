@@ -20,6 +20,11 @@ namespace Knapper.Core.Generation;
 /// </summary>
 public sealed class VaultGenerationCounter : IDisposable
 {
+    // Per-PROCESS, and deliberately so: it exists to answer "did the vault
+    // move DURING this query", which never spans a restart. It starts at zero
+    // on every start, so a value from before a restart compares as though the
+    // vault went backwards — the `initialize` instructions state the lifetime
+    // because they advertise the span to agents.
     private long _generation;
     private FileSystemWatcher? _watcher;
 

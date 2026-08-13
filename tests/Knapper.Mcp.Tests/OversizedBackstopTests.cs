@@ -114,7 +114,91 @@ public sealed class OversizedBackstopTests
         var body = JsonDocument.Parse(await client.GetStringAsync("/health")).RootElement;
 
         body.GetProperty("oversized").GetProperty("count").GetInt32().ShouldBe(0);
+        body.GetProperty("oversized").GetProperty("scanned").GetBoolean().ShouldBeTrue();
         JsonDocument.Parse(await client.GetStringAsync("/up")).RootElement
             .GetProperty("oversized").GetProperty("ok").GetBoolean().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Acceptance for the walk that used to follow directory symlinks: a cycle
+    /// inside the vault must not hang the endpoints. This walk runs on the
+    /// /health and /up request path, and from runbook §8 the host monitor
+    /// polls /up every 5 minutes — a hung walk is a hung health endpoint on a
+    /// fixed cadence, blinding the very thing that would report it.
+    ///
+    /// A cycle would have to be made by hand on a Mac (Sync does not carry
+    /// symlinks and Knapper refuses to create them), which is why it is a
+    /// low-probability, high-blast-radius, cheap-to-close hole rather than an
+    /// outage that already happened.
+    /// </summary>
+    [Fact]
+    public async Task A_directory_symlink_cycle_does_not_hang_health_or_up()
+    {
+        using var factory = Factory();
+        factory.Seed("Big/stranded.md", new string('x', 1500));
+        Directory.CreateSymbolicLink(Path.Combine(factory.VaultDir, "Big", "loop"), factory.VaultDir);
+        using var client = factory.CreateClient();
+
+        // The endpoints answering at all is the assertion; the timeout keeps a
+        // regression a failing test rather than a hung test run.
+        var health = await client.GetAsync("/health").WaitAsync(TimeSpan.FromSeconds(30));
+        var up = await client.GetAsync("/up").WaitAsync(TimeSpan.FromSeconds(30));
+
+        health.StatusCode.ShouldBe(HttpStatusCode.OK);
+        up.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync()).RootElement;
+        var oversized = body.GetProperty("oversized");
+        oversized.GetProperty("scanned").GetBoolean().ShouldBeTrue();
+        oversized.GetProperty("files").EnumerateArray().Select(f => f.GetString())
+            .ShouldBe(["Big/stranded.md"]); // once, and not under the symlink
+    }
+
+    /// <summary>
+    /// "Could not tell" must not render as "checked, all clear". The cache
+    /// starts empty, so a walk that failed on the FIRST call returned that
+    /// empty list and /up reported oversized.ok true — invisible by
+    /// construction, because nobody investigates a clean report. The cold
+    /// cache exists immediately after a start: exactly when the monitor polls
+    /// and exactly when transient IO problems are likeliest.
+    ///
+    /// Unlike oversized files FOUND, this degrades. Nothing is blocked by a
+    /// stranded file and a permanent 503 is an alert nobody can clear — but a
+    /// scan that cannot complete is an error, it clears itself when the vault
+    /// becomes readable, and until it does every word this probe says is
+    /// unfounded. Non-root: mode 000 is what makes the walk throw.
+    /// </summary>
+    [Fact]
+    public async Task A_scan_that_could_not_complete_is_not_reported_as_clean()
+    {
+        using var factory = Factory();
+        var unreadable = Path.Combine(factory.VaultDir, "Locked");
+        Directory.CreateDirectory(unreadable);
+        File.SetUnixFileMode(unreadable, UnixFileMode.None);
+        try
+        {
+            using var client = factory.CreateClient();
+
+            var health = await client.GetAsync("/health");
+            var up = await client.GetAsync("/up");
+
+            // 503, not 500: an unreadable directory used to throw out of the
+            // conflict walk and break /health's own status-code contract.
+            health.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            up.StatusCode.ShouldBe(health.StatusCode);
+
+            var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync()).RootElement;
+            body.GetProperty("oversized").GetProperty("scanned").GetBoolean().ShouldBeFalse();
+            body.GetProperty("oversized").GetProperty("count").GetInt32().ShouldBe(0);
+            body.GetProperty("vault").GetProperty("conflictScanComplete").GetBoolean().ShouldBeFalse();
+
+            JsonDocument.Parse(await up.Content.ReadAsStringAsync()).RootElement
+                .GetProperty("oversized").GetProperty("ok").GetBoolean().ShouldBeFalse();
+        }
+        finally
+        {
+            File.SetUnixFileMode(unreadable,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
     }
 }

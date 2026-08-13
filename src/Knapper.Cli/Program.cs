@@ -211,9 +211,11 @@ int Doctor()
                     Console.WriteLine($"      … and {oversized.Count - 20} more");
             }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
         {
-            // "Could not tell" is not "none found".
+            // "Could not tell" is not "none found". This is also the line an
+            // operator is sent to when /up degrades with oversized.ok false:
+            // /up says only THAT the scan is unusable, doctor says why.
             Console.WriteLine($"warn  could not scan for oversized files: {e.Message}");
         }
     }

@@ -147,7 +147,33 @@ Tool errors are structured MCP errors whose message leads with the code:
   sync age, rg version, audit path). Loopback-only by default.
 - `GET /up` — booleans only, for the external monitor. Same status codes as
   `/health` (200 ok / 503 degraded). Degrades on: vault unreachable, sync
-  unhealthy, ripgrep missing, audit unwritable, conflict files present.
+  unhealthy, ripgrep missing, audit unwritable, conflict files present, or a
+  vault walk that could not COMPLETE (unreadable directory, or the scan's
+  wall-clock budget expiring).
+- **Oversized files are the one warning that rides inside a 200.** Nothing is
+  blocked by a file Sync will not carry, so the monitor reads
+  `.oversized.ok` from the body rather than the status code. A scan that could
+  not complete is the other case and *does* degrade — the two are distinct on
+  the wire: files found is `200` + `oversized.ok: false`; could-not-tell is
+  `503`, and `/health` names which walk failed (`oversized.scanned`,
+  `vault.conflictScanComplete`) and why (`oversized.scanError`,
+  `vault.conflictScanError`, prefixed `io:` or `timeout:` — a timeout means
+  the vault outgrew `OversizedFiles.DefaultBudget` and will not fix itself).
+  Both also log a warning. `knapper doctor` prints the reason too. Every `/up`
+  boolean means "probed, and fine"; an unknown is never a true.
+- The monitor keys check 1 on the status code and check **1b** on
+  `.oversized.ok`, guarded on `HTTP 200` — so stranded files alert as
+  "vault contains file(s) Sync will NOT carry", a failed scan alerts as check
+  1, and neither is silent. Alert *frequency* is the cadence layer's job, not
+  the status code's: one mail per failure-set change, a reminder at most once
+  per `RENOTIFY_SECONDS`, one on recovery.
+- `sync.mutationsAllowed` on `/health` is the **sync gate only**. It is true
+  while a note with an unresolved conflict sibling is still refused
+  `[MutationBlocked]` — that gate is per-file and reports under
+  `vault.conflictFiles`. Read both before concluding writes are unblocked.
+- `vault.generation` is **per-process** and restarts at zero with the service.
+  It answers "did the vault move during this query"; comparing it across a
+  restart is meaningless.
 - `knapper status` / `knapper doctor` — one-screen summary / checks with
   exit codes for scripting.
 - `knapper version` — the build identity of that binary, alone on stdout:

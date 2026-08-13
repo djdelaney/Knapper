@@ -21,6 +21,19 @@ public sealed class SyncOptions
 
     public string HeartbeatPath { get; set; } = "";
 
+    /// <summary>
+    /// How stale <see cref="HeartbeatPath"/> may be before mutations fail
+    /// closed.
+    ///
+    /// ⚠️ COUPLED to the probe's tick. This default is sized against
+    /// `knapper-heartbeat.timer` firing every 60s — which is only true because
+    /// that unit pins `AccuracySec=1s`; systemd's 1min default let firings slip
+    /// to 116s on CT 106. Total exposure to an outage is roughly ob's own ~57s
+    /// detection latency + the inter-tick gap + this number, so changing the
+    /// timer's period without revisiting this silently moves the budget. If the
+    /// total is what matters, THIS is the lever to turn — the tick is bounded
+    /// below by ob's detection latency and cannot buy much.
+    /// </summary>
     public int MaxAgeSeconds { get; set; } = 300;
 
     /// <summary>

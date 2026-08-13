@@ -223,6 +223,15 @@ Directory.Build.props <Version>          the one carrier
   `verify`.
 - **Read-only deployment profile**: `Mcp:DisabledTools` with the seven
   mutation tools listed, as a documented one-liner.
+- **A config knob for `OversizedFiles.DefaultBudget`** (5s). Deliberately NOT
+  built yet: a budget expiry degrades `/health` to 503, and unlike an
+  unreadable directory an operator cannot clear it without a code change —
+  so if one is ever observed, the knob is the escape hatch to add. It is not
+  speculative to leave out, because the condition is now self-announcing:
+  `oversized.scanError` carries a `timeout:` prefix and the walk logs a
+  warning saying it does not clear on its own. Helios is ~250 files against
+  a 5s budget, so the headroom is enormous; the reason this is written down
+  is that the headroom is not the argument.
 - **Per-client credentials** (brief §8 "where practical"): Access already
   distinguishes identities in the audit log; separate Access apps per agent
   surface would let Cloudflare policy differ per client.
@@ -234,6 +243,42 @@ Directory.Build.props <Version>          the one carrier
   matches mode covers the need.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
+- **Data Protection's three startup warnings** (observed CT 106,
+  2026-08-13): ASP.NET Core finds nowhere to persist a key ring under
+  `ProtectHome=true` with no user profile, and logs in-memory repository /
+  ephemeral keys / no XML encryptor on every start. Harmless here — no
+  cookies, no sessions, and Access validation uses fetched public keys — but
+  this deployment holds a **zero-warn baseline as policy**, and permanent
+  benign warnings are what train an operator to stop reading the log.
+
+  The three are `EventId` **50** (`…Repositories.EphemeralXmlRepository`,
+  "Using an in-memory repository"), **59** and **35**
+  (`…KeyManagement.XmlKeyManager`, "Neither user profile nor HKLM registry
+  available" and "No XML encryptor configured") — measured 2026-08-13 by
+  forcing the no-key-ring path, not read off a doc page. Note `env -u HOME`
+  does NOT reproduce it: .NET falls back to the passwd entry, so the probe
+  needs `HOME` pointed at an unwritable directory.
+
+  Three options, and the cheapest-looking one is worse than it appears:
+
+  1. **Persist the key ring** to `/var/lib/knapper` (already in the unit's
+     `ReadWritePaths`). Silences 50 and 59 permanently; 35 fires once when
+     the first key is created, then never again. Cost: a real key ring on
+     disk for a feature nothing here uses.
+  2. **Drop the whole `Microsoft.AspNetCore.DataProtection` category** to
+     Error. One line, but 59 and 35 share `XmlKeyManager` with genuine
+     warnings (key-element parse failures, decryption errors), so this
+     really does blind us — the objection stands.
+  3. **Filter exactly those three EventIds.** Correct in principle, but
+     `ILoggingBuilder.AddFilter` cannot do it: filters key on
+     (provider, category, level) and have no access to the `EventId`. It
+     needs a custom `ILoggerProvider` decorator wrapping every registered
+     provider — permanent machinery in the log path, which is more than
+     either alternative costs.
+
+  **Dan's call.** On the measurements, (1) is now the recommendation: it is
+  the only one that removes the cause rather than hiding the symptom, and
+  its downside is a file, not a blind spot.
 
 ## Open decisions (owners, and what re-opens them)
 

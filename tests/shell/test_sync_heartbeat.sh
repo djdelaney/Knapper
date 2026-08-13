@@ -82,16 +82,28 @@ assert_touched()     { [ -e "$HB" ] || fail "heartbeat NOT touched, expected tou
 assert_not_touched() { [ ! -e "$HB" ] || fail "heartbeat WAS touched, expected untouched"; }
 assert_stderr()      { case "$OUT" in *"$1"*) ;; *) fail "stderr missing '$1' (got: $OUT)" ;; esac; }
 
+# Every withheld touch must say so, and say why. Without this the healthy and
+# unhealthy runs are byte-identical in the journal and the deployment keeps no
+# record of how close it has come to its fail-closed limit — the calibration
+# question then has to be answered by parsing ob's log instead of ours.
+assert_withheld() {
+    case "$OUT" in
+        *withheld:*"$1"*) ;;
+        *) fail "no withheld line mentioning '$1' (got: $OUT)" ;;
+    esac
+}
+assert_silent() { [ -z "$OUT" ] || fail "expected no output, got: $OUT"; }
+
 # ── 1. healthy ────────────────────────────────────────────────────────────
 setup "healthy"
 printf '[%s] Fully synced\n' "$(ts_ago 5)" > "$LOG"
-probe; assert_rc 0; assert_touched
+probe; assert_rc 0; assert_touched; assert_silent
 
-# ── 2. unit inactive → silent, untouched (condition (a)) ──────────────────
+# ── 2. unit inactive → untouched, and says so (condition (a)) ─────────────
 setup "unit inactive"
 stub_systemctl inactive
 printf '[%s] Fully synced\n' "$(ts_ago 5)" > "$LOG"
-probe; assert_rc 0; assert_not_touched
+probe; assert_rc 0; assert_not_touched; assert_withheld "obsidian-headless.service is not active"
 
 # ── 3. ⭐ THE REGRESSION TEST ─────────────────────────────────────────────
 # Unit active AND `ob sync-status` exits 0 — the exact state the original
@@ -105,12 +117,17 @@ setup "severed network, unit still active"
     printf '[%s] Disconnected from server\n' "$(ts_ago 32)"
     printf '[%s] Waiting to connect to server\n' "$(ts_ago 31)"
 } > "$LOG"
-probe; assert_rc 0; assert_not_touched
+# The newest connection-state line here is the "Waiting to connect" one, so
+# that is the verdict logged — the two are reported separately because a run of
+# them reads very differently in the journal.
+probe; assert_rc 0; assert_not_touched; assert_withheld "waiting to connect"
 
 # ── 4. stale: healthy line, too old ───────────────────────────────────────
+# The age is in the line: a run of these is how the deployment's real worst
+# case gets measured without parsing anyone else's log.
 setup "stale Fully synced"
 printf '[%s] Fully synced\n' "$(ts_ago 600)" > "$LOG"
-probe; assert_rc 0; assert_not_touched
+probe; assert_rc 0; assert_not_touched; assert_withheld "sync may be wedged"
 
 # ── 5. window sizing: a bulk burst INSIDE the budget still evaluates ──────
 # ~700 activity lines after the last connection-state line — the measured
@@ -153,7 +170,12 @@ setup "filename cannot forge a healthy verdict"
     printf '[%s] Disconnected from server\n'            "$(ts_ago 40)"
     printf '[%s] Downloading Notes/Fully synced.md\n'   "$(ts_ago 2)"
 } > "$LOG"
-probe; assert_rc 0; assert_not_touched
+probe; assert_rc 0; assert_not_touched; assert_withheld "disconnected from server"
+# ...and the withheld line must not carry the FILENAME through into our
+# journal. The anchor guarantees the matched line starts with a known message,
+# not that the rest of it is free of vault content — so the log line reports
+# the matched category, never the raw text.
+case "$OUT" in *"Fully synced.md"*) fail "vault filename leaked into the withheld line: $OUT" ;; esac
 
 # ...and the inverse: a note named "Disconnected from server.md" must not
 # block a healthy vault.
@@ -193,7 +215,7 @@ probe; assert_rc 0; assert_touched
 # unit on every rotation would be noise; a mis-sized budget (case 6) stays loud.
 setup "zero-byte log during rotation"
 : > "$LOG"
-probe; assert_rc 0; assert_not_touched
+probe; assert_rc 0; assert_not_touched; assert_withheld "logrotate copytruncate window"
 
 # ── 12. cannot-evaluate paths are loud and named ──────────────────────────
 setup "ob sync-status fails"

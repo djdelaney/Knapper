@@ -472,6 +472,25 @@ reason not to re-run these gates casually afterwards.)
   while writes still land. With the heartbeat timer at 60s, the honest
   statement is "up to ~5 minutes of dead sync is invisible to agents" — and
   this test has a number to wait for instead of a guess.
+
+  ⚠️ "At 60s" is only true because `knapper-heartbeat.timer` pins
+  `AccuracySec=1s`. systemd's default is 1min, which on a 60s period let
+  firings slip to **116s** here (measured 2026-08-13, `RandomizedDelayUSec=0`),
+  roughly halving the margin. Verify it survived install:
+
+  ```sh
+  pct exec 106 -- systemctl show knapper-heartbeat.timer -p AccuracyUSec
+  # AccuracyUSec=1s   ← 1min means the drop-in did not take
+  ```
+
+  The probe also logs every withheld touch, which is the only durable record
+  of how close this deployment has come to the budget — `ob`'s own log cannot
+  answer it reliably (it prints `Disconnected from server` on clean shutdown
+  too, so a naive count over-reported 10 events against 5 real ones here):
+
+  ```sh
+  pct exec 106 -- journalctl -u knapper-heartbeat --since -7d | grep withheld
+  ```
 - **Size gate**: attempt a create larger than `Sync__MaxFileBytes` → must fail
   `[TooLargeToSync]`. Unlike the fixtures above this leaves NOTHING behind and
   is safe against Helios: the point of the gate is that the write is refused,
@@ -722,6 +741,15 @@ last one does not restore cleanly:
    ⚠️ That file is **synced-adjacent**: it lives in Helios, and Sync will
    refuse to carry it — which is the point — but the empty parent folder still
    replicates. Use the `_deploy-check/` subtree and delete both.
+
+   A scan that could not COMPLETE is the other half of that field and behaves
+   the opposite way: it **degrades to 503**, so it arrives as check 1's mail,
+   not this one's. `/health` says which walk failed (`oversized.scanned`,
+   `vault.conflictScanComplete`) and `knapper doctor` prints why. Exercise it
+   the same way if you want both halves covered: `chmod 000` a scratch
+   subdirectory of `/vault`, confirm `/up` answers **503** rather than 500,
+   then `chmod 755` it back. Note `.trash/` is never walked — a soft-deleted
+   over-ceiling file is invisible to this check by design.
 5. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
    is not restored, it is **replaced**: issue a new one on the path-scoped
    `/up` app from §6.4 and write it into `/etc/knapper-monitor.conf` (chmod
@@ -946,9 +974,19 @@ pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper.service /opt/knapper
 # are updated by unpacking. knapper-heartbeat.service in particular carries the
 # probe's environment, so a release that changes it leaves the OLD one running.
 pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper-heartbeat.service /opt/knapper/ops/systemd/knapper-heartbeat.service'
+# ⛔ The TIMERS too. Easy to skip because they look inert next to the services,
+# and they are not: knapper-heartbeat.timer's AccuracySec is a term in the
+# fail-closed budget (a missing one silently doubles the inter-tick gap), and
+# a timer whose period drifts changes what every downstream threshold means.
+pct exec 106 -- sh -c 'diff -u /etc/systemd/system/knapper-heartbeat.timer /opt/knapper/ops/systemd/knapper-heartbeat.timer'
+pct exec 106 -- sh -c 'diff -u /etc/systemd/system/knapper-commit.timer /opt/knapper/ops/systemd/knapper-commit.timer'
 pct exec 106 -- sh -c 'diff -u /etc/logrotate.d/knapper-sync-log /opt/knapper/ops/logrotate/knapper-sync-log'
 pct exec 106 -- systemctl daemon-reload
 pct exec 106 -- systemctl start knapper.service knapper-commit.timer
+# Timer changes take effect on daemon-reload, but VERIFY rather than assume —
+# the whole point of the diff above is that /etc may not have been updated:
+pct exec 106 -- systemctl show knapper-heartbeat.timer -p AccuracyUSec
+# AccuracyUSec=1s   ← 1min means the new timer never reached /etc
 ```
 
 ### 10.3 Prove the restart took

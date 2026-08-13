@@ -14,7 +14,8 @@ namespace Knapper.Mcp;
 /// monitor. Degraded whenever agent work is impaired: vault unreachable,
 /// ripgrep missing, audit log unwritable, sync unhealthy (mutations blocked),
 /// or unresolved Sync conflict files (mutations to those notes blocked, and a
-/// human needs to know).
+/// human needs to know) — and whenever a vault walk could not COMPLETE, since
+/// a probe that cannot report is not a probe that reports "fine".
 /// </summary>
 public sealed class HealthService(
     VaultPathResolver resolver,
@@ -22,7 +23,8 @@ public sealed class HealthService(
     ConflictDetector conflicts,
     ISyncGate syncGate,
     IOptions<VaultOptions> vaultOptions,
-    IOptions<SyncOptions> syncOptions)
+    IOptions<SyncOptions> syncOptions,
+    ILogger<HealthService> logger)
 {
     private string? _ripgrepVersion;
     private long _ripgrepCheckedAt; // Stopwatch timestamp; 0 = never probed
@@ -39,11 +41,15 @@ public sealed class HealthService(
 
     /// <summary>
     /// The oversized scan walks the vault, and /up is the monitor's liveness
-    /// probe — it must not pay an O(vault) cost per request. Same
-    /// success-and-failure-cached-alike shape is NOT used here: unlike the rg
-    /// probe there is no "unknown" state, so both answers cache.
+    /// probe — it must not pay an O(vault) cost per request. Only a SUCCESS
+    /// caches: this probe has an "unknown" state like the rg one, and a
+    /// cached "could not tell" would keep answering "could not tell" after
+    /// the vault became readable again.
     /// </summary>
     internal TimeSpan OversizedTtl = TimeSpan.FromSeconds(60);
+
+    /// <summary>Walk bound. A walk that will not finish must degrade health, not hang /up.</summary>
+    internal TimeSpan OversizedBudget = OversizedFiles.DefaultBudget;
 
     public sealed record Report(
         string Status,
@@ -58,11 +64,46 @@ public sealed class HealthService(
     /// Files Obsidian Sync will not carry. /health only — it names paths, and
     /// covers files that arrived from Dan's devices as well as Knapper's own
     /// writes, which the mutation guard cannot see.
+    ///
+    /// <paramref name="Scanned"/> is the state this probe used to lack: false
+    /// means the walk did not complete, so <paramref name="Count"/> is 0
+    /// because nothing was counted, NOT because nothing is there. Read the two
+    /// together or the payload reads as "checked, all clear" at exactly the
+    /// moment it means "could not tell".
+    ///
+    /// <paramref name="ScanError"/> names WHY, because the two causes need
+    /// opposite responses and are otherwise indistinguishable: an IO failure
+    /// is usually transient and self-clearing, while a budget expiry means
+    /// the walk cannot finish in the time allowed and will keep not finishing
+    /// until someone acts. /health carries it (it is loopback-only and already
+    /// discloses the vault root and conflict filenames); /up never does.
     /// </summary>
-    public sealed record OversizedInfo(int Count, long LimitBytes, IReadOnlyList<string> Files);
+    public sealed record OversizedInfo(
+        bool Scanned, string? ScanError, int Count, long LimitBytes, IReadOnlyList<string> Files);
 
-    public sealed record VaultInfo(bool Reachable, string Root, long Generation, IReadOnlyList<string> ConflictFiles);
+    /// <summary>
+    /// <paramref name="ConflictScanComplete"/> carries the same distinction for
+    /// the conflict walk: false means <paramref name="ConflictFiles"/> is empty
+    /// for want of a completed walk. It also used to be the loudest bug on this
+    /// path — an unreadable directory anywhere in the vault threw out of
+    /// Check() and /health answered 500, breaking its own 200/503 contract.
+    /// </summary>
+    public sealed record VaultInfo(
+        bool Reachable,
+        string Root,
+        long Generation,
+        IReadOnlyList<string> ConflictFiles,
+        bool ConflictScanComplete,
+        string? ConflictScanError);
 
+    /// <summary>
+    /// <paramref name="MutationsAllowed"/> is the SYNC GATE only — whether
+    /// continuous sync is healthy enough to accept writes at all. It is not a
+    /// promise that every write will succeed: a note with an unresolved Sync
+    /// conflict sibling is refused [MutationBlocked] while this reads true,
+    /// because the conflict gate is per-file and lives under
+    /// <c>vault.conflictFiles</c>. Measured on CT 106, 2026-08-13.
+    /// </summary>
     public sealed record SyncInfo(string Mode, bool MutationsAllowed, double? HeartbeatAgeSeconds, string? BlockedReason);
 
     public sealed record RipgrepInfo(bool Available, string? Version);
@@ -87,7 +128,7 @@ public sealed class HealthService(
         var version = BuildInfo.Version;
 
         var vaultReachable = Directory.Exists(resolver.Root);
-        var conflictFiles = vaultReachable ? conflicts.ScanAll() : [];
+        var conflictFiles = vaultReachable ? ScanConflicts() : null;
 
         bool mutationsAllowed;
         string? blockedReason = null;
@@ -105,28 +146,88 @@ public sealed class HealthService(
 
         var rgVersion = RipgrepVersion();
         var auditWritable = AuditWritable();
-        var oversized = vaultReachable ? Oversized() : [];
+        var oversized = vaultReachable ? Oversized() : null;
 
-        // Oversized files DELIBERATELY do not degrade status. A conflict file
-        // blocks mutations until a human reconciles it, so 503 is the honest
-        // code; an oversized file blocks nothing and the rest of the vault
-        // syncs normally. A permanent 503 is a permanent alert, and the
-        // monitor's own cadence rules exist because an alert nobody can clear
-        // gets filtered into a folder nobody reads. It rides as a warning the
-        // monitor reports on transition instead.
+        // ── The rule, stated once, because two probes could otherwise drift
+        // into an unexplained difference ──────────────────────────────────
+        //
+        // A FINDING is information about the vault. A conflict file is a
+        // finding that BLOCKS mutations until a human reconciles it, so 503 is
+        // honest. An oversized file is a finding that blocks nothing — the
+        // rest of the vault syncs normally — so it rides inside a 200 and the
+        // monitor reads it out of the body. That difference is about
+        // impairment, not about how long the condition lasts: both can persist
+        // for days, and the monitor's cadence rules (one mail per failure-set
+        // change, a reminder at most daily, one on recovery) are what keep
+        // either from becoming noise.
+        //
+        // A WALK THAT COULD NOT COMPLETE is not a finding at all — it is a
+        // broken instrument, reporting nothing about the vault. Both probes
+        // treat it identically: degrade. Note this is NOT justified by "it
+        // clears itself" — an unreadable directory or an expired budget can
+        // persist exactly as long as a conflict file does. It is justified by
+        // there being no measurement: "could not tell" rendered as "checked,
+        // all clear" is the precise failure this backstop exists to prevent,
+        // so it must not be how the backstop itself fails.
         var healthy = vaultReachable && rgVersion is not null && auditWritable
-            && mutationsAllowed && conflictFiles.Count == 0;
+            && mutationsAllowed && conflictFiles is { Count: 0 } && oversized is not null;
 
         return new Report(
             healthy ? "ok" : "degraded",
             version,
-            new VaultInfo(vaultReachable, resolver.Root, generation.Current, conflictFiles),
+            new VaultInfo(
+                vaultReachable, resolver.Root, generation.Current,
+                conflictFiles ?? [], conflictFiles is not null, _conflictScanError),
             new SyncInfo(syncOptions.Value.Mode, mutationsAllowed, heartbeatAge, blockedReason),
             new RipgrepInfo(rgVersion is not null, rgVersion),
             new AuditInfo(auditWritable, vaultOptions.Value.AuditLogPath),
-            new OversizedInfo(oversized.Count, syncOptions.Value.MaxFileBytes, oversized));
+            new OversizedInfo(
+                oversized is not null, _oversizedScanError, oversized?.Count ?? 0,
+                syncOptions.Value.MaxFileBytes, oversized ?? []));
     }
 
+    /// <summary>
+    /// Null when the walk could not complete — the same "could not tell" the
+    /// oversized scan reports, and NOT an empty list. Letting the exception
+    /// escape (which it did) breaks /health's own 200/503 contract: an
+    /// unreadable directory anywhere in the vault answered 500, which the
+    /// monitor can only report as "knapper degraded/down, tunnel down, or
+    /// Access rejecting the token" — every diagnosis except the true one.
+    /// </summary>
+    private IReadOnlyList<string>? ScanConflicts()
+    {
+        try
+        {
+            _conflictScanError = null;
+            return conflicts.ScanAll();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _conflictScanError = $"io: {e.Message}";
+            logger.LogWarning(e,
+                "Conflict-file walk could not complete — /health reports it as unknown, not clean. " +
+                "The vault contains a directory this process cannot read.");
+            return null;
+        }
+    }
+
+    private string? _conflictScanError;
+    private string? _oversizedScanError;
+
+    /// <summary>
+    /// Every boolean means "probed, and fine" — an incomplete walk is false,
+    /// never true, on BOTH walks. A failed conflict scan gets no field of its
+    /// own here: for conflicts, found and could-not-tell both degrade, so the
+    /// lone `ok` plus the status code already say everything the monitor acts
+    /// on. Oversized is the only key where a false means two things needing
+    /// different responses, and there the STATUS CODE separates them —
+    /// files FOUND ride inside a 200 (the monitor reads .oversized.ok there,
+    /// under check 1b, which is guarded on HTTP 200 precisely so it cannot
+    /// misreport a failed scan as stranded files), while a walk that could not
+    /// complete degrades to 503 and lands as check 1. Which files, and which
+    /// half of a false is which, are /health's job — /up discloses no more
+    /// than the monitor must act on.
+    /// </summary>
     public UpReport CheckUp()
     {
         var report = Check();
@@ -137,8 +238,8 @@ public sealed class HealthService(
             new UpBool(report.Sync.MutationsAllowed),
             new UpBool(report.Ripgrep.Available),
             new UpBool(report.Audit.Writable),
-            new UpBool(report.Vault.ConflictFiles.Count == 0),
-            new UpBool(report.Oversized.Count == 0));
+            new UpBool(report.Vault.ConflictScanComplete && report.Vault.ConflictFiles.Count == 0),
+            new UpBool(report.Oversized is { Scanned: true, Count: 0 }));
     }
 
     private IReadOnlyList<string> _oversized = [];
@@ -154,26 +255,57 @@ public sealed class HealthService(
     /// Dot-directories are skipped for the same reason queries skip them: .git
     /// packfiles and .obsidian plugin bundles routinely exceed the ceiling,
     /// none of them sync, and reporting them would be permanent noise.
+    ///
+    /// NULL means the walk could not complete. It used to return the cached
+    /// list here instead — correct-looking, and correct once a scan had
+    /// succeeded, but the cache starts EMPTY, so a failure on the very first
+    /// call reported the vault as clean. That first call is immediately after
+    /// a service start: exactly when the monitor polls and exactly when
+    /// transient IO problems are likeliest. The stale-list fallback is gone
+    /// too — a list from a previous minute presented as this minute's answer
+    /// is a smaller version of the same lie.
     /// </summary>
-    private IReadOnlyList<string> Oversized()
+    private IReadOnlyList<string>? Oversized()
     {
         if (_oversizedScannedAt != 0 && Stopwatch.GetElapsedTime(_oversizedScannedAt) < OversizedTtl)
             return _oversized;
 
-        IReadOnlyList<string> found;
         try
         {
-            found = OversizedFiles.Scan(resolver.Root, syncOptions.Value.MaxFileBytes);
+            _oversized = OversizedFiles.Scan(resolver.Root, syncOptions.Value.MaxFileBytes, OversizedBudget);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
         {
             // A partial walk must not be reported as "none found" — that is
             // the same lie as an empty search claiming exhaustive coverage.
-            // Keep the previous answer and re-scan next time.
-            return _oversized;
+            // Say "could not tell" and re-scan on the next request.
+            //
+            // The two causes are labelled because they need OPPOSITE
+            // responses and are otherwise identical on every surface: `io`
+            // is usually transient and often fixes itself, while `timeout`
+            // means the walk cannot finish in the budget and will keep not
+            // finishing — the vault has outgrown a design assumption, and the
+            // lever is OversizedFiles.DefaultBudget, not patience.
+            _oversizedScanError = e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}";
+            if (e is TimeoutException)
+            {
+                logger.LogWarning(e,
+                    "Oversized-file walk exceeded its {Budget}s budget — the backstop is reporting nothing. " +
+                    "This does not clear on its own: the vault has outgrown the budget.",
+                    OversizedBudget.TotalSeconds);
+            }
+            else
+            {
+                logger.LogWarning(e,
+                    "Oversized-file walk could not complete — /health reports it as unknown, not clean. " +
+                    "The vault contains a directory this process cannot read.");
+            }
+            _oversized = [];
+            _oversizedScannedAt = 0;
+            return null;
         }
 
-        _oversized = found;
+        _oversizedScanError = null;
         _oversizedScannedAt = Stopwatch.GetTimestamp();
         return _oversized;
     }

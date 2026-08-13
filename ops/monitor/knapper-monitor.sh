@@ -143,6 +143,13 @@ fi
 # file demands. It rides here instead, where the existing cadence rules turn
 # it into one mail on transition plus an occasional reminder. jq is checked
 # again because check 3 owns the "jq missing" alert; a second one would be noise.
+#
+# The 200 guard above is load-bearing, not just an optimisation. `oversized.ok`
+# is also false when the scan could not COMPLETE (unreadable directory, walk
+# budget expired) — and that case degrades to 503, so it is check 1's alert,
+# not this one's. Reporting "vault contains file(s) Sync will not carry" for a
+# scan that found nothing because it never finished would name the wrong fault.
+# `knapper doctor` in the CT distinguishes them: it warns "could not scan …".
 if [ "$HTTP_CODE" = "200" ] && command -v jq >/dev/null 2>&1; then
     if [ "$(jq -r '.oversized.ok // "absent"' < "$UP_BODY")" = "false" ]; then
         fail "vault contains file(s) Obsidian Sync will NOT carry — they exist on the CT, commit to git, and reach no device. Run \`knapper doctor\` in the CT to name them"
