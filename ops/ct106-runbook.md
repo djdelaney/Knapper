@@ -293,11 +293,43 @@ be running and healthy before §5: the
 heartbeat probe gates mutations on it, and `knapper doctor` fails on a
 stale heartbeat.
 
-⚠️ **VERIFY the health check in `ops/sync-heartbeat.sh` against the real
-`ob sync-status` output** before trusting the mutation gate — the script
-documents the assumption it makes. Read it in the REPO on the dev box: the
-tarball that puts `ops/` on the CT does not land until §5, and this is the
-moment you have a live `ob sync-status --json` to compare against.
+⚠️ **`ob sync-status` is a CONFIGURATION probe, not a health probe.** Verified
+against obsidian-headless 0.0.14 on 2026-08-13: it reads a config file off
+disk, makes no network call, and exits **0** with the sync unit stopped, with
+the network down, and when not logged in. Its `--json` payload is
+configuration only — `vaultId`, `vaultPath`, `syncMode`, `conflictStrategy`,
+`deviceName`, … — with **no health field to check against**. Do not treat a
+clean `sync-status` as evidence that anything is syncing; `ops/sync-heartbeat.sh`
+uses it only to catch an unconfigured vault and to resolve `vaultId`.
+
+The health signal is **`~/.config/obsidian-headless/sync/<vaultId>/sync.log`**,
+which `ob sync --continuous` appends to on a ~30s cadence. Facts the probe
+depends on, all measured on CT 106 2026-08-13 — re-verify if `ob` is upgraded:
+
+- **`Fully synced` means "this cycle completed", NOT "the vault is in sync."**
+  It is printed immediately after `File too large to sync (… max 5.00 MB)`, so
+  a permanently rejected file yields an endless green signal. The heartbeat
+  measures TRANSPORT health only.
+- **Obsidian Sync refuses any file over ~5 MB**, silently as far as the vault
+  is concerned. That makes `--file-types … video` above largely decorative,
+  and it is why Knapper needs its own size guard (tracked separately).
+- **`Fully synced` survived a severed network for ~57s** before `ob` noticed —
+  its own detection latency, and the floor on how fast any log-derived gate
+  can fail. Recency alone is not proof; the probe matches the disconnect lines
+  explicitly.
+- **Spontaneous disconnect/reconnect is normal operation** — 1–2 unprovoked in
+  a 1h50m window, longest 23.8s. Shorter than the 60s timer period, so it can
+  cost at most one skipped touch against the ~5 touches of slack in
+  `Sync__MaxAgeSeconds`. A single skipped touch is not an outage. Re-run
+  `grep -c 'Disconnected from server'` after a week of steady operation before
+  treating that budget as validated rather than merely un-contradicted.
+- **`Disconnected from server` is also emitted on clean shutdown**, so the
+  message alone does not distinguish network loss from the service stopping.
+  The probe's `systemctl is-active` check short-circuits the shutdown case.
+- **`sync.log` never rotates on its own** (~115 KB/day idle). Install
+  `ops/logrotate/knapper-sync-log` to `/etc/logrotate.d/`. It **must** use
+  `copytruncate` — `ob` holds the file open, so a plain rename leaves it
+  writing to the rotated inode and the heartbeat starves.
 
 ## 5. Knapper
 
@@ -389,10 +421,34 @@ happened on the CT. (The conflict fixture also degrades `/up` vault-wide
 while it exists — harmless here because the monitor arrives in §8, but a
 reason not to re-run these gates casually afterwards.)
 
-- **Sync gate**: `systemctl stop obsidian-headless` → within
+- **Sync gate, stopped**: `systemctl stop obsidian-headless` → within
   `Sync__MaxAgeSeconds` a mutation must fail `[MutationBlocked]`; restart and
-  confirm it clears. This is the only test of `sync-heartbeat.sh`'s
-  assumption about real `ob sync-status` output.
+  confirm it clears.
+
+  ⚠️ This drill exercises **only** the probe's `systemctl is-active` check —
+  it short-circuits before the log is ever read, so it cannot say anything
+  about whether the health signal works. It previously claimed to be "the only
+  test of `sync-heartbeat.sh`'s assumption", which is how a vacuous check
+  survived all of v0.1.x. The drill below is the one that tests the signal.
+- **Sync gate, running but not syncing** — the case `is-active` cannot see, and
+  the one that matters. Leave the unit **active** and sever egress:
+
+  ```sh
+  nft add table inet knapper_drill
+  nft add chain inet knapper_drill out '{ type filter hook output priority 0; }'
+  nft add rule inet knapper_drill out tcp dport 443 drop
+  # wait ~95s: ob needs ~57s to notice, then the probe must stop touching
+  systemctl is-active obsidian-headless          # still active — that is the point
+  tail -3 ~knapper/.config/obsidian-headless/sync/*/sync.log
+  # a mutation must now fail [MutationBlocked]
+  nft delete table inet knapper_drill
+  ```
+
+  ⚠️ Block the **port, not the IP** from `ss`. `ob` reconnects to a different
+  Cloudflare edge on recovery (`172.67.74.64` → `104.26.0.147` observed), so a
+  single-IP block severs nothing and produces a confident false pass. Expect
+  ~57s before `Disconnected from server` appears; that latency is `ob`'s, not
+  the probe's.
 
   That window is the fail-closed budget, which is why it was pinned
   explicitly in the unit above rather than left to `appsettings.json`: nobody

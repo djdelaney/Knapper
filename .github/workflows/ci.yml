@@ -47,6 +47,13 @@ jobs:
       - name: Lint the deployment runbook
         run: ops/runbook-lint.sh
 
+      # ops/*.sh is out of reach of the .NET suite, and sync-heartbeat.sh gates
+      # every mutation — its original check was vacuous for the whole of v0.1.x
+      # and only deployment caught it. Runs on linux, which is where the real
+      # gate runs; the tier SKIPS on a macOS dev box (no GNU date -d).
+      - name: Shell tests
+        run: tests/shell/run.sh
+
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'

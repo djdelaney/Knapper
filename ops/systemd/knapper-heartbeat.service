@@ -1,6 +1,12 @@
 # Touches the sync heartbeat file iff continuous sync looks healthy.
 # The MCP server's mutation gate reads this file's age (Sync__HeartbeatPath);
 # stale or missing = mutations blocked, fail closed.
+#
+# The probe exits 3 for CANNOT EVALUATE (misconfiguration), which FAILS this
+# unit deliberately: `systemctl --failed` and the journal then name the cause.
+# Unhealthy-but-evaluated is a silent exit 0, so a transient disconnect does
+# not fail the unit. Note knapper-monitor.sh has no failed-unit check — the
+# alert still arrives as /up 503 via the stale heartbeat, without the cause.
 [Unit]
 Description=Knapper sync-health heartbeat probe
 
@@ -9,6 +15,16 @@ Type=oneshot
 User=knapper
 Group=knapper
 ExecStart=/opt/knapper/ops/sync-heartbeat.sh /var/lib/knapper/sync-heartbeat
+
+# systemd populates HOME for User= units (verified on CT 106 2026-08-13 via
+# `systemd-run --uid=knapper`), so the script's default state path resolves.
+# Pinned anyway: the script reads ob's log under $HOME, and a wrong path there
+# fails CLOSED — every mutation blocked, with the cause only in the journal.
+Environment=HOME=/home/knapper
+# The staleness backstop, visible where the service is read — same reasoning as
+# Sync__MaxAgeSeconds being pinned in knapper.service rather than appsettings.
+# 90s = 3 missed 30s ticks. See sync-heartbeat.sh for the exposure arithmetic.
+Environment=KNAPPER_MAX_SYNC_AGE=90
 
 # Hardening, mirroring knapper.service. `ob sync-status` keeps state under
 # the service user's home (like obsidian-headless.service), hence the

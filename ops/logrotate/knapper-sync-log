@@ -1,0 +1,27 @@
+# /etc/logrotate.d/knapper-sync-log
+#
+# `ob sync --continuous` appends to sync.log forever with no rotation of its
+# own — measured ~115 KB/day idle on CT 106 (2026-08-13), and far faster during
+# activity (67 lines in 117ms during a rejection flood).
+#
+# ⚠️ copytruncate is REQUIRED, not a preference: ob holds the file open for the
+# life of the process. A plain rename leaves ob writing to the rotated inode,
+# so sync.log stays empty, sync-heartbeat.sh finds no connection-state line,
+# and every mutation blocks until the service is restarted. copytruncate's
+# known cost — writes landing between the copy and the truncate are lost — is
+# acceptable for a log nothing audits.
+#
+# The heartbeat probe treats a ZERO-BYTE log as silent-unhealthy rather than
+# cannot-evaluate precisely so this rotation does not fail the unit during the
+# gap before ob's next ~30s tick.
+/home/knapper/.config/obsidian-headless/sync/*/sync.log {
+    weekly
+    rotate 4
+    maxsize 10M
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+    su knapper knapper
+}
