@@ -83,8 +83,9 @@ public sealed class OversizedFilesTests
 
     /// <summary>
     /// Dot-entries are skipped at every depth, matching what queries can see.
-    /// `.trash/` is the case worth naming: `vault_delete` is SOFT, so a file
-    /// that arrived over-ceiling from a Mac and was then deleted still sits
+    /// `.trash/` is the case worth naming: `vault_delete` is SOFT, so an
+    /// over-ceiling file that got onto the box some other way — a human shell,
+    /// or predating the guard — and was then deleted still sits
     /// there. Reporting it would be a permanent alert about a file the human
     /// has already dealt with and cannot clear through any tool — there is no
     /// `vault_rmdir`, and `.trash/` is never swept.

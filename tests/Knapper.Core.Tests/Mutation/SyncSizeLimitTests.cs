@@ -119,7 +119,7 @@ public sealed class SyncSizeLimitTests
 
     /// <summary>
     /// The guard is about NEW bytes. A file that is already over the ceiling —
-    /// arrived from a Mac, or predates the guard — must stay movable and
+    /// written by a shell on the box, or predating the guard — must stay movable and
     /// deletable, or the only tools that could tidy it up are the ones refusing
     /// to run. /health's oversized list is how those surface.
     /// </summary>

@@ -264,10 +264,20 @@ format by default.
   too low refuses writes loudly, too high strands them silently. Batch checks
   during VALIDATE, so an oversized item fails the batch untouched. Pinned by
   `SyncSizeLimitTests`. `/health` and `knapper doctor` are the backstop for
-  files that arrive over-ceiling from a device, and they share ONE scanner
-  (`OversizedFiles.Scan`) so they cannot drift into disagreeing; oversized
-  files FOUND never degrade `/up` to 503 — nothing is blocked, and a permanent
-  alert nobody can clear is how a monitor gets ignored (`OversizedBackstopTests`).
+  oversized files PRESENT on the box (a shell wrote one, or it predates the
+  guard), and they share ONE scanner (`OversizedFiles.Scan`) so they cannot
+  drift into disagreeing; oversized files FOUND never degrade `/up` to 503 —
+  nothing is blocked, and a permanent alert nobody can clear is how a monitor
+  gets ignored (`OversizedBackstopTests`).
+- **The size ceiling is SYMMETRIC, and the download half is an OPEN hole.**
+  Measured 2026-08-13: a >5MB file created on a Mac never reaches CT 106 at
+  all. So it is not oversized-and-present, it is ABSENT — the scanner above
+  cannot see it by construction, and `truncated: false` then claims an
+  exhaustive scope over a vault silently missing a note that exists in
+  Helios. This is the one known way the completeness envelope lies, it is
+  in the QUERY layer rather than the mutation layer, and nothing detects it
+  today. Do not let the oversized backstop read as covering it. Tracked in
+  `docs/extending.md`; ob's `sync.log` is the only local evidence candidate.
 - **A vault walk that could not COMPLETE is a third state, and every health
   surface must carry it.** `OversizedFiles.Scan` throws — unreadable
   directory, or the `DefaultBudget` wall clock expiring — rather than

@@ -4,11 +4,16 @@ using System.Text.Json;
 namespace Knapper.Mcp.Tests;
 
 /// <summary>
-/// The backstop for files the mutation guard cannot see: ones that arrived
-/// from Dan's Macs or the Obsidian app already over Sync's ceiling. Obsidian
-/// Sync refuses them and says nothing useful — it logs the rejection and
-/// prints "Fully synced" in the same millisecond (CT 106, 2026-08-13) — so
-/// without this the file is stranded with every signal green.
+/// The backstop for oversized files the mutation guard did not create: one
+/// written by a human shell on the CT, or predating the guard. Obsidian Sync
+/// refuses them and says nothing useful — it logs the rejection and prints
+/// "Fully synced" in the same millisecond (CT 106, 2026-08-13) — so without
+/// this the file is stranded with every signal green.
+///
+/// ⚠️ NOT a backstop for oversized files made on Dan's Macs. Measured
+/// 2026-08-13: the ceiling is symmetric, so such a file never reaches CT 106
+/// and there is nothing local to find. That gap is real, strictly worse, and
+/// open — see docs/extending.md. Do not read these tests as covering it.
 ///
 /// Its own fixture: a shared factory would leak the oversized file into every
 /// other health assertion.

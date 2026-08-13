@@ -599,9 +599,16 @@ and still without a write.
   `[TooLargeToSync]`. Unlike the fixtures above this leaves NOTHING behind and
   is safe against Helios: the point of the gate is that the write is refused,
   so no oversized file is ever created to replicate to Dan's devices. Confirm
-  `knapper doctor` also reports no oversized files already present — that is
-  the other half, for files that arrive over-ceiling from a Mac, which the
-  write guard cannot see.
+  `knapper doctor` also reports no oversized files already present — that
+  covers one written by a shell on the box, or predating the guard.
+
+  ⚠️ Neither covers the DOWNLOAD half. Measured 2026-08-13: the ceiling is
+  symmetric, so a >5MB note made on a Mac never reaches CT 106 — it is
+  missing here rather than oversized here, and no local scan can find what
+  never arrived. Knapper then answers reads for it with `[NotFound]` and
+  reports `truncated: false` over a scope it believes was exhaustive. Nothing
+  detects this today; do not let a clean `doctor` be read as proof the CT has
+  everything Helios has.
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.

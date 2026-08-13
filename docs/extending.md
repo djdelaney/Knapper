@@ -365,6 +365,34 @@ re-litigated per review.
 - **§8b re-run cadence** — the behavioral smoke test re-runs after major
   Claude model updates (steering drifts); failures fix descriptions and
   instructions, never the contract.
+- **Files Helios has that CT 106 does not** — OPEN, and the most serious
+  thing on this list. Measured 2026-08-13: Obsidian Sync's ~5MB per-file
+  ceiling is SYMMETRIC. A note created on one of Dan's Macs that exceeds it
+  never downloads to the CT, so the vault Knapper serves is a strict subset
+  of Helios and nothing local says so. `vault_read` answers `[NotFound]` for
+  a note that plainly exists; worse, searches report `truncated: false`,
+  which the query contract defines as "this scope was exhaustively
+  searched". That is the one known way the completeness envelope lies, and
+  it lies quietly.
+
+  `Sync__MaxFileBytes` does not help — it guards Knapper's writes.
+  `OversizedFiles.Scan` does not help — it finds oversized files that are
+  PRESENT, and this one is absent. Detection needs evidence the filesystem
+  does not carry.
+
+  The only local candidate is ob's `sync.log`: the upload side logs
+  `File too large to sync (… max 5.00 MB)` with the filename, so if the
+  download side logs the same, the CT knows exactly which notes it could not
+  fetch and a check could name them. **Unmeasured — measure this before
+  designing anything.** If it logs nothing, the options get materially
+  worse: a manifest diff against a Mac, or accepting and documenting that
+  "exhaustive" means "exhaustive over what Sync delivered", which weakens a
+  contract the whole query layer is built on.
+
+  Whatever the answer, it belongs in the QUERY layer, not beside the
+  mutation guard. Do not bolt it onto the oversized backstop: that scanner
+  answers a different question and pairing them would make a partial answer
+  look complete.
 
 Decided and CLOSED (do not re-open without new evidence): no case-folding
 of paths (ext4 legitimately distinguishes; the requirement is a

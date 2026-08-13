@@ -11,10 +11,19 @@ namespace Knapper.Core.Vault;
 /// lister/ripgrep differential test exists to prevent.
 ///
 /// This is the BACKSTOP, not the guard. <c>VaultMutationService</c> refuses
-/// Knapper's own oversized writes; nothing stops one arriving from Dan's Macs
-/// or the Obsidian app, and Sync says nothing useful when it happens — it logs
-/// the rejection and prints "Fully synced" in the same millisecond (measured
-/// CT 106, 2026-08-13).
+/// Knapper's own oversized writes; this catches one that got here another way
+/// — a human shell on the CT, or a file predating the guard. Sync says nothing
+/// useful when a file is over the ceiling: it logs the rejection and prints
+/// "Fully synced" in the same millisecond (measured CT 106, 2026-08-13).
+///
+/// ⚠️ It does NOT catch an oversized file created on one of Dan's Macs.
+/// Measured 2026-08-13: the limit is SYMMETRIC — such a file never reaches
+/// CT 106 at all, so there is nothing here to scan. That case is strictly
+/// worse and this scanner cannot see it by construction: the note exists in
+/// Helios, is absent from the vault Knapper serves, and every query reports
+/// `truncated: false` over a scope it believes was exhaustive. Detecting it
+/// needs evidence from outside the filesystem — ob's sync.log is the only
+/// local candidate. Tracked in docs/extending.md.
 /// </summary>
 public static class OversizedFiles
 {

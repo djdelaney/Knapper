@@ -61,9 +61,10 @@ public sealed class HealthService(
         OversizedInfo Oversized);
 
     /// <summary>
-    /// Files Obsidian Sync will not carry. /health only — it names paths, and
-    /// covers files that arrived from Dan's devices as well as Knapper's own
-    /// writes, which the mutation guard cannot see.
+    /// Files Obsidian Sync will not carry that are PRESENT on this box.
+    /// /health only — it names paths. Note the asymmetry: an oversized file
+    /// made on a Mac never arrives (measured 2026-08-13), so it is missing
+    /// rather than listed, and nothing here can report it.
     ///
     /// <paramref name="Scanned"/> is the state this probe used to lack: false
     /// means the walk did not complete, so <paramref name="Count"/> is 0
@@ -248,9 +249,10 @@ public sealed class HealthService(
     /// <summary>
     /// Vault files Obsidian Sync refuses to carry. This is the BACKSTOP, not
     /// the guard: the mutation service refuses Knapper's own oversized writes,
-    /// but a file can arrive over-ceiling from Dan's Macs or the Obsidian app,
-    /// and nothing else would ever notice — Sync logs the rejection and prints
-    /// "Fully synced" in the same millisecond.
+    /// but one can still get here another way — a human shell on the CT, or a
+    /// file predating the guard — and nothing else would notice, since Sync
+    /// logs the rejection and prints "Fully synced" in the same millisecond.
+    /// It canNOT see an oversized file made on a Mac: that one never arrives.
     ///
     /// Dot-directories are skipped for the same reason queries skip them: .git
     /// packfiles and .obsidian plugin bundles routinely exceed the ceiling,

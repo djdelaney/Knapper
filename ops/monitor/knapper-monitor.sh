@@ -135,8 +135,11 @@ fi
 # Obsidian Sync silently refuses any file over its per-file ceiling — it logs
 # the rejection and prints "Fully synced" in the same millisecond, so a
 # stranded file leaves every other signal green. Knapper refuses its OWN
-# oversized writes; this catches one that arrived from a Mac or the Obsidian
-# app, which the mutation guard cannot see.
+# oversized writes; this catches one that got here another way — a human shell
+# on the CT, or a file predating the guard — which the mutation guard cannot
+# see. It does NOT catch an oversized note made on a Mac: the ceiling is
+# symmetric, so that one never downloads to CT 106 and is absent rather than
+# oversized here. Nothing detects that; see docs/extending.md.
 #
 # Deliberately NOT a 503 on the server side: nothing is blocked, the rest of
 # the vault syncs, and no human has to reconcile anything the way a conflict
