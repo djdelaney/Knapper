@@ -41,8 +41,9 @@ public sealed class VaultMutationService(
     /// Called from every write path (edit/append via Mutate, create, and each
     /// batch plan) rather than from AtomicFile: batch must reject during its
     /// validate phase, before the first byte lands, or a bad item aborts a
-    /// batch halfway. <see cref="MutationSurfaceTests"/> pins that every path
-    /// enforces it.
+    /// batch halfway. Every call site is pinned by SyncSizeLimitTests — named
+    /// in plain text, not a cref: Core cannot reference the test assembly, so
+    /// a cref to any test class here is unresolvable by construction.
     /// </summary>
     private void RequireSyncable(VaultPath vp, byte[] after)
     {
