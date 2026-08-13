@@ -326,10 +326,13 @@ depends on, all measured on CT 106 2026-08-13 — re-verify if `ob` is upgraded:
 - **`Disconnected from server` is also emitted on clean shutdown**, so the
   message alone does not distinguish network loss from the service stopping.
   The probe's `systemctl is-active` check short-circuits the shutdown case.
-- **`sync.log` never rotates on its own** (~115 KB/day idle). Install
-  `ops/logrotate/knapper-sync-log` to `/etc/logrotate.d/`. It **must** use
-  `copytruncate` — `ob` holds the file open, so a plain rename leaves it
-  writing to the rotated inode and the heartbeat starves.
+- **`sync.log` never rotates on its own** (~115 KB/day idle). The drop-in is
+  `ops/logrotate/knapper-sync-log`, installed in §5 with the rest of `ops/` —
+  it cannot be installed here, because the tarball carrying it does not land
+  until then. It **must** use `copytruncate`: `ob` holds the file open, so a
+  plain rename leaves it writing to the rotated inode while `sync.log` stays
+  empty, and the heartbeat starves until the service is restarted. Nothing
+  breaks in the days before §5; the growth rate is slow by design.
 
 ## 5. Knapper
 
@@ -343,6 +346,15 @@ is only as good as the unit being finished when it is taken:
   starts mattering, not because it is edited then;
 - `Sync__MaxAgeSeconds=300` — see the sync-gate bullet below for why it is
   pinned explicitly.
+- `Sync__MaxFileBytes=5000000` — the largest file Obsidian Sync will carry;
+  a write producing more is refused `[TooLargeToSync]`. Pinned here for the
+  same reason as `MaxAgeSeconds`: nobody reading `knapper.service` could
+  otherwise see the ceiling that governs what agents may write. It is a
+  property of the SYNC PLAN, not of Knapper — if the plan's limit changes,
+  this is the knob. Do NOT raise it to 5242880 on the assumption that "5 MB"
+  means MiB: `ob` reports an ambiguous "max 5.00 MB", nobody has bisected it,
+  and too high strands files SILENTLY while too low merely refuses them out
+  loud.
 
 The ONE edit that genuinely cannot happen yet is §6.3's Access block: the AUD
 does not exist until the Access app does. That edit carries its own
@@ -353,6 +365,10 @@ is the cheapest way to confirm the unit still says what you think.
 # on the dev box: ops/publish.sh; scp the tarball
 tar -xzf knapper-<v>-linux-x64.tar.gz -C /opt/knapper
 cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
+# ob's sync.log has no rotation of its own and the heartbeat reads it.
+# copytruncate is mandatory (ob holds the fd) — see §4.
+cp /opt/knapper/ops/logrotate/knapper-sync-log /etc/logrotate.d/
+logrotate --debug /etc/logrotate.d/knapper-sync-log   # parses? names the real log?
 $EDITOR /etc/systemd/system/knapper.service     # the three edits listed above
 systemctl daemon-reload
 # NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
@@ -456,6 +472,13 @@ reason not to re-run these gates casually afterwards.)
   while writes still land. With the heartbeat timer at 60s, the honest
   statement is "up to ~5 minutes of dead sync is invisible to agents" — and
   this test has a number to wait for instead of a guess.
+- **Size gate**: attempt a create larger than `Sync__MaxFileBytes` → must fail
+  `[TooLargeToSync]`. Unlike the fixtures above this leaves NOTHING behind and
+  is safe against Helios: the point of the gate is that the write is refused,
+  so no oversized file is ever created to replicate to Dan's devices. Confirm
+  `knapper doctor` also reports no oversized files already present — that is
+  the other half, for files that arrive over-ceiling from a Mac, which the
+  write guard cannot see.
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.
@@ -688,7 +711,18 @@ last one does not restore cleanly:
    monitor failure for the first hour. Restart the timer, then run
    `knapper commit` by hand so the stamp is fresh again and the recovery mail
    fires without another hour's wait.
-4. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
+4. Oversized-file warning: `dd` a file past `Sync__MaxFileBytes` into a
+   scratch subtree of `/vault`, wait for one monitor run, delete it. This is
+   the one check that rides inside a **200** — `/up` stays healthy on purpose
+   (nothing is blocked, and a permanent 503 is a permanent alert), so the
+   monitor reads `.oversized.ok` from the body rather than the status code. A
+   mail that never arrives here means the body check is dead while every
+   status-code check still looks green.
+
+   ⚠️ That file is **synced-adjacent**: it lives in Helios, and Sync will
+   refuse to carry it — which is the point — but the empty parent folder still
+   replicates. Use the `_deploy-check/` subtree and delete both.
+5. Revoke the **monitoring** token LAST, because a revoked Cloudflare token
    is not restored, it is **replaced**: issue a new one on the path-scoped
    `/up` app from §6.4 and write it into `/etc/knapper-monitor.conf` (chmod
    600, on the host). Until it is, the monitor keeps alerting, which looks
@@ -905,8 +939,14 @@ pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /op
 # running unit is NOT updated by unpacking over /opt/knapper.
 pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper.service /opt/knapper/ops/systemd/knapper.service'
 # reconcile any diff BY HAND — /etc holds this deployment's edits (AllowedHosts,
-# the Access AUD, Sync__MaxAgeSeconds), and copying the shipped unit over them
-# reverts all three at once, silently, into a service that still starts.
+# the Access AUD, Sync__MaxAgeSeconds, Sync__MaxFileBytes), and copying the
+# shipped unit over them reverts them all at once, silently, into a service
+# that still starts.
+# Same trap, other units and the logrotate drop-in: all live in /etc and none
+# are updated by unpacking. knapper-heartbeat.service in particular carries the
+# probe's environment, so a release that changes it leaves the OLD one running.
+pct exec 106 -- sh -c 'diff -ru /etc/systemd/system/knapper-heartbeat.service /opt/knapper/ops/systemd/knapper-heartbeat.service'
+pct exec 106 -- sh -c 'diff -u /etc/logrotate.d/knapper-sync-log /opt/knapper/ops/logrotate/knapper-sync-log'
 pct exec 106 -- systemctl daemon-reload
 pct exec 106 -- systemctl start knapper.service knapper-commit.timer
 ```
