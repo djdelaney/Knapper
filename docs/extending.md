@@ -126,6 +126,26 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   contract. What this tier cannot cover stays in the live CT 106 sequence
   (runbook §§8–9): cloudflared, alert delivery, vzdump/PBS, fail-closed
   service stops.
+- **The shell tier (`tests/shell/run.sh`, run in CI) is where `ops/*.sh`
+  gets tested**, because the .NET suite cannot reach it. Stub every external
+  binary onto `PATH` — for `knapper-monitor.sh` that means `curl`, `pct` and
+  above all `sendmail`: a test that can really mail is a test that pages the
+  operator.
+- **A script that READS a health field needs a case for each value, including
+  the alerting one.** `knapper-monitor.sh` read `jq -r '.oversized.ok //
+  "absent"'`, and jq's `//` is falsy-triggered rather than absence-triggered —
+  it fires on no value, on `null`, AND on `false`. The boolean `false` is the
+  only thing that check exists to catch, so the alert branch was unreachable
+  from the day it shipped while `true` passed through intact and every run
+  read healthy. Nothing on the server side was wrong: `/up`'s payload,
+  `OversizedBackstopTests` and the runbook prose were all correct and green
+  throughout, which is why it took runbook §8 drill 4 on the live CT to find
+  it (2026-08-14). Two rules came out of it: never use `//` as an
+  absence-test on a field whose meaningful value can be `false` or `0`, and
+  give the unreadable case its own loud branch — a monitor that cannot read
+  its input must say so, never fall through as "all clear". Pinned by
+  `tests/shell/test_knapper_monitor.sh`, whose case 1 fails against the old
+  expression.
 
 ## Runbook conventions
 

@@ -124,10 +124,11 @@ send_mail() {
 # NEVER add -L here, and keep the test `!= 200` rather than a not-an-error
 # range. Access refuses a request whose token it does not accept by sending
 # it to log in: 302 → the Cloudflare login page → 200 text/html. Followed,
-# that arrives as a 200 whose body is HTML, `jq` fails to parse it, check 1b's
-# `// "absent"` swallows the failure, and this monitor reports a healthy vault
-# while it is being refused at the edge and reading nothing at all. `knapper
-# verify` shipped exactly that bug on its own probes (2026-08-14).
+# that arrives as a 200 whose body is HTML, and this monitor reports a healthy
+# vault while it is being refused at the edge and reading nothing at all.
+# `knapper verify` shipped exactly that bug on its own probes (2026-08-14).
+# Check 1b is the second line of defence — it refuses to read a body it cannot
+# parse — but it is a backstop, not a reason to relax this test.
 UP_BODY=$(mktemp)
 HTTP_CODE=$(curl -s -o "$UP_BODY" -w '%{http_code}' \
     --max-time "$CURL_TIMEOUT" \
@@ -160,10 +161,34 @@ fi
 # not this one's. Reporting "vault contains file(s) Sync will not carry" for a
 # scan that found nothing because it never finished would name the wrong fault.
 # `knapper doctor` in the CT distinguishes them: it warns "could not scan …".
+#
+# ⚠️ NEVER write this as `jq -r '.oversized.ok // "absent"'`. jq's `//` is
+# FALSY-triggered, not absence-triggered: its right side is substituted for no
+# value, for `null`, AND for `false`. So the one input this check exists to
+# catch — `ok` being the boolean `false` — came out as the string "absent" and
+# compared unequal to "false". The branch was unreachable; `true` was the only
+# value that ever survived `//` intact, so the check could report "healthy" and
+# nothing else. Shipped that way, found on CT 106 2026-08-14 by runbook §8
+# drill 4, which is exactly the sentence in the runbook: "a mail that never
+# arrives here means the body check is dead while every status-code check still
+# looks green." Pinned by tests/shell/test_knapper_monitor.sh.
+#
+# The jq expression below therefore emits one of exactly three fixed tokens and
+# never interpolates a value from the response: a mail is not a place to render
+# whatever a body happened to contain. An unparseable body (the Access login
+# page arriving as HTML) fails jq itself and is caught by the same catch-all —
+# "could not tell" must never leave here dressed as "checked, all clear".
 if [ "$HTTP_CODE" = "200" ] && command -v jq >/dev/null 2>&1; then
-    if [ "$(jq -r '.oversized.ok // "absent"' < "$UP_BODY")" = "false" ]; then
-        fail "vault contains file(s) Obsidian Sync will NOT carry — they exist on the CT, commit to git, and reach no device. Run \`knapper doctor\` in the CT to name them"
-    fi
+    OVERSIZED_OK=$(jq -r '.oversized.ok
+        | if . == true then "true" elif . == false then "false" else "absent" end' \
+        < "$UP_BODY" 2>/dev/null) || OVERSIZED_OK="unreadable"
+    case "$OVERSIZED_OK" in
+        true) ;;
+        false)
+            fail "vault contains file(s) Obsidian Sync will NOT carry — they exist on the CT, commit to git, and reach no device. Run \`knapper doctor\` in the CT to name them" ;;
+        *)
+            fail "/up answered 200 but .oversized.ok could not be read (${OVERSIZED_OK}) — the response shape changed, or the body is not the vault surface answering. The oversized-file check is BLIND until this is resolved" ;;
+    esac
 fi
 rm -f "$UP_BODY"
 
