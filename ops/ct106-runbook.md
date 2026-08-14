@@ -700,13 +700,38 @@ and still without a write.
    ```sh
    CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
    CF_MONITOR_CLIENT_ID=<monitor-token>.access CF_MONITOR_CLIENT_SECRET=<monitor-secret> \
-     knapper verify --url https://mcp.example.com/
+     knapper verify --url https://mcp.example.com/ --expect-access
    ```
 
+   `--expect-access` is what makes "no skips" mean something here: it asserts
+   an Access edge fronts this URL, so a loopback URL typed by mistake FAILS
+   the ingress checks instead of skipping them into a clean-looking run.
+
    Now the skipped checks do the work: unauthenticated callers refused on
-   both `/up` and the MCP endpoint, `/health` 404 from outside, `/up`
+   both `/up` and the MCP endpoint, `/health` unreachable from outside, `/up`
    answering 200 with booleans only, and — with the monitor token supplied —
    that credential being refused at the vault surface.
+
+   **A refusal has two shapes and both are correct**, so each ingress line
+   prints the status it saw. Which shape you get depends on the matching
+   application's POLICY TYPE, not on how wrong the caller was:
+
+   | Request | Application | Refusal |
+   |---|---|---|
+   | no credentials → `/` | host app, has an identity policy (`OAuth ME`) | `302` → `YOURTEAM.cloudflareaccess.com/cdn-cgi/access/login/…`, which itself answers `200 text/html` |
+   | monitor token → `/` | same — the token matches no policy there | `302`, as above |
+   | no credentials → `/up` | monitoring app, Service Auth ONLY | `403`, flat: there is no human to send to a login page |
+
+   Access decides at the edge in every row — stop `cloudflared` and the same
+   `302` still arrives, which is how you prove the origin is not involved.
+
+   ⚠️ `/health` is the one that reads wrong if you go in expecting a single
+   answer. **With** a valid service token it passes Access, reaches the
+   origin, and 404s because `/health` is loopback-only; **without**
+   credentials it is a `302` from the edge and never reaches the box at all.
+   Both are correct refusals and `verify` accepts either, naming which. An
+   earlier version of this step promised "`/health` 404 from outside" flatly,
+   which sent a diagnosis after the wrong status.
 
    **Read the `skip` lines, not just the red ones.** A missing `CF_MONITOR_*`
    pair does not fail the monitoring-token check, it SKIPS it, and a skimmer

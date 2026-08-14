@@ -37,9 +37,76 @@ public sealed class VerifyCommandTests : IDisposable
         output.ShouldContain("ok    a no-match search still reports exhaustive scan evidence");
         output.ShouldContain("ok    the mutation surface is wired and answers with typed codes");
         // Loopback is the Access exemption's own target: the ingress checks
-        // must announce themselves as skipped, never quietly pass.
-        output.ShouldContain("skip  Access refuses unauthenticated callers");
+        // must announce themselves as skipped, never quietly pass — and by
+        // the same LABEL they would carry if they ran, so that an operator
+        // told "every line must read ok" can diff the two runs.
+        output.ShouldContain("skip  Access refuses an unauthenticated /up");
+        output.ShouldContain("skip  Access refuses an unauthenticated MCP request");
         output.ShouldContain("skip  /health is unreachable from outside the box");
+    }
+
+    /// <summary>
+    /// The regression this file exists for as of 2026-08-14: the two-application
+    /// deployment §6.5 signs off, with Access ACTUALLY in front, refusing
+    /// exactly as Cloudflare does. `verify` reported two FAILs here — the
+    /// refusal probes followed the 302 to the Access login page and read its
+    /// 200 as the vault surface answering — and a correctly-secured deployment
+    /// was taken down on the strength of it. A false FAIL is not the harmless
+    /// direction: it is the one an operator acts on immediately.
+    /// </summary>
+    [Fact]
+    public void A_deployment_behind_two_Access_applications_passes_every_check()
+    {
+        // The public hostname the tunnel preserves must be an allowed Host or
+        // the rebinding guard refuses every tunneled request — §6.3's
+        // `Mcp__AllowedHosts__0`, and the reason it is called out there.
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir,
+            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+        using var edge = new FakeAccessEdge(server.Port);
+
+        var (exitCode, output) = RunVerify(edge);
+
+        exitCode.ShouldBe(0, output);
+        output.ShouldContain("all checks passed");
+        // The status each probe SAW is asserted, not merely that it passed:
+        // 302 is the shape that was misread, and reading it back proves the
+        // redirect was not followed to the login page's 200.
+        output.ShouldContain("ok    Access refuses an unauthenticated MCP request (HTTP 302");
+        output.ShouldContain("ok    the monitoring token cannot reach the vault surface (HTTP 302");
+        // The Service-Auth-only refusal, which passed even while broken.
+        output.ShouldContain("ok    Access refuses an unauthenticated /up (HTTP 403");
+        // 404 means the request REACHED the origin: the edge let the owner
+        // credential through and the loopback-only filter turned it away.
+        output.ShouldContain("ok    /health is unreachable from outside the box (HTTP 404");
+        // §6.5's acceptance criterion is all-ok with no skips, and it must be
+        // reachable — it was not, which is what left §6 unsigned.
+        output.ShouldNotContain("skip  ");
+    }
+
+    /// <summary>
+    /// The other half, and the reason the fix is a named allowlist of refusal
+    /// statuses rather than "anything but 200": a probe that passes on
+    /// not-200 passes on a 500, a misrouted tunnel, or a DNS failure just as
+    /// happily as on a real refusal. Here the host application genuinely lets
+    /// an unauthenticated caller through to the vault, and nothing else about
+    /// the deployment is wrong.
+    /// </summary>
+    [Fact]
+    public void An_Access_application_that_does_not_refuse_FAILS_the_ingress_check()
+    {
+        // The public hostname the tunnel preserves must be an allowed Host or
+        // the rebinding guard refuses every tunneled request — §6.3's
+        // `Mcp__AllowedHosts__0`, and the reason it is called out there.
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir,
+            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+        using var edge = new FakeAccessEdge(server.Port, vaultSurfaceExposed: true);
+
+        var (exitCode, output) = RunVerify(edge);
+
+        exitCode.ShouldBe(1, output);
+        output.ShouldContain("FAIL  Access refuses an unauthenticated MCP request");
+        output.ShouldContain("FAIL  the monitoring token cannot reach the vault surface");
+        output.ShouldContain("check(s) FAILED");
     }
 
     [Fact]
@@ -83,7 +150,19 @@ public sealed class VerifyCommandTests : IDisposable
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .Single(a => a.Key == "KnapperCliDll").Value!;
 
-    private static (int ExitCode, string Output) RunVerify(int port)
+    /// <summary>Straight at the server, no edge — the §5 same-box shape.</summary>
+    private static (int ExitCode, string Output) RunVerify(int port) =>
+        RunVerify(new Uri($"http://127.0.0.1:{port}/"), null);
+
+    /// <summary>
+    /// Through the Access fixture, with both credential pairs, exactly as
+    /// §6.5 runs it. --expect-access because the fixture is necessarily on
+    /// loopback and the ingress checks would otherwise skip themselves.
+    /// </summary>
+    private static (int ExitCode, string Output) RunVerify(FakeAccessEdge edge) =>
+        RunVerify(edge.Url, edge);
+
+    private static (int ExitCode, string Output) RunVerify(Uri url, FakeAccessEdge? edge)
     {
         var dll = CliDll();
         File.Exists(dll).ShouldBeTrue($"CLI binary not found at {dll}");
@@ -99,7 +178,21 @@ public sealed class VerifyCommandTests : IDisposable
         psi.ArgumentList.Add(dll);
         psi.ArgumentList.Add("verify");
         psi.ArgumentList.Add("--url");
-        psi.ArgumentList.Add($"http://127.0.0.1:{port}/");
+        psi.ArgumentList.Add(url.ToString());
+        if (edge is not null)
+        {
+            psi.ArgumentList.Add("--expect-access");
+            // Server and CLI are built from this same tree, so they stamp the
+            // same string — and supplying it is what makes a run with NO skip
+            // lines possible, which is §6.5's acceptance criterion.
+            psi.ArgumentList.Add("--expect-this-version");
+            // Through the environment, not the argument list: the same path
+            // the runbook uses, so the secret never reaches a process table.
+            psi.Environment["CF_ACCESS_CLIENT_ID"] = FakeAccessEdge.VaultTokenId;
+            psi.Environment["CF_ACCESS_CLIENT_SECRET"] = FakeAccessEdge.VaultTokenSecret;
+            psi.Environment["CF_MONITOR_CLIENT_ID"] = FakeAccessEdge.MonitorTokenId;
+            psi.Environment["CF_MONITOR_CLIENT_SECRET"] = FakeAccessEdge.MonitorTokenSecret;
+        }
 
         using var process = Process.Start(psi)!;
         var output = new StringBuilder();

@@ -123,7 +123,7 @@ public sealed class AcceptanceServer : IDisposable
         throw new TimeoutException($"server on port {Port} never became healthy:\n{Output}");
     }
 
-    private static int FreePort()
+    internal static int FreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();

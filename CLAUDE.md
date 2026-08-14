@@ -204,6 +204,21 @@ format by default.
   before any temp file; `VerifyCommandTests` byte-compares the whole vault
   across a run. Write-side races belong to the runbook's §8b
   disposable-vault session, never here.
+- **`knapper verify`'s ingress probes never follow redirects, and assert a
+  NAMED refusal status rather than "not 200".** A refusal has two shapes and
+  which one arrives is set by the Access application's POLICY TYPE, not by
+  the caller: an identity policy sends an unauthenticated caller to log in
+  (302 → `…cloudflareaccess.com/cdn-cgi/access/login/…` → **200 HTML**),
+  while a Service-Auth-only application refuses flat (403). Follow the
+  redirect and every refusal probe reads the login page's 200 as the vault
+  surface answering — shipped here, and on 2026-08-14 it called CT 106
+  EXPOSED and a tunnel came down over it. It survived because the flat-403
+  application has nothing to follow, so the twin check covering the same
+  property passed. The inverse is just as bad and quieter: a probe whose
+  pass condition is anything-but-200 passes on a 500, a misrouted tunnel, or
+  DNS failure. Both halves are pinned by
+  `VerifyCommandTests.A_deployment_behind_two_Access_applications_passes_every_check`
+  (a fake Access edge, both policy types) and its exposed-surface twin.
 - **The Access loopback exemption requires loopback peer AND loopback
   Host** (`HostGuard.IsLocalRequest` — the one definition, used by both the
   audience handler and /health's filter). Production is

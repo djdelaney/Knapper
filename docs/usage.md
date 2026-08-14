@@ -204,10 +204,26 @@ Tool errors are structured MCP errors whose message leads with the code:
   — the set comparison is the stronger check, but a deployment checklist that
   asks for a number should not have to go get it from a second call. Through a tunnel it
   also checks the ingress contract: unauthenticated callers refused,
-  `/health` 404 from outside, `/up` disclosing booleans only, and the
+  `/health` unreachable from outside, `/up` disclosing booleans only, and the
   monitoring token refused at the vault surface. Against a loopback URL
   those ingress checks print `skip` — the same-box exemption is the thing
-  they would be testing. Exit 0 = all passed.
+  they would be testing; `--expect-access` says an Access edge fronts this
+  URL regardless of its shape, and turns the skips back into checks that
+  must pass. Exit 0 = all passed.
+
+  **The ingress checks name the status they saw**, because a refusal has two
+  legitimate shapes and reading "refused" alone hides which. An Access
+  application carrying an identity policy sends an unauthenticated caller to
+  log in — `302` to `YOURTEAM.cloudflareaccess.com/cdn-cgi/access/login/…`,
+  which then answers `200 text/html`. A Service-Auth-only application (the
+  `/up` app) has nobody to log in and refuses flat with `403`. Both are
+  refusals decided at the edge, with the origin never consulted. `verify`
+  never follows redirects: a followed 302 arrives as the login page's `200`
+  and reads exactly like the vault surface answering. Likewise `/health`
+  reports `404 from the origin` (the request passed Access and the
+  loopback-only filter turned it away — the stronger result) or a refusal at
+  the edge (the origin was never asked); both are correct, and the runbook's
+  older flat "404 from outside" was only ever the credentialed case.
 
   It also always checks that `/up` and the MCP endpoint report the SAME
   build — one URL reaching two processes (a stale unit still bound to the

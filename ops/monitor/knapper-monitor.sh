@@ -121,6 +121,13 @@ send_mail() {
 }
 
 # ---- 1. /up through the tunnel ------------------------------------------
+# NEVER add -L here, and keep the test `!= 200` rather than a not-an-error
+# range. Access refuses a request whose token it does not accept by sending
+# it to log in: 302 → the Cloudflare login page → 200 text/html. Followed,
+# that arrives as a 200 whose body is HTML, `jq` fails to parse it, check 1b's
+# `// "absent"` swallows the failure, and this monitor reports a healthy vault
+# while it is being refused at the edge and reading nothing at all. `knapper
+# verify` shipped exactly that bug on its own probes (2026-08-14).
 UP_BODY=$(mktemp)
 HTTP_CODE=$(curl -s -o "$UP_BODY" -w '%{http_code}' \
     --max-time "$CURL_TIMEOUT" \

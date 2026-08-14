@@ -28,10 +28,15 @@ internal static class Verify
 {
     private const string ProbePrefix = "_knapper-verify-probe-";
 
+    private const string Loopback =
+        "loopback URL — the same-box exemption applies here by design; re-run through the tunnel, " +
+        "or pass --expect-access if an Access edge does front this URL";
+
     internal static int Run(string[] args)
     {
         string? url = null, clientId = null, clientSecret = null, monitorId = null, monitorSecret = null;
         string? expectVersion = null;
+        var expectAccess = false;
         for (var i = 1; i < args.Length; i++)
         {
             var value = i + 1 < args.Length ? args[i + 1] : null;
@@ -39,6 +44,13 @@ internal static class Verify
             {
                 case "--url": url = value; i++; break;
                 case "--expect-version": expectVersion = value; i++; break;
+                // "There is an Access edge in front of this URL" — run the
+                // ingress checks and refuse to skip them. Two uses: the
+                // runbook's §6.5 sign-off, where a mistyped loopback URL
+                // would otherwise turn the whole ingress section into skips
+                // an operator reads as clean; and the acceptance suite, which
+                // can only stand its fake edge on loopback.
+                case "--expect-access": expectAccess = true; break;
                 // The version this very binary was built from. The upgrade
                 // case in one flag: unpack a tarball, run its own knapper
                 // against the URL, and the check is "is the service running
@@ -66,13 +78,14 @@ internal static class Verify
             Console.Error.WriteLine(
                 "usage: knapper verify --url <https://mcp.example.com/> [--client-id ID --client-secret SECRET] " +
                 "[--monitor-client-id ID --monitor-client-secret SECRET] " +
-                "[--expect-version X.Y.Z | --expect-this-version]\n" +
+                "[--expect-version X.Y.Z | --expect-this-version] [--expect-access]\n" +
                 "  Service-token credentials also read from CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET and " +
                 "CF_MONITOR_CLIENT_ID/CF_MONITOR_CLIENT_SECRET.");
             return 2;
         }
 
-        return new Checker(endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret), expectVersion)
+        return new Checker(
+                endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret), expectVersion, expectAccess)
             .RunAsync().GetAwaiter().GetResult();
 
         static (string Id, string Secret)? Token(string? id, string? secret) =>
@@ -83,7 +96,8 @@ internal static class Verify
         Uri endpoint,
         (string Id, string Secret)? owner,
         (string Id, string Secret)? monitor,
-        string? expectVersion)
+        string? expectVersion,
+        bool expectAccess)
     {
         private int _failures;
 
@@ -99,7 +113,10 @@ internal static class Verify
         // ingress checks would assert the opposite of the contract. They are
         // SKIPPED loudly rather than quietly passing — a skipped ingress check
         // is exactly the thing an operator must not mistake for a green one.
-        private bool Tunnelled => !endpoint.IsLoopback;
+        // --expect-access overrides the inference: it says an edge IS in
+        // front regardless of what the URL looks like, and turns the skips
+        // back into checks that must pass.
+        private bool Tunnelled => expectAccess || !endpoint.IsLoopback;
 
         internal async Task<int> RunAsync()
         {
@@ -120,8 +137,12 @@ internal static class Verify
         {
             if (!Tunnelled)
             {
-                Skip("Access refuses unauthenticated callers",
-                    "loopback URL — the same-box exemption applies here by design; re-run through the tunnel");
+                // Same LABELS the checks carry when they run: the runbook
+                // tells an operator every line must read ok, and a skip that
+                // renames the check it stood in for cannot be diffed against
+                // a good run.
+                Skip("Access refuses an unauthenticated /up", Loopback);
+                Skip("Access refuses an unauthenticated MCP request", Loopback);
                 Skip("/health is unreachable from outside the box", "loopback URL — /health is SUPPOSED to answer here");
             }
             else
@@ -129,36 +150,40 @@ internal static class Verify
                 await CheckAsync("Access refuses an unauthenticated /up", async () =>
                 {
                     using var http = NewClient(null);
-                    var status = (await http.GetAsync(new Uri(endpoint, "/up")).ConfigureAwait(false)).StatusCode;
-                    if (status is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden))
-                    {
-                        throw new InvalidOperationException(
-                            $"got HTTP {(int)status}; an unauthenticated caller must be refused — " +
-                            "Mcp__Access__Enabled is off, or the tunnel is not routed through the Access app");
-                    }
+                    using var response = await http.GetAsync(new Uri(endpoint, "/up")).ConfigureAwait(false);
+                    return AssertRefused(response,
+                        "an unauthenticated caller must be refused — Mcp__Access__Enabled is off, " +
+                        "or the tunnel is not routed through the Access app");
                 }).ConfigureAwait(false);
 
                 await CheckAsync("Access refuses an unauthenticated MCP request", async () =>
                 {
                     using var http = NewClient(null);
-                    var status = (await PostInitializeAsync(http).ConfigureAwait(false)).StatusCode;
-                    if (status is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden))
-                    {
-                        throw new InvalidOperationException(
-                            $"got HTTP {(int)status}; the vault surface must be refused without an assertion");
-                    }
+                    using var response = await PostInitializeAsync(http).ConfigureAwait(false);
+                    return AssertRefused(response, "the vault surface must be refused without an assertion");
                 }).ConfigureAwait(false);
 
+                // Two correct answers, and which one you get depends on
+                // whether the credential in hand passes the Access app in
+                // front of /health. 404 is the stronger one — it proves the
+                // request REACHED the origin and the loopback-only filter
+                // turned it away; a refusal at the edge proves only that the
+                // origin was never asked, which is also fine but tests less.
+                // Reporting which arrived is the point: the runbook used to
+                // promise "404 from outside" flatly, and an operator who got
+                // the 302 read a correct deployment as a broken one.
                 await CheckAsync("/health is unreachable from outside the box", async () =>
                 {
                     using var http = NewClient(owner);
-                    var response = await http.GetAsync(new Uri(endpoint, "/health")).ConfigureAwait(false);
-                    if (response.StatusCode != HttpStatusCode.NotFound)
-                    {
-                        throw new InvalidOperationException(
-                            $"got HTTP {(int)response.StatusCode}, expected 404 — /health names filesystem paths " +
-                            "and conflict filenames; Mcp__RestrictHealthToLoopback must stay true");
-                    }
+                    using var response = await http.GetAsync(new Uri(endpoint, "/health")).ConfigureAwait(false);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                        return "HTTP 404 from the origin — the loopback-only filter refused it";
+                    if (Refusal(response) is { } refusal)
+                        return $"{refusal} — the origin was never asked";
+                    throw new InvalidOperationException(
+                        $"got HTTP {(int)response.StatusCode}, expected 404 from the origin or a refusal at the " +
+                        "edge — /health names filesystem paths and conflict filenames; " +
+                        "Mcp__RestrictHealthToLoopback must stay true");
                 }).ConfigureAwait(false);
             }
 
@@ -172,7 +197,8 @@ internal static class Verify
                 {
                     throw new InvalidOperationException(
                         $"got HTTP {(int)response.StatusCode} — 503 means the service degraded itself " +
-                        "(vault, sync, ripgrep, audit, or a conflict file); anything else is ingress");
+                        "(vault, sync, ripgrep, audit, or a conflict file); a 3xx means this credential did " +
+                        "not pass Access, so the login page answered and not the origin; anything else is ingress");
                 }
                 var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 AssertUpDisclosesBooleansOnly(body);
@@ -186,7 +212,15 @@ internal static class Verify
                     .FirstOrDefault();
             }).ConfigureAwait(false);
 
-            if (monitor is null)
+            if (!Tunnelled)
+            {
+                // Would FAIL on a loopback URL, and correctly so: the
+                // exemption opens the vault surface to any same-box caller,
+                // monitoring credential or not. Nothing about the Access
+                // applications is observable from here.
+                Skip("the monitoring token cannot reach the vault surface", Loopback);
+            }
+            else if (monitor is null)
             {
                 Skip("the monitoring token cannot reach the vault surface",
                     "no --monitor-client-id/--monitor-client-secret given (single-app setup)");
@@ -196,16 +230,55 @@ internal static class Verify
                 await CheckAsync("the monitoring token cannot reach the vault surface", async () =>
                 {
                     using var http = NewClient(monitor);
-                    var status = (await PostInitializeAsync(http).ConfigureAwait(false)).StatusCode;
-                    if (status is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden))
-                    {
-                        throw new InvalidOperationException(
-                            $"got HTTP {(int)status}; the /up credential must NOT open the vault — " +
-                            "the monitoring Access app must be a separate, path-scoped application");
-                    }
+                    using var response = await PostInitializeAsync(http).ConfigureAwait(false);
+                    return AssertRefused(response,
+                        "the /up credential must NOT open the vault — the monitoring Access app must be " +
+                        "a separate, path-scoped application");
                 }).ConfigureAwait(false);
             }
         }
+
+        /// <summary>
+        /// How a correctly-configured Access application refuses a request
+        /// carrying no valid assertion — a short description of WHICH refusal
+        /// arrived, or null if this response is not a refusal at all.
+        ///
+        /// There are two shapes and both are correct; which one you get is a
+        /// property of the application's policy TYPE, not of how wrong the
+        /// caller was. An application with an identity policy might be
+        /// talking to a human, so it sends them to log in (302 →
+        /// team.cloudflareaccess.com/cdn-cgi/access/login/…). A Service-Auth-
+        /// only application has nobody to log in and refuses flat (403). The
+        /// origin is consulted in neither case — Access decides at the edge,
+        /// which is demonstrable by stopping cloudflared and watching the 302
+        /// still arrive.
+        ///
+        /// Deliberately a named allowlist and not "anything but 200": a probe
+        /// whose pass condition is not-200 also passes on a 500, on a
+        /// misrouted tunnel, on DNS failure — the same defect this method
+        /// exists to fix, one size down.
+        /// </summary>
+        private static string? Refusal(HttpResponseMessage response)
+        {
+            var code = (int)response.StatusCode;
+            if (code is 401 or 403)
+                return $"HTTP {code} at the edge — a service-auth-only policy has no login to offer";
+            if (code is >= 300 and < 400)
+            {
+                var location = response.Headers.Location;
+                var where = location is null ? "no Location"
+                    : location.IsAbsoluteUri ? location.Host
+                    : location.ToString();
+                return $"HTTP {code} at the edge → {where}";
+            }
+            return null;
+        }
+
+        /// <summary>Refusal or bust, returning the evidence for the ok line.</summary>
+        private static string AssertRefused(HttpResponseMessage response, string why) =>
+            Refusal(response) ?? throw new InvalidOperationException(
+                $"got HTTP {(int)response.StatusCode}; {why}. A refusal is 401/403, or a 3xx to the " +
+                "Access login page — redirects are not followed here, so this 200 is the origin answering");
 
         /// <summary>
         /// /up's body is a disclosure contract, not just a status code: no
@@ -448,9 +521,25 @@ internal static class Verify
 
         // ---- plumbing ------------------------------------------------------
 
+        /// <summary>
+        /// Redirects are NEVER followed, and that is a correctness property,
+        /// not a preference. An Access application carrying an identity
+        /// policy refuses an unauthenticated caller with 302 → the Cloudflare
+        /// login page → 200 HTML; a handler that follows it hands every
+        /// refusal probe the login page's 200 and the probe reports the vault
+        /// surface as answering. Shipped here, and the consequence was not
+        /// theoretical: on 2026-08-14 it called CT 106 — correctly secured,
+        /// default-deny, no Bypass policy — EXPOSED, and a tunnel was taken
+        /// down on the strength of it.
+        ///
+        /// It stayed invisible because the deployment's OTHER application is
+        /// Service Auth only: a flat 403 has nothing to follow, so the one
+        /// check positioned to catch this passed while its twin misfired.
+        /// </summary>
         private HttpClient NewClient((string Id, string Secret)? token)
         {
-            var http = new HttpClient { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(30) };
+            var handler = new HttpClientHandler { AllowAutoRedirect = false };
+            var http = new HttpClient(handler) { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(30) };
             if (token is { } t)
             {
                 http.DefaultRequestHeaders.Add("CF-Access-Client-Id", t.Id);
