@@ -57,7 +57,7 @@ grep -nE 'knapper-monitor\.conf' "$DOC" | grep -v '|' | grep -iE 'claude code|co
 # Every <thing> in the document should be substitutable and known. A new
 # placeholder is fine; adding it here is the cost of admission, and the point
 # is that a deployment can key on the list.
-KNOWN='lan-resolver|backup-storage|parent-dataset|rootfs-dataset|archive|fresh-archive|storage|nn|PINNED|v|token|secret|monitor-token|monitor-secret|smoke-hostname|smoke-access-app-aud|ct-address|term|ref|vmid|scratch-vmid|vaultId|https://YOURTEAM.cloudflareaccess.com|EDITOR'
+KNOWN='lan-resolver|backup-storage|parent-dataset|rootfs-dataset|archive|fresh-archive|storage|nn|PINNED|v|token|secret|monitor-token|monitor-secret|smoke-hostname|smoke-access-app-aud|ct-address|term|ref|vmid|scratch-vmid|vaultId|pid|https://YOURTEAM.cloudflareaccess.com|EDITOR'
 for ph in $(grep -oE '<[a-zA-Z][^ >]*>' "$DOC" | tr -d '<>' | sort -u); do
     printf '%s' "$ph" | grep -qE "^($KNOWN)$" \
         || fail "undeclared placeholder <$ph> — add it to KNOWN in this script, or use an existing one"

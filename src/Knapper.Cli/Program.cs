@@ -128,6 +128,28 @@ int Doctor()
     Check("Vault:AuditLogPath configured, outside the vault",
         () => !string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath)
               && !PathContainment.IsInsideOrEqual(vaultOptions.AuditLogPath, vaultOptions.RootPath));
+    // WARN, not FAIL: nothing is broken, but nothing else would ever say it.
+    // AuditLog creates the file 0600, and UnixCreateMode applies at CREATION
+    // only — so a wider mode means the file was made out-of-band (an operator
+    // pre-creating it with a default umask of 022 is the observed case,
+    // §8b's "fresh audit log", 2026-08-16) and the server has been appending
+    // to it ever since. Audit lines carry vault-relative paths and the calling
+    // client's identity. metrics.json is deliberately world-readable — the
+    // monitor runs as another user and reads it — so the two files are NOT
+    // the same posture and this check is only about the audit log.
+    if (!string.IsNullOrWhiteSpace(vaultOptions.AuditLogPath) && File.Exists(vaultOptions.AuditLogPath))
+    {
+        const UnixFileMode Wider = UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+        var mode = File.GetUnixFileMode(vaultOptions.AuditLogPath);
+        if ((mode & Wider) != 0)
+        {
+            Console.WriteLine(
+                $"warn  audit log is readable beyond its owner ({mode}) — Knapper creates it 0600, so this " +
+                "file was created out-of-band and kept its creator's umask; `chmod 600 " +
+                $"{vaultOptions.AuditLogPath}`");
+        }
+    }
     Check("vault filesystem is case-SENSITIVE (hard production requirement)",
         () => !string.IsNullOrWhiteSpace(vaultOptions.RootPath)
               && Directory.Exists(vaultOptions.RootPath)

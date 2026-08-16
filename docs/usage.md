@@ -34,9 +34,9 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 |---|---|---|
 | `RootPath` | — (required) | Absolute vault path. Startup fails without it. |
 | `LockDirectory` | — (required) | flock lock files. MUST be outside the vault (enforced at startup). |
-| `AuditLogPath` | — (required by Mcp) | Append-only JSONL. MUST be outside the vault (enforced). |
+| `AuditLogPath` | — (required by Mcp) | Append-only JSONL, one line per **mutation** attempt (including rejected ones). Reads are never audited — no vault object changed, so there is nothing for the entry to be about; for read activity use `Mcp:LogToolCalls` below, which writes somewhere else entirely. Created mode 0600. MUST be outside the vault (enforced). |
 | `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault (enforced). |
-| `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). |
+| `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). **Eventually consistent, and per-process** — see below. |
 | `RipgrepPath` | `rg` | The search engine binary. **Must be ripgrep 15+** — older builds report `"searches": 0` for a query with no matches, emptying the `scanned_files` evidence behind every "no match". `knapper doctor` fails on anything older and names the absolute path it resolved (or, on a miss, the `PATH` it searched — the service's `PATH` is systemd's, not the operator's shell's); Debian's apt package is still 14.x. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |
@@ -54,7 +54,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. |
 | `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. E.g. disable the mutation tools for a read-only deployment. |
 | `RestrictHealthToLoopback` | true | `/health` (detailed) 404s for non-loopback callers. |
-| `LogToolCalls` | true | One Information log line per tool call. |
+| `LogToolCalls` | true | One Information log line per tool call, reads included — to **stdout**, i.e. the service journal (`journalctl -u knapper`), never to `Vault:AuditLogPath`. The two settings sit next to each other in the unit file and write to different places: audit log = mutations only, on disk; this = every call, in the journal. |
 | `Access:Enabled` | false | Cloudflare Access assertion validation at the origin. |
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
@@ -199,6 +199,20 @@ Tool errors are structured MCP errors whose message leads with the code:
 - `vault.generation` is **per-process** and restarts at zero with the service.
   It answers "did the vault move during this query"; comparing it across a
   restart is meaningless.
+- **`metrics.json` lags, and its counters are per-process.** Routine counter
+  updates are written at most once per 10 s (`KnapperMetrics.FlushInterval`);
+  only an audit-append failure flushes synchronously, because that is the one
+  signal that must survive an immediate crash. So a read taken straight after a
+  burst of activity reports a number that is *stale, not wrong-shaped* — during
+  a 97-writer race here it said 2 stale rejections against 96 real ones, with
+  `flushedAt` frozen, and corrected itself on the next tool call. Anything
+  asserting on these counters (a test harness, a CI check) must either wait out
+  the interval or make one more call and re-read; the monitor is unaffected
+  because it computes rates as deltas on its own cadence. And the counters
+  reset with the process, so a before/after diff is only meaningful **within
+  one `startedAt`** — check that field before subtracting, exactly as
+  `knapper-monitor.sh` does, or a routine upgrade in the middle silently turns
+  the baseline into the previous process's final flush.
 - `knapper status` / `knapper doctor` — one-screen summary / checks with
   exit codes for scripting.
 - `knapper version` — the build identity of that binary, alone on stdout:

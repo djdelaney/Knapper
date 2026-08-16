@@ -694,18 +694,47 @@ and still without a write.
    A startup warning in the journal is the only signal, which is why §6.2
    creates both apps and §6.3 spends both AUDs — the empty state is reached
    by DOING NOTHING, and that makes it the likelier of the two by far.
-5. **Re-run the verifier through the tunnel** — from the dev box or the
-   Proxmox host, NOT the CT (a loopback URL skips every ingress check):
+5. **Put both service tokens in a file first, and never on a command line.**
+   `knapper verify` reads its credentials from the environment for exactly
+   one reason, stated in `Verify.cs`: "so the service-token SECRET never has
+   to appear in a shell history". ⛔ **The obvious way to supply them defeats
+   that.** An inline assignment —
+   `CF_ACCESS_CLIENT_ID=… knapper verify …` — *is* the command line as far as
+   the shell's history file is concerned, and both token pairs land in
+   `~/.bash_history` in plaintext, on a box that is not the CT and is not
+   covered by any of §1's backups or §7's rotations. This runbook printed
+   that form at three call sites and produced the exposure it was written to
+   avoid (found running §8b, 2026-08-16).
 
    ```sh
-   CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
-   CF_MONITOR_CLIENT_ID=<monitor-token>.access CF_MONITOR_CLIENT_SECRET=<monitor-secret> \
-     knapper verify --url https://mcp.example.com/ --expect-access
+   install -m 600 /dev/null /root/.knapper-verify.env   # ONCE, on the box that runs verify
+   ${EDITOR:-vi} /root/.knapper-verify.env
    ```
 
-   `--expect-access` is what makes "no skips" mean something here: it asserts
-   an Access edge fronts this URL, so a loopback URL typed by mistake FAILS
-   the ingress checks instead of skipping them into a clean-looking run.
+   Four lines, each an `export` — `export CF_ACCESS_CLIENT_ID=<token>.access`,
+   `export CF_ACCESS_CLIENT_SECRET=<secret>`, and the
+   `CF_MONITOR_CLIENT_ID` / `CF_MONITOR_CLIENT_SECRET` pair from the `/up`
+   app. A line missing its `export` fails LOUDLY at the first authenticated
+   probe (the credential simply is not in the environment, so `/up` answers
+   with a refusal and the check fails) — it cannot pass quietly.
+
+   Every `verify` run in this document then takes this shape, and nothing
+   secret is ever typed, so shell history needs no special handling:
+
+   ```sh
+   ( . /root/.knapper-verify.env
+     knapper verify --url https://mcp.example.com/ --expect-access )
+   ```
+
+   The subshell is not decoration: sourcing into the interactive shell leaves
+   both tokens in the environment of every command run afterwards in that
+   session.
+
+   Run it **from the dev box or the Proxmox host, NOT the CT** (a loopback URL
+   skips every ingress check). `--expect-access` is what makes "no skips" mean
+   something here: it asserts an Access edge fronts this URL, so a loopback
+   URL typed by mistake FAILS the ingress checks instead of skipping them into
+   a clean-looking run.
 
    Now the skipped checks do the work: unauthenticated callers refused on
    both `/up` and the MCP endpoint, `/health` unreachable from outside, `/up`
@@ -1017,10 +1046,43 @@ will actually meet (test 4 reads counts and files modes, where a 25-item page
 would change what the log shows). Every one of these settings lives in the
 smoke unit, so tearing that unit down at §9 retires all of them at once —
 which is the point of keeping them out of `knapper.service`. Attach one real agent surface
-(Claude Code via the connector). Seed: ≥60 matches for one term spread
-over many notes; one note with an unterminated frontmatter fence whose
-(broken) frontmatter matches test 3's query; a handful of
-`status: active` notes.
+(Claude Code via the connector).
+
+⚠️ **Let the SERVER create the audit log and metrics file** — do not `touch`
+them first. Knapper creates the audit log 0600, and a Unix create mode applies
+at creation only: pre-creating it from a root shell with the usual umask leaves
+it world-readable (it carries vault-relative paths and the calling client's
+identity) and the server then appends to it forever. If one already exists,
+`chmod 600` it; `knapper doctor` warns about this. `metrics.json` is a
+different case and is *deliberately* world-readable — the monitor reads it as
+another user.
+
+**Seed, and why each fixture is shaped the way it is:**
+
+- **≥60 matches for one term**, spread over many notes. The count and
+  `Vault__MaxResultsPerPage=25` are COUPLED: pick a total that is not a
+  multiple of the page size, so the last page is partial (65 → 25/25/15).
+  A round number silently destroys the partial-final-page case, which is the
+  one that catches off-by-one cursor bugs — and test 1 still passes, because
+  three full pages paginate correctly too.
+- **One note with an unterminated frontmatter fence** whose (broken)
+  frontmatter matches test 3's query. It SHOULD match a plain-text
+  `vault_search` and SHOULD NOT match `vault_search_frontmatter` — that
+  disagreement is the test, not a discrepancy to chase.
+- **A handful of `status: active` notes.** Write the count down **with its
+  scope** ("N under `<term>`-fixtures/", not "N") — the fixture directory and
+  the whole vault give different answers the moment anything else in the copy
+  carries that field, and reconciling that mid-test costs a round-trip.
+
+⛔ **The gate proving you are talking to the SMOKE instance is a count, not
+an absence.** The obvious phrasing — "the fixture term appears nowhere in
+Helios" — stops working permanently the first time anyone writes the term down
+in their own notes while documenting a run, and it is the operator most likely
+to do that. Before starting, record two numbers: the term's count in the smoke
+vault and its count in the live vault. The gate is that the agent's answer
+matches the SMOKE number. Related: if the smoke vault is a copy of the live
+one, take the copy **before** the term is documented anywhere, or the fixture
+count is off by one — and re-copying later silently breaks the gate again.
 
 **Evidence.** The tool-call log (names/outcomes/durations), `audit.jsonl`
 (mutations with codes and SHAs), `metrics.json` (truncation /
@@ -1037,6 +1099,59 @@ ground truth. Verdicts come from evidence, not from how the answer reads.
 Also run the general parity sweep while attached (brief step 8): a few
 find/summarize/edit tasks, answers spot-checked against the disposable
 vault by hand.
+
+**Teardown (§9's checklist points here).** The ORDER is load-bearing, and so
+is what you verify with:
+
+```sh
+systemctl stop knapper-smoke.service
+ss -lntp | grep 3536            # MUST print nothing before going further
+rm /etc/systemd/system/knapper-smoke.service
+systemctl daemon-reload
+rm -rf /var/lib/knapper-smoke
+```
+
+⛔ **`daemon-reload` re-reads unit files; it never stops anything.** Remove the
+unit while the process is alive and you get an ORPHAN: still running, still
+bound to :3536, its vault directory deleted underneath it, and reporting
+
+```
+Loaded: not-found (Reason: Unit knapper-smoke.service not found.)
+Active: active (running) since …
+```
+
+The reason `ss -lntp` is the verification step and not a unit listing: the
+orphan is INVISIBLE to `systemctl list-unit-files`, because the unit file
+genuinely is gone. The port is the only thing that still knows.
+
+Recovery, if it happens: systemd keeps a unit loaded in memory until it stops,
+so `systemctl stop knapper-smoke` still works after the file is deleted — a
+`kill` is usually unnecessary. If one is needed, confirm identity FIRST
+(`/proc/<pid>/environ` for the port and vault path, and
+`systemctl show knapper.service -p MainPID`): production and smoke run the
+same binary from the same path and differ only in environment, so the process
+name tells you nothing.
+
+Then the edge, where the responses during teardown look alarming and are not:
+
+| Stage | A request to the smoke hostname answers |
+|---|---|
+| ingress rule removed; Access app and DNS still present | **302** |
+| Access app deleted | **404** (the tunnel's catch-all) |
+| DNS record deleted | does not resolve |
+
+The 302 is the identity provider intercepting at the EDGE — the origin is
+never reached, so removing the ingress rule changes nothing observable until
+the Access app is gone. Mid-teardown this reads as "the ingress removal didn't
+take". The Access-independent check is local and answers directly:
+
+```sh
+cloudflared tunnel ingress rule https://<smoke-hostname>/    # → the catch-all, once removed
+cloudflared tunnel ingress rule https://mcp.example.com/     # → http://127.0.0.1:3535, still
+```
+
+Run both. The second is the one that catches a teardown that took out the
+wrong rule, and nothing else in §9 asks that question.
 
 **Outcome handling.** Failures here are STEERING failures — fix tool
 descriptions, server instructions, or the brief's §14 routing instruction and
@@ -1067,9 +1182,12 @@ silently if left:
       the §8 revocation drill ran — Claude Code holds the ROOT app's token
       and is unaffected by that drill
 - [ ] `knapper-smoke.service` stopped and REMOVED, `/var/lib/knapper-smoke`
-      deleted, its tunnel route and Access app torn down (§8b) — that single
-      teardown is what retires `Mcp__LogToolCalls=true`,
-      `Vault__MaxResultsPerPage=25` and the disposable vault path together
+      deleted, its tunnel route and Access app torn down — **in §8b's teardown
+      ORDER, and signed off with `ss -lntp` rather than a unit listing**: stop
+      before removing the unit, or you leave an orphan still bound to :3536
+      that no unit listing can see. That single teardown is what retires
+      `Mcp__LogToolCalls=true`, `Vault__MaxResultsPerPage=25` and the
+      disposable vault path together
 - [ ] `knapper.service` never acquired any §8b setting — grep it for
       `Sync__Mode`, `LogToolCalls`, `MaxResultsPerPage`; the only acceptable
       hit is `Sync__Mode=heartbeat`
@@ -1252,9 +1370,12 @@ it — passes every other check in this file, because the old build satisfies
 the same contract:
 
 ```sh
-CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
-  knapper verify --url https://mcp.example.com/ --expect-version <v>
+( . /root/.knapper-verify.env
+  knapper verify --url https://mcp.example.com/ --expect-version <v> )
 ```
+
+The env file is §6.5's, on the box you are running from — credentials never go
+on the command line, where they enter shell history.
 
 ⛔ **The PRODUCTION hostname, not §8b's smoke one.** The smoke instance, its
 route and its Access app are torn down at §9 (that is a checklist item), so by
@@ -1281,6 +1402,20 @@ it is the one place in §10 where skipping the ingress checks is fine — §10.3
 asking which BUILD answered, and the tunnelled run above already asked the rest.
 `verify` prints which checks it skipped and why; read those lines.
 
+⚠️ **`--expect-this-version` belongs to the just-upgraded box and nowhere
+else.** It compares the RUNNING CLI's build to the server's, so from any other
+copy of `knapper` it is asserting that copy is current — and a deployment that
+keeps a CLI outside the container (on the Proxmox host, say, so `verify` can be
+run from outside and traverse the tunnel) has a second artifact that §10.1's
+install step does not touch. Upgrade the CT, forget the outside copy, and the
+check fails naming two versions, which reads as a deployment fault when it is a
+stale client. From anywhere but the box you just unpacked onto, pin the version
+explicitly with `--expect-version <v>`. And what makes a run traverse the
+tunnel is the `--url`, not which box it runs from — a public URL goes out to
+the edge and back in even from the CT itself; the CT is called out above
+because a *loopback* URL there skips the ingress checks, not because the box is
+disqualified.
+
 A failure here means the service is not the build just installed. Do not
 "restart again and see" — go to §10.4.
 
@@ -1301,8 +1436,8 @@ pct exec 106 -- systemctl stop knapper.service knapper-commit.timer
 pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /opt/knapper   # the RETAINED previous artifact
 pct exec 106 -- systemctl daemon-reload
 pct exec 106 -- systemctl start knapper.service knapper-commit.timer
-CF_ACCESS_CLIENT_ID=<token>.access CF_ACCESS_CLIENT_SECRET=<secret> \
-  knapper verify --url https://mcp.example.com/ --expect-version <v>   # the version recorded in §10.1
+( . /root/.knapper-verify.env                                          # §6.5's file
+  knapper verify --url https://mcp.example.com/ --expect-version <v> ) # the version recorded in §10.1
 ```
 
 Rolling back the BINARY does not roll back `/etc`. If §10.2's report was

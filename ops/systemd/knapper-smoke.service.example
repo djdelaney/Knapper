@@ -14,6 +14,13 @@
 # unit, each of which fails silently if left behind. Here they die with the
 # file.
 #
+# ⚠️ This is NOT a canary, and cannot become one by accident: ExecStart is the
+# SAME /opt/knapper/mcp/Knapper.Mcp production runs, so an upgrade replaces the
+# binary under both instances at once and restarts them together. It differs
+# from production in environment only. If you ever want it to hold the previous
+# or next build instead, that takes a second install path here — not a second
+# unit pointing at the same one.
+#
 # ⚠️ The copy lives OUTSIDE /vault. Anything inside /vault is Helios, and
 # Obsidian Sync would propagate the test vault to every device. /var/lib is
 # the natural home; the lock directory, audit log and metrics file are
