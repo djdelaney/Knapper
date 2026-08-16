@@ -254,6 +254,18 @@ with the release's, and `knapper.service` therefore DIFFERS forever and
 legitimately. Exit 1 means "a human decides"; exit 2 — something shipped that
 was never installed — is the one that is never expected.
 
+It walks BOTH directions as of v0.5.1, and the second one is the half a
+derivation cannot give you for free: artifact → `/etc` can only report on files
+the release knows about, so a unit a later release stops shipping, or a
+`knapper.service.d/` drop-in overriding a unit just reported identical, had no
+line in the report at all — under a summary that read clean. Those are
+ORPHANED / OVERRIDE DIR, exit 1, scoped to our own name prefixes so the host's
+unrelated units are never listed. Never phrased as an instruction to remove:
+`/etc` is authoritative and an orphan may be deliberate. `.example` templates
+are compared against the name they install as, so §8b's live smoke unit — the
+only place a real MCP client is attached before cutover — is covered while it
+exists and reads "template, not installed" the rest of the time.
+
 Each DIFFERS carries a plain-language legend ABOVE the diff, because a correctly
 oriented diff is still misread: `-`/`+` reads as removed/added to anyone not
 parsing the file headers, and the expensive misreading is the mirror of the one

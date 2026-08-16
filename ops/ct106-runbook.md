@@ -1174,9 +1174,22 @@ pct exec 106 -- tar -xzf /opt/knapper/knapper-<v>+g<ref>-linux-x64.tar.gz -C /op
 # it DERIVES that set from the artifact rather than from a list — the list this
 # replaced named four of the six units that ship, and the two it omitted
 # happened to be identical in v0.3.0, which is luck, not process.
+#
+# Since v0.5.1 it also walks the other way — /etc → artifact — and reports
+# ORPHANED (a unit still installed that this release ships no counterpart for,
+# e.g. one a later release retired: it keeps running until someone stops it)
+# and OVERRIDE DIR (a drop-in directory such as `knapper.service.d/`, which
+# systemd applies ON TOP of a unit this same report may have just called
+# identical). Both are reports, not
+# instructions: /etc is authoritative and either may be deliberate. The
+# `.example` templates are compared too, against the name they install as —
+# `knapper-smoke.service.example → knapper-smoke.service` — so while §8b is
+# live the smoke unit is covered like any other, and reads "template, not
+# installed" the rest of the time.
 pct exec 106 -- sh /opt/knapper/ops/check-installed.sh
 # exit 0  nothing to do
-# exit 1  something DIFFERS — reconcile BY HAND. knapper.service differs
+# exit 1  something DIFFERS, or /etc holds an ORPHANED unit or an OVERRIDE
+#         DIR — reconcile BY HAND. knapper.service differs
 #         FOREVER and legitimately: /etc holds this deployment's edits
 #         (AllowedHosts, the Access AUD, Sync__MaxAgeSeconds,
 #         Sync__MaxFileBytes), and copying the shipped unit over them reverts
@@ -1188,7 +1201,11 @@ pct exec 106 -- sh /opt/knapper/ops/check-installed.sh
 #         placeholder, and applying it reverts your hostname: the same silent
 #         revert, arriving through the report meant to prevent it. The script
 #         classifies each differing line and says which are known site config
-#         (keep yours) and which are the release's change (merge those).
+#         (keep yours) and which are the release's change — REVIEW those before
+#         merging anything: on v0.5.0 it counted 13 such lines in knapper
+#         .service and all thirteen were comments, so the correct action was to
+#         merge nothing, while replacing the block they sat in would have
+#         commented out the whole Access config.
 #         knapper-heartbeat.service carries the probe's environment and
 #         knapper-heartbeat.timer's AccuracySec is a term in the fail-closed
 #         budget, so neither is inert however inert it looks.
@@ -1213,6 +1230,14 @@ hand-maintained list that must agree with the set of files that ship, with
 nothing enforcing it. The build-time half closed in `v0.2.1`; this is the other
 half. Same question is worth asking at §8, §9 and in monthly maintenance —
 "does `/etc` still match what shipped?" — and the answer is one command.
+
+Both directions of that question, since `v0.5.1`. Walking artifact → `/etc`
+can only ever report on files the release knows about, so anything in `/etc`
+that the release does NOT ship — a retired unit, a drop-in overriding a unit
+the report just called identical — had no line at all, under a summary that
+read clean. Same failure shape as the `knapper verify` gap fixed in `v0.4.0`:
+a check that passes wrongly is worse than no check, because it gets used as
+evidence.
 
 ### 10.3 Prove the restart took
 

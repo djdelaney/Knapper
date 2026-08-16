@@ -115,17 +115,53 @@ printf 'new\n' > "$SHIPPED/knapper-newthing.timer"
 run_check
 [ "$STATUS" -eq 2 ] || fail "missing+differing exited $STATUS, expected 2 (missing outranks)"
 
-# ---- 5. the .example template has no installed counterpart ---------------
-# knapper-smoke.service.example is installed by hand under a different name at
-# §8b and gone by §9. Comparing it would report NOT INSTALLED forever, which is
-# how a check that is always red becomes a check nobody reads.
-new_case example_template
+# ---- 5. an UNINSTALLED .example template is a fact, not a failure --------
+# knapper-smoke.service.example installs by hand as knapper-smoke.service at
+# §8b and is gone by §9, so "not installed" is its normal state for most of the
+# deployment's life. It must be SAID (silence is what hid blindspot 5b below)
+# without counting as MISSING — a permanent red line is how a check stops being
+# read.
+new_case example_not_installed
 printf 'a\n' > "$SHIPPED/knapper.service"
 cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
 printf 'template\n' > "$SHIPPED/knapper-smoke.service.example"
 run_check
-[ "$STATUS" -eq 0 ] || fail "the .example template was checked; exit $STATUS, expected 0"
-printf '%s' "$OUT" | grep -q 'example' && fail "the .example template appeared in the report"
+[ "$STATUS" -eq 0 ] || fail "an uninstalled template exited $STATUS, expected 0"
+printf '%s' "$OUT" | grep -q 'knapper-smoke.service.example: template, not installed' \
+    || fail "an uninstalled template was not reported as such"
+printf '%s' "$OUT" | grep -q 'NOT INSTALLED' && fail "an uninstalled template was counted as MISSING"
+
+# ---- 5b. an INSTALLED .example template is compared ----------------------
+# The blindspot this replaces: the template was excluded from the report
+# outright, so while §8b was live — the only pre-cutover window in which a real
+# MCP client is attached to Knapper — a release that changed the smoke unit was
+# reported by nothing, and the §8b evidence was being gathered against a
+# configuration no check had looked at.
+new_case example_installed
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'Environment=Mcp__Access__Audience=PLACEHOLDER\nExecStart=/opt/knapper/mcp/Knapper.Mcp\n' \
+    > "$SHIPPED/knapper-smoke.service.example"
+printf 'Environment=Mcp__Access__Audience=real-aud\nExecStart=/opt/knapper/mcp/Knapper.Mcp\n' \
+    > "$ETC/knapper-smoke.service"
+run_check
+[ "$STATUS" -eq 1 ] || fail "an installed template that differs exited $STATUS, expected 1"
+# The label names BOTH ends: the shipped file and the installed file have
+# different names here, and one name alone leaves the reader guessing which
+# unit on the box the verdict is about.
+printf '%s' "$OUT" | grep -q 'knapper-smoke.service.example → knapper-smoke.service: DIFFERS' \
+    || fail "an installed template was not compared, or the label names only one end"
+# It is a unit like any other once installed: the site-config protection that
+# keeps a deployment from reverting its own Access AUD applies here too.
+printf '%s' "$OUT" | grep -q 'known site config — expected' \
+    || fail "the installed template lost the site-config classification"
+
+# ---- 5c. an installed template is NOT then reported as an orphan ---------
+# The two fixes have to agree: the smoke unit has no same-named file in the
+# artifact, so the /etc-side walk would call it orphaned while the template
+# walk was busy comparing it. Two lines about one file, one of them wrong.
+printf '%s' "$OUT" | grep -q 'knapper-smoke.service: ORPHANED' \
+    && fail "the file the template installs as was also reported as an orphan"
 
 # ---- 6. the file set is DERIVED, not enumerated --------------------------
 # The whole point. A unit nobody wrote into any list must still be checked —
@@ -139,6 +175,62 @@ run_check
 [ "$STATUS" -eq 0 ] || fail "derived case exited $STATUS, expected 0"
 printf '%s' "$OUT" | grep -q 'some-unit-nobody-listed.service: identical' \
     || fail "a unit no list names was not checked — the set is not derived"
+
+# ---- 6b. a unit in /etc that the release does not ship is ORPHANED -------
+# The other direction, and the half that was missing until 0.5.1: walking
+# artifact → /etc can only ever report files the release knows about, so a unit
+# a later release stopped shipping keeps running with no line in the report —
+# under a summary that still reads "every shipped unit is installed and
+# identical", which is true and reads as clean.
+new_case orphaned
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'retired\n' > "$ETC/knapper-oldthing.timer"
+run_check
+[ "$STATUS" -eq 1 ] || fail "an orphaned unit exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'knapper-oldthing.timer: ORPHANED' || fail "an orphaned unit was not reported"
+# Reported, never prescribed: /etc is authoritative and the orphan may be
+# deliberate. The script must not tell an operator to delete it.
+printf '%s' "$OUT" | grep -q 'not an instruction' || fail "the orphan line reads as an instruction to remove"
+
+# ---- 6c. the orphan walk stays inside our own names ----------------------
+# /etc/systemd/system belongs to the host. A report that listed every unrelated
+# unit would be noise nobody finishes reading — and a check nobody finishes is
+# the same as no check.
+new_case orphan_scope
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'someone elses\n' > "$ETC/postgresql.service"
+run_check
+[ "$STATUS" -eq 0 ] || fail "an unrelated host unit exited $STATUS, expected 0"
+printf '%s' "$OUT" | grep -q 'postgresql' && fail "an unrelated host unit was reported as an orphan"
+
+# ---- 6d. a drop-in directory overriding a shipped unit is reported -------
+# The subtlest of the set: knapper.service reports identical, and systemd is
+# running it with an override the report never mentioned. "Identical unit + a
+# drop-in nobody mentioned" is a configuration nobody has read whole.
+new_case dropin
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+mkdir -p "$ETC/knapper.service.d"
+printf '[Service]\nEnvironment=Sync__MaxAgeSeconds=99999\n' > "$ETC/knapper.service.d/override.conf"
+run_check
+[ "$STATUS" -eq 1 ] || fail "an override drop-in exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'knapper.service.d: OVERRIDE DIR' || fail "an override drop-in was not reported"
+printf '%s' "$OUT" | grep -q 'override.conf' || fail "the drop-in's contents were not named"
+# And the unit it overrides is still reported on its own terms.
+printf '%s' "$OUT" | grep -q 'knapper.service: identical' || fail "the overridden unit lost its own line"
+
+# ---- 6e. an orphaned logrotate drop-in is reported too -------------------
+new_case orphan_logrotate
+printf 'a\n' > "$SHIPPED/knapper.service"
+cp "$SHIPPED/knapper.service" "$ETC/knapper.service"
+printf 'c\n' > "$LOGROTATE_SRC/knapper-sync-log"
+cp "$LOGROTATE_SRC/knapper-sync-log" "$LOGROTATE/knapper-sync-log"
+printf 'retired\n' > "$LOGROTATE/knapper-oldlog"
+run_check
+[ "$STATUS" -eq 1 ] || fail "an orphaned logrotate drop-in exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'knapper-oldlog: ORPHANED' || fail "an orphaned logrotate drop-in was not reported"
 
 # ---- 7. a missing source tree refuses rather than reporting a clean run --
 # Every file would otherwise read as "shipped: none", and a report over an
