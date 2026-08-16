@@ -77,6 +77,21 @@ printf '%s' "$OUT" | grep -q "NOT an instruction to apply it" \
 printf '%s' "$OUT" | grep -q 'known site config — expected' \
     || fail "an all-site-config diff was not classified as expected"
 
+# ---- 2b-ii. the SUMMARY distinguishes the expected state -----------------
+# Exit 1 is permanent for a configured deployment — knapper.service differs
+# forever, and making it identical would mean the hostname and Access AUD
+# living in the repo. So the exit code cannot separate "the expected two
+# files" from "something changed", and the summary line is the only thing
+# that can.
+printf '%s' "$OUT" | grep -q 'Nothing UNCLASSIFIED' \
+    || fail "an all-site-config run did not say so in the summary"
+# ⚠️ UNCLASSIFIED, never "nothing to do". The stronger phrasing would be a
+# safety conclusion resting on SITE_KEYS being complete — the exact trust the
+# exit code deliberately withholds from it. This says what the classifier
+# recognised, not that the recognised lines are harmless.
+printf '%s' "$OUT" | grep -qiE 'nothing (to do|needs a decision)' \
+    && fail "the summary certified the diff as safe rather than as classified"
+
 # ---- 2c. a real release change is called out as the thing to merge -------
 # The other half, and the half that must never be swallowed: a key the site
 # list does not know lands in "OUTSIDE known site config", which is the
@@ -94,6 +109,11 @@ printf '%s' "$OUT" | grep -q 'OUTSIDE known site config' \
 # of the diff below is theirs to keep.
 printf '%s' "$OUT" | grep -qE '1 of [0-9]+ differing line' \
     || fail "the off-site line count was not reported"
+# And the summary says the opposite of the calm one — same exit code, and the
+# only place the two runs read differently.
+printf '%s' "$OUT" | grep -q 'OUTSIDE known' || fail "the summary did not flag the unclassified line"
+printf '%s' "$OUT" | grep -q 'Nothing UNCLASSIFIED' \
+    && fail "a run with an unclassified line claimed nothing was unclassified"
 
 # ---- 3. a shipped file that was never installed → exit 2 -----------------
 # The failure this script exists for. A release that adds a unit installs
@@ -192,6 +212,24 @@ printf '%s' "$OUT" | grep -q 'knapper-oldthing.timer: ORPHANED' || fail "an orph
 # Reported, never prescribed: /etc is authoritative and the orphan may be
 # deliberate. The script must not tell an operator to delete it.
 printf '%s' "$OUT" | grep -q 'not an instruction' || fail "the orphan line reads as an instruction to remove"
+
+# ---- 6b-ii. an outstanding orphan withholds the reassuring summary -------
+# "The expected state of a configured deployment" is a sentence about the whole
+# box, and it is not true while something in /etc is shipped by nothing — even
+# when every differing LINE is classified. The two findings are independent and
+# the summary must not let one speak for the other.
+new_case orphan_with_site_config_diff
+printf 'Environment=Mcp__AllowedHosts__0=mcp.example.com\n' > "$SHIPPED/knapper.service"
+printf 'Environment=Mcp__AllowedHosts__0=real.example.com\n' > "$ETC/knapper.service"
+printf 'retired\n' > "$ETC/knapper-oldthing.timer"
+run_check
+[ "$STATUS" -eq 1 ] || fail "site-config diff + orphan exited $STATUS, expected 1"
+printf '%s' "$OUT" | grep -q 'Nothing UNCLASSIFIED' \
+    && fail "an outstanding orphan still got the all-clear summary"
+printf '%s' "$OUT" | grep -q 'none with line(s) outside known site config' \
+    || fail "the classification result was lost when an orphan was present"
+printf '%s' "$OUT" | grep -q 'those are the open items' \
+    || fail "the summary did not point at the orphan as the open item"
 
 # ---- 6c. the orphan walk stays inside our own names ----------------------
 # /etc/systemd/system belongs to the host. A report that listed every unrelated

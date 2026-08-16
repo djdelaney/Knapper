@@ -29,7 +29,10 @@
 # Exit codes, ordered by how much they should worry you:
 #
 #   0  every shipped file is installed and identical, and /etc holds nothing
-#      this release does not account for — nothing to do
+#      this release does not account for — nothing to do. Reachable on a FRESH
+#      box only: once a deployment is configured, knapper.service differs
+#      forever (see 1), so a live CT can never print this and an operator
+#      waiting for it is waiting for something that cannot arrive.
 #   1  some installed file DIFFERS, or /etc holds something ORPHANED or an
 #      override drop-in. Read each one. knapper.service legitimately differs
 #      forever: /etc carries THIS deployment's edits (AllowedHosts, the Access
@@ -38,6 +41,12 @@
 #      still starts. Every state at this level means "a human decides", not
 #      "wrong" — and nothing here is ever removed for you: /etc is
 #      authoritative, and an orphan may be deliberate.
+#      Because 1 is permanent, the exit CODE cannot tell the expected two
+#      files from a real change: the SUMMARY at the bottom does that, and it
+#      is the line to read first. It reports what the line classifier
+#      recognised and what it did not — never that the recognised ones are
+#      fine, which would be a safety claim resting on SITE_KEYS being
+#      complete, and SITE_KEYS is deliberately allowed not to be.
 #   2  something shipped is NOT INSTALLED, or this script could not do its job.
 #      This is the one that is never expected: a release that adds a unit
 #      installs nothing by itself, and the missing unit is invisible until the
@@ -78,6 +87,10 @@ fi
 DIFFERS=0
 MISSING=0
 ORPHANED=0
+# Files carrying at least one differing line that matched NO known site-config
+# key. Only ever counts what the classifier did not recognise — never asserts
+# that the recognised ones are fine. See the summary at the bottom.
+UNCLASSIFIED=0
 
 # Settings /etc is authoritative for: a deployment fills these in and the
 # shipped unit carries a placeholder or a default. Used ONLY to classify the
@@ -153,6 +166,7 @@ compare() {
         echo "    → $_offsite of $_total differing line(s) are OUTSIDE known site config — that is what"
         echo "      this release changed. Review them before merging anything: they may be comments"
         echo "      only, and the rest is yours to keep."
+        UNCLASSIFIED=$((UNCLASSIFIED + 1))
     fi
     printf '%s\n' "$_body"
     DIFFERS=$((DIFFERS + 1))
@@ -274,8 +288,34 @@ if [ "$MISSING" -ne 0 ]; then
     exit 2
 fi
 if [ "$DIFFERS" -ne 0 ] || [ "$ORPHANED" -ne 0 ]; then
-    if [ "$DIFFERS" -ne 0 ]; then
-        echo "check-installed: $DIFFERS file(s) differ — reconcile BY HAND, then systemctl daemon-reload." >&2
+    # Exit 1 is the PERMANENT state of a configured deployment and cannot be
+    # anything else: knapper.service differs forever because /etc holds real
+    # values where the shipped unit holds placeholders, and making them
+    # identical would mean the hostname and the Access AUD living in the repo.
+    # So the exit code cannot distinguish "the expected two files" from
+    # "something changed" — only this summary can, and it is the line an
+    # operator reads first.
+    #
+    # ⚠️ It says UNCLASSIFIED, not "nothing to do", and the distinction is the
+    # whole reason the exit code was left alone: "no decision needed" would be
+    # a safety conclusion resting on SITE_KEYS being complete, and SITE_KEYS is
+    # explicitly allowed to be incomplete. This reports what the classifier
+    # recognised and what it did not. It never certifies the recognised ones.
+    if [ "$DIFFERS" -ne 0 ] && [ "$UNCLASSIFIED" -eq 0 ] && [ "$ORPHANED" -eq 0 ]; then
+        echo "check-installed: $DIFFERS file(s) differ, 0 orphaned. Nothing UNCLASSIFIED:" >&2
+        echo "  every differing line matched a known site-config key, which is the expected state" >&2
+        echo "  of a configured deployment — /etc holds real values where the release ships" >&2
+        echo "  placeholders. Reconcile BY HAND if that ever changes." >&2
+    elif [ "$DIFFERS" -ne 0 ] && [ "$UNCLASSIFIED" -eq 0 ]; then
+        # Same classification, but orphans are outstanding — so the reassuring
+        # half is withheld. "The expected state of a configured deployment" is
+        # a sentence about the whole box, and it is not true while something in
+        # /etc is shipped by nothing.
+        echo "check-installed: $DIFFERS file(s) differ, none with line(s) outside known site config." >&2
+        echo "  See the ORPHANED/OVERRIDE finding(s) above — those are the open items." >&2
+    elif [ "$DIFFERS" -ne 0 ]; then
+        echo "check-installed: $DIFFERS file(s) differ, $UNCLASSIFIED with line(s) OUTSIDE known" >&2
+        echo "  site config — reconcile BY HAND, then systemctl daemon-reload." >&2
         echo "  /etc carries this deployment's edits; copying the shipped file over them reverts" >&2
         echo "  every one of them silently into a service that still starts." >&2
     fi

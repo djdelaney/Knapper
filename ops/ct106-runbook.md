@@ -1231,6 +1231,11 @@ nothing enforcing it. The build-time half closed in `v0.2.1`; this is the other
 half. Same question is worth asking at §8, §9 and in monthly maintenance —
 "does `/etc` still match what shipped?" — and the answer is one command.
 
+Ask it after ANYTHING that writes to `/etc`, not only at those four moments,
+and specifically after a tool brought in to tidy something else: the first
+orphan this check ever found was litter left by exactly that, and none of the
+scheduled moments would have caught it on their own timing.
+
 Both directions of that question, since `v0.5.1`. Walking artifact → `/etc`
 can only ever report on files the release knows about, so anything in `/etc`
 that the release does NOT ship — a retired unit, a drop-in overriding a unit
