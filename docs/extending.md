@@ -82,6 +82,16 @@ field, thread it through the service, and:
 New rg flags go into the args build in `VaultSearchService`; the baseline
 (`--no-config --no-ignore --no-follow --sort=path`) is not negotiable.
 
+A new query SURFACE returns `QueryEnvelope<T>` itself. If it carries an
+extra field of its own, DERIVE from `QueryEnvelope<T>` and add the field —
+do not hold an envelope as a member. A member nests it under a key on the
+wire, and a client then needs a special case for that one tool
+(`vault_search_frontmatter` did until 0.5.0); copying the nine fields
+instead invites drift, because nothing forces a newly added envelope field
+into the copy. Deriving gives flat JSON and a compile error the moment the
+envelope grows. `Every_query_surface_wears_the_envelope_at_the_top_level`
+holds the line.
+
 ## Adding a mutation
 
 Model it on `Move`/`Delete`: resolve → conflict gate → sync gate → locks

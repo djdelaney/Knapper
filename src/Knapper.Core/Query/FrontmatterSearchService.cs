@@ -107,7 +107,7 @@ public sealed class FrontmatterSearchService(
         }
 
         var generationEnd = generation.Current;
-        var envelope = new QueryEnvelope<FrontmatterMatch>(
+        return new FrontmatterSearchResult(
             items,
             truncatedByBudget,
             truncatedByBudget && lastProcessed is not null
@@ -118,8 +118,8 @@ public sealed class FrontmatterSearchService(
             truncatedByBudget ? null : items.Count + CountBehindCursor(cursorPath),
             generationStart,
             generationEnd,
-            generationEnd != generationStart);
-        return new FrontmatterSearchResult(envelope, unparseable);
+            generationEnd != generationStart,
+            unparseable);
 
         // TotalMatches across ALL pages is only known on a first, complete
         // page (no cursor, no budget hit); continuation pages report null

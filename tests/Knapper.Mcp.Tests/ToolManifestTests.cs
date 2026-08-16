@@ -83,6 +83,39 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
             itemFields.TryGetProperty(field, out _).ShouldBeTrue($"item field '{field}' undescribed");
     }
 
+    [Fact]
+    public async Task Every_query_surface_wears_the_envelope_at_the_top_level()
+    {
+        // One envelope, one place to find it. vault_search_frontmatter nested
+        // its envelope under an `envelope` key until 0.5.0 — every field
+        // present and correct, one level too deep — which forced any
+        // client-side result parser to special-case one tool out of thirteen.
+        // Nothing failed; it was simply a contract with a hole in it.
+        var tools = (await ListToolsAsync()).ToDictionary(t => t.GetProperty("name").GetString()!);
+
+        foreach (var name in new[] { "vault_files", "vault_search", "vault_search_frontmatter" })
+        {
+            var properties = Schema(tools[name], "outputSchema").ShouldNotBeNull().GetProperty("properties");
+            foreach (var field in new[]
+                     {
+                         "items", "truncated", "nextCursor", "scannedFiles", "returnedItems",
+                         "totalMatches", "generationStart", "generationEnd", "changedDuringQuery",
+                     })
+            {
+                properties.TryGetProperty(field, out _)
+                    .ShouldBeTrue($"{name}: envelope field '{field}' is not at the top level");
+            }
+            properties.TryGetProperty("envelope", out _)
+                .ShouldBeFalse($"{name}: the envelope is nested under an 'envelope' key");
+        }
+
+        // The frontmatter surface's own addition survives the flattening: a
+        // skipped file could be hiding a match, so "no match" is exhaustive
+        // only once this list is empty.
+        Schema(tools["vault_search_frontmatter"], "outputSchema").ShouldNotBeNull()
+            .GetProperty("properties").TryGetProperty("unparseableFiles", out _).ShouldBeTrue();
+    }
+
     private async Task<IReadOnlyList<JsonElement>> ListToolsAsync() =>
         await (await RawMcp.OpenAsync(_factory.CreateClient())).ListToolsAsync();
 

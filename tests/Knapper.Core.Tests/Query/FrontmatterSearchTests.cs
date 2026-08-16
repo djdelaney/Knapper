@@ -12,13 +12,13 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
     public void Exists_finds_fields_and_reports_unparseable_files()
     {
         var result = _vault.Frontmatter.Search(new FrontmatterQuery { Field = "status" });
-        result.Envelope.Items.Select(m => m.Path).ShouldBe(["fm/a.md", "fm/b.md"]);
+        result.Items.Select(m => m.Path).ShouldBe(["fm/a.md", "fm/b.md"]);
         // Anything whose frontmatter could not be examined is REPORTED — it
         // could be hiding a match: broken YAML, an unterminated fence, and
         // equally a non-UTF-8 .md whose text can't even be decoded.
         result.UnparseableFiles.ShouldBe(["fm/broken.md", "fm/unterminated.md", "latin1/legacy.md"]);
-        result.Envelope.Truncated.ShouldBeFalse();
-        result.Envelope.ScannedFiles.ShouldNotBeNull();
+        result.Truncated.ShouldBeFalse();
+        result.ScannedFiles.ShouldNotBeNull();
     }
 
     [Fact]
@@ -27,12 +27,12 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
         _vault.Frontmatter.Search(new FrontmatterQuery
         {
             Field = "status", Op = FrontmatterOp.Equals, Value = "ARCHIVED",
-        }).Envelope.Items.ShouldHaveSingleItem().Path.ShouldBe("fm/b.md");
+        }).Items.ShouldHaveSingleItem().Path.ShouldBe("fm/b.md");
 
         var listHit = _vault.Frontmatter.Search(new FrontmatterQuery
         {
             Field = "tags", Op = FrontmatterOp.Equals, Value = "beta",
-        }).Envelope.Items.ShouldHaveSingleItem();
+        }).Items.ShouldHaveSingleItem();
         listHit.Path.ShouldBe("fm/a.md");
         listHit.Value.ShouldBe("alpha, beta");
     }
@@ -43,12 +43,12 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
         _vault.Frontmatter.Search(new FrontmatterQuery
         {
             Field = "title", Op = FrontmatterOp.Contains, Value = "note",
-        }).Envelope.Items.ShouldHaveSingleItem().Path.ShouldBe("fm/b.md");
+        }).Items.ShouldHaveSingleItem().Path.ShouldBe("fm/b.md");
 
         _vault.Frontmatter.Search(new FrontmatterQuery
         {
             Field = "title", Op = FrontmatterOp.Contains, Value = "zzz",
-        }).Envelope.Items.ShouldBeEmpty();
+        }).Items.ShouldBeEmpty();
     }
 
     [Fact]
@@ -69,10 +69,10 @@ public sealed class FrontmatterSearchTests : IClassFixture<FixtureVault>
         while (true)
         {
             var page = _vault.Frontmatter.Search(query with { Cursor = cursor });
-            all.AddRange(page.Envelope.Items.Select(m => m.Path));
-            if (!page.Envelope.Truncated)
+            all.AddRange(page.Items.Select(m => m.Path));
+            if (!page.Truncated)
                 break;
-            cursor = page.Envelope.NextCursor.ShouldNotBeNull();
+            cursor = page.NextCursor.ShouldNotBeNull();
         }
         all.ShouldBe(["fm/a.md", "fm/b.md"]);
     }

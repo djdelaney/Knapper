@@ -21,7 +21,17 @@ public interface IFreshnessSignals
     bool MovedDuringQuery { get; }
 }
 
-public sealed record QueryEnvelope<T>(
+/// <remarks>
+/// Unsealed for exactly one reason: a query surface that carries an EXTRA
+/// field alongside the envelope (frontmatter's <c>unparseableFiles</c>)
+/// inherits this record rather than holding one as a member. Holding one
+/// nests it on the wire — clients then need a special-case parser for that
+/// one tool — and duplicating the nine fields instead invites drift, since
+/// nothing would force a newly added envelope field into the copy. Deriving
+/// gets both: flat JSON, and a compile error here the moment the envelope
+/// grows. Derive only to ADD fields; never to change what one means.
+/// </remarks>
+public record QueryEnvelope<T>(
     IReadOnlyList<T> Items,
     bool Truncated,
     string? NextCursor,
@@ -265,10 +275,28 @@ public sealed record FrontmatterMatch(string Path, string Field, string? Value);
 /// a file with broken YAML could otherwise hide a match silently, and
 /// "no match" must mean the scope was exhaustively searched.
 /// </summary>
+/// <summary>
+/// The completeness envelope, FLAT, plus the files this search could not
+/// examine. Every query surface answers with the envelope at the top level —
+/// this one nested it under an <c>envelope</c> key until 0.5.0, which forced
+/// a client-side result parser to special-case one tool out of thirteen.
+/// </summary>
 public sealed record FrontmatterSearchResult(
-    QueryEnvelope<FrontmatterMatch> Envelope,
-    IReadOnlyList<string> UnparseableFiles) : IFreshnessSignals
-{
-    bool IFreshnessSignals.WasTruncated => Envelope.Truncated;
-    bool IFreshnessSignals.MovedDuringQuery => Envelope.ChangedDuringQuery;
-}
+    IReadOnlyList<FrontmatterMatch> Items,
+    bool Truncated,
+    string? NextCursor,
+    int? ScannedFiles,
+    int ReturnedItems,
+    long? TotalMatches,
+    long GenerationStart,
+    long GenerationEnd,
+    bool ChangedDuringQuery,
+    /// <summary>
+    /// Notes whose frontmatter could not be examined (broken YAML, non-UTF-8).
+    /// A skipped file could be hiding a match, so "no match" is only
+    /// exhaustive once this is empty — never omitted, empty list when clean.
+    /// </summary>
+    IReadOnlyList<string> UnparseableFiles)
+    : QueryEnvelope<FrontmatterMatch>(
+        Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
+        GenerationStart, GenerationEnd, ChangedDuringQuery);

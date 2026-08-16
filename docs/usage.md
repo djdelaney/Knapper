@@ -88,6 +88,14 @@ wear the completeness envelope (`items`, `truncated`, `nextCursor`,
 `changedDuringQuery`); `truncated: false` means the scope was exhaustively
 searched, and `totalMatches` is null rather than guessed.
 
+Those fields are at the TOP level of every query response — one result
+parser handles `vault_files`, `vault_search` and `vault_search_frontmatter`
+alike. (Before 0.5.0 the frontmatter surface nested its envelope under an
+`envelope` key; a client written against 0.4.0 or earlier needs that one
+special case removed.) A surface with an extra field of its own adds it
+beside the envelope, never around it — `unparseableFiles` is the worked
+example.
+
 Every tool publishes an `outputSchema` describing its result, and every
 response conforms to the one it published — a property with a schema is
 always present (null when it has no value); only properties the schema

@@ -113,6 +113,27 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
     }
 
     [Fact]
+    public async Task Frontmatter_round_trip_answers_with_the_same_flat_envelope_as_every_other_query()
+    {
+        // The RESPONSE half of the flattening (the manifest half is in
+        // ToolManifestTests): the same field names, in the same place, as
+        // vault_files and vault_search — plus this surface's own
+        // unparseableFiles, which is what makes its "no match" trustworthy.
+        using var isolated = new KnapperMcpFactory(null);
+        await using var client = await ConnectAsync(isolated);
+        var result = await CallOk(client, "vault_search_frontmatter", new() { ["field"] = "status" });
+
+        result.TryGetProperty("envelope", out _).ShouldBeFalse("the envelope is nested again");
+        result.GetProperty("items").EnumerateArray()
+            .Select(m => m.GetProperty("path").GetString())
+            .ShouldBe(["Projects/plan.md"]);
+        result.GetProperty("truncated").GetBoolean().ShouldBeFalse();
+        result.GetProperty("totalMatches").GetInt64().ShouldBe(1);
+        result.GetProperty("changedDuringQuery").GetBoolean().ShouldBeFalse();
+        result.GetProperty("unparseableFiles").GetArrayLength().ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Typed_errors_reach_the_wire_with_their_code_leading()
     {
         await using var client = await ConnectAsync(_factory);
