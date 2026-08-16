@@ -37,6 +37,7 @@ internal static class Verify
         string? url = null, clientId = null, clientSecret = null, monitorId = null, monitorSecret = null;
         string? expectVersion = null;
         var expectAccess = false;
+        var expectVersionFromSelf = false;
         for (var i = 1; i < args.Length; i++)
         {
             var value = i + 1 < args.Length ? args[i + 1] : null;
@@ -55,7 +56,13 @@ internal static class Verify
                 // case in one flag: unpack a tarball, run its own knapper
                 // against the URL, and the check is "is the service running
                 // the build I just installed" with nothing typed by hand.
-                case "--expect-this-version": expectVersion = BuildInfo.Version; break;
+                // Where the expectation CAME FROM is carried forward: a
+                // mismatch against a self-sourced expectation can be a stale
+                // CLI, which no server-side remediation would fix.
+                case "--expect-this-version":
+                    expectVersion = BuildInfo.Version;
+                    expectVersionFromSelf = true;
+                    break;
                 case "--client-id": clientId = value; i++; break;
                 case "--client-secret": clientSecret = value; i++; break;
                 case "--monitor-client-id": monitorId = value; i++; break;
@@ -85,7 +92,8 @@ internal static class Verify
         }
 
         return new Checker(
-                endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret), expectVersion, expectAccess)
+                endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret),
+                expectVersion, expectVersionFromSelf, expectAccess)
             .RunAsync().GetAwaiter().GetResult();
 
         static (string Id, string Secret)? Token(string? id, string? secret) =>
@@ -97,9 +105,12 @@ internal static class Verify
         (string Id, string Secret)? owner,
         (string Id, string Secret)? monitor,
         string? expectVersion,
+        bool expectVersionFromSelf,
         bool expectAccess)
     {
         private int _failures;
+        private int _passed;
+        private int _skipped;
 
         // What /up reported, kept so the MCP surface's version can be compared
         // against it. Two surfaces of ONE process must agree; if they don't,
@@ -120,11 +131,25 @@ internal static class Verify
 
         internal async Task<int> RunAsync()
         {
-            Console.WriteLine($"verifying {endpoint} (read-only)");
+            // The CLI's own build, on every run, unconditionally. `verify`
+            // reports on a REMOTE process, so every version string it prints
+            // is about the far end and the near end is invisible — which is
+            // how a CLI two releases stale ran fourteen checks instead of
+            // fifteen and printed "all checks passed" (observed §8b,
+            // 2026-08-16). The missing check was recoverable only by someone
+            // who knew the expected count from elsewhere. Now the transcript
+            // says which binary produced it.
+            Console.WriteLine($"verifying {endpoint} (read-only) · knapper CLI {BuildInfo.Version}");
 
             await IngressAsync().ConfigureAwait(false);
             await SurfaceAsync().ConfigureAwait(false);
 
+            // The tally is a separate line ABOVE the verdict, and the verdict
+            // keeps its exact wording: the runbook tells an operator to diff a
+            // run against a good one, and greps for these strings exist.
+            // A shorter check list than another version's is otherwise
+            // invisible — every line reads ok in both.
+            Console.WriteLine($"{_passed} ok, {_failures} failed, {_skipped} skipped");
             Console.WriteLine(_failures == 0
                 ? "all checks passed"
                 : $"{_failures} check(s) FAILED");
@@ -319,6 +344,23 @@ internal static class Verify
         /// </summary>
         private void VersionChecks(string reported)
         {
+            // A CLI older than the service, said out loud on EVERY run — not
+            // only when an expectation was passed, and not as a check, because
+            // it is a fact about this transcript rather than about the
+            // deployment. An old `knapper` runs the check list IT shipped
+            // with: fourteen checks where the deployed build's own CLI runs
+            // fifteen, every line ok, "all checks passed" (§8b, 2026-08-16).
+            // With --expect-version <release> it does not even mismatch —
+            // a 0.3.2 CLI asked for release 0.5.1 sees 0.5.1 and passes,
+            // over a check list that predates the schema check entirely.
+            if (BuildInfo.CompareReleases(BuildInfo.Version, reported) is < 0)
+            {
+                Console.WriteLine(
+                    $"warn  this CLI is {BuildInfo.Version} and the service reports {reported} — the client is " +
+                    "the older of the two, so this run used the check list that build shipped with, which may be " +
+                    "shorter than the deployed build's. Re-run from the installed CLI before trusting the verdict");
+            }
+
             // /up and the MCP endpoint are two surfaces of one process. Always
             // checked, expectation or not: it costs nothing and it is the check
             // that catches a second, stale process still answering on the port.
@@ -346,7 +388,14 @@ internal static class Verify
                 return;
             }
 
-            Check($"the deployed build is '{expectVersion}'", () =>
+            // The LABEL says whose claim this is. With --expect-this-version
+            // the expectation is the running CLI's own build, and "the
+            // deployed build is '0.3.2+g9ebbc48'" then reads as a statement
+            // about the server when it is a statement about the client.
+            var label = expectVersionFromSelf
+                ? $"the service is running this CLI's own build ('{expectVersion}')"
+                : $"the deployed build is '{expectVersion}'";
+            Check(label, () =>
             {
                 // An expectation carrying '+' names an exact build and is
                 // compared exactly. A bare X.Y.Z is what an operator types from
@@ -357,21 +406,13 @@ internal static class Verify
                 if (expectVersion.Contains('+', StringComparison.Ordinal))
                 {
                     if (!string.Equals(reported, expectVersion, StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException(
-                            $"the service reports '{reported}' — the installed build is not the expected one; " +
-                            "the restart did not pick up the new binary, or the wrong tarball was unpacked");
-                    }
+                        throw new InvalidOperationException(Mismatch(reported, expectVersion));
                     return;
                 }
 
                 var release = reported.Split('+')[0];
                 if (!string.Equals(release, expectVersion, StringComparison.Ordinal))
-                {
-                    throw new InvalidOperationException(
-                        $"the service reports '{reported}', expected release '{expectVersion}' — the restart did " +
-                        "not pick up the new binary, or the wrong tarball was unpacked");
-                }
+                    throw new InvalidOperationException(Mismatch(reported, expectVersion));
                 if (reported.EndsWith(".dirty", StringComparison.Ordinal))
                 {
                     throw new InvalidOperationException(
@@ -380,6 +421,35 @@ internal static class Verify
                         "Rebuild from a clean checkout, or pass the exact string to --expect-version to accept it");
                 }
             });
+        }
+
+        /// <summary>
+        /// Both sides, each with its ROLE, and no causal claim the evidence
+        /// does not support. The message this replaces named only server-side
+        /// causes — "the restart did not pick up the new binary, or the wrong
+        /// tarball was unpacked" — which is right for an expectation an
+        /// operator typed and exactly wrong for one the CLI supplied about
+        /// itself: a `knapper` two releases stale sends its reader to restart
+        /// or re-unpack a production service that is entirely correct
+        /// (observed §8b, 2026-08-16). When the self-sourced expectation is
+        /// the OLDER of the two, the near end is the likelier fault and the
+        /// message says so; when it is newer, the original diagnosis stands,
+        /// because that is the build someone just installed.
+        /// </summary>
+        private string Mismatch(string reported, string expected)
+        {
+            var side = expectVersionFromSelf
+                ? $"this CLI is '{expected}'"
+                : $"expected '{expected}'";
+            if (expectVersionFromSelf && BuildInfo.CompareReleases(expected, reported) is < 0)
+            {
+                return $"{side}, the service reports '{reported}' — and this CLI is the OLDER of the two, so " +
+                    "the likelier fault is a stale `knapper` on the box you are typing on, not the deployment. " +
+                    "Re-run from the build you just installed (or state the expectation with --expect-version) " +
+                    "before touching the service";
+            }
+            return $"{side}, the service reports '{reported}' — the installed build is not the expected one; " +
+                "the restart did not pick up the new binary, or the wrong tarball was unpacked";
         }
 
         // ---- the MCP surface itself ---------------------------------------
@@ -680,6 +750,7 @@ internal static class Verify
             {
                 var detail = await probe().ConfigureAwait(false);
                 Console.WriteLine($"ok    {what}" + (detail is null ? "" : $" ({detail})"));
+                _passed++;
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
@@ -688,7 +759,11 @@ internal static class Verify
             }
         }
 
-        private static void Skip(string what, string why) => Console.WriteLine($"skip  {what} — {why}");
+        private void Skip(string what, string why)
+        {
+            Console.WriteLine($"skip  {what} — {why}");
+            _skipped++;
+        }
 
         private static string Flatten(Exception e) =>
             e is AggregateException aggregate ? Flatten(aggregate.Flatten().InnerExceptions[0]) : e.Message;

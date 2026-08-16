@@ -259,11 +259,24 @@ Tool errors are structured MCP errors whose message leads with the code:
   port) is otherwise invisible, and every other green check would be
   describing whichever one answered.
 
+  Credentials come from the environment, and putting them there must not
+  itself write them to disk: `VAR=… knapper verify …` is the command line as
+  far as shell history is concerned. Use a mode-600 env file of `export`
+  lines, sourced in a subshell so the tokens do not outlive the command:
+
   ```sh
-  CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
-  CF_MONITOR_CLIENT_ID=… CF_MONITOR_CLIENT_SECRET=… \
-    knapper verify --url https://mcp.example.com/
+  ( . /root/.knapper-verify.env
+    knapper verify --url https://mcp.example.com/ )
   ```
+
+  Every run prints the CLI's OWN build in its header
+  (`verifying … · knapper CLI 0.5.1+gabc0dbf`) and a tally above the verdict
+  (`14 ok, 0 failed, 1 skipped`), and warns outright when the CLI is an older
+  release than the service. All three exist because everything else `verify`
+  prints describes the far end: a stale CLI runs whatever check list *it*
+  shipped with, and reports "all checks passed" over a shorter one without
+  anything looking wrong — including when `--expect-version` was passed and
+  matched, since a check that is absent cannot fail.
 
   `--expect-version X.Y.Z` adds the post-upgrade check: **is the service
   running the build that was just installed?** A restart onto the old binary
@@ -272,7 +285,10 @@ Tool errors are structured MCP errors whose message leads with the code:
   `.dirty` one; pass the full `X.Y.Z+g<ref>` to demand one exact build.
   `--expect-this-version` uses the version of the `knapper` binary being run,
   so invoking the CLI out of the freshly-unpacked tarball needs nothing typed
-  by hand (runbook §10.3).
+  by hand (runbook §10.3) — and only there: from any other copy it is
+  asserting that copy is current, so a mismatch is reported with both sides
+  named, and an older CLI is called out as the likely fault instead of
+  sending you to restart a healthy service.
 - The audit log (`Vault:AuditLogPath`) is JSONL, one entry per mutation
   attempt including rejections: timestamp, client, request id, op, path,
   outcome, before/after SHA. `knapper audit-tail 50` shows the recent end.

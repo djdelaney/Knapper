@@ -62,6 +62,27 @@ public sealed class VersionSurfaceTests
     }
 
     [Fact]
+    public void CompareReleases_orders_by_release_and_says_when_it_cannot()
+    {
+        // Two builds of one release are the SAME release: the metadata after
+        // '+' identifies a build, not an age.
+        BuildInfo.CompareReleases("0.5.1+gabc0dbf", "0.5.1+g9ebbc48").ShouldBe(0);
+        (BuildInfo.CompareReleases("0.3.2+g9ebbc48", "0.5.1+gabc0dbf") is < 0).ShouldBeTrue();
+        (BuildInfo.CompareReleases("0.5.1", "0.4.9") is > 0).ShouldBeTrue();
+        // Numeric, not lexical: "0.10.0" is newer than "0.9.0".
+        (BuildInfo.CompareReleases("0.9.0", "0.10.0") is < 0).ShouldBeTrue();
+
+        // Unorderable is a THIRD answer. `verify` decides whether a version
+        // mismatch is a stale client or a bad deployment from this, and
+        // "cannot tell" must not arrive looking like "same age" — one adds a
+        // sentence sending an operator to fix their own box, the other leaves
+        // the neutral diagnosis standing.
+        BuildInfo.CompareReleases("0.5.1", "not-a-version").ShouldBeNull();
+        BuildInfo.CompareReleases("0.5", "0.5.1").ShouldBeNull();
+        BuildInfo.CompareReleases("0.5.1-rc.1", "0.5.1").ShouldBeNull();
+    }
+
+    [Fact]
     public void Directory_Build_props_declares_exactly_one_version()
     {
         if (RepoRoot() is not { } root)

@@ -35,6 +35,47 @@ public static class BuildInfo
     /// </summary>
     public static string Release => Version.Split('+')[0];
 
+    /// <summary>
+    /// Orders two version strings by their RELEASE part alone: negative if
+    /// <paramref name="left"/> is older, 0 if the same release, positive if
+    /// newer — and <c>null</c> when either string is not an X.Y.Z release,
+    /// which is a THIRD answer, not a tie. "Cannot be ordered" and "the same
+    /// age" lead to opposite conclusions in the one place this is used
+    /// (deciding whether a version mismatch is a stale client or a bad
+    /// deployment), so they must not share a return value.
+    ///
+    /// Build metadata after '+' is deliberately ignored: it identifies a
+    /// build, not an age, and two builds of one release are the same release.
+    /// </summary>
+    public static int? CompareReleases(string left, string right)
+    {
+        var a = Parse(left);
+        var b = Parse(right);
+        if (a is null || b is null)
+            return null;
+        for (var i = 0; i < 3; i++)
+        {
+            var c = a[i].CompareTo(b[i]);
+            if (c != 0)
+                return c;
+        }
+        return 0;
+
+        static int[]? Parse(string version)
+        {
+            var parts = version.Split('+')[0].Split('.');
+            if (parts.Length != 3)
+                return null;
+            var numbers = new int[3];
+            for (var i = 0; i < 3; i++)
+            {
+                if (!int.TryParse(parts[i], out numbers[i]))
+                    return null;
+            }
+            return numbers;
+        }
+    }
+
     private static string Resolve()
     {
         var informational = typeof(BuildInfo).Assembly

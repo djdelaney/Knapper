@@ -51,6 +51,42 @@ public sealed class VerifyCommandTests : IDisposable
     }
 
     /// <summary>
+    /// A transcript has to say which binary produced it. `verify` reports on a
+    /// REMOTE process, so every version string in its output is about the far
+    /// end and the near end was invisible — and on 2026-08-16 a CLI two
+    /// releases stale ran FOURTEEN checks where the current build runs
+    /// fifteen, printed "all checks passed", and the missing one (the schema
+    /// check added in 0.4.0) was recoverable only by someone who knew the
+    /// expected count from an external note. Every line read ok in both runs;
+    /// the length of the list was the only signal, and nothing printed it.
+    /// </summary>
+    [Fact]
+    public void Every_run_names_the_CLI_that_produced_it_and_tallies_its_checks()
+    {
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir);
+
+        var (exitCode, output) = RunVerify(server.Port);
+
+        exitCode.ShouldBe(0, output);
+        // Server and CLI are the same tree here, so this is also a real
+        // statement that the two agree about the build they came from.
+        output.ShouldContain($"knapper CLI {Knapper.Core.BuildInfo.Version}");
+
+        var tally = System.Text.RegularExpressions.Regex.Match(
+            output, @"^(\d+) ok, (\d+) failed, (\d+) skipped$",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+        tally.Success.ShouldBeTrue($"no tally line in:\n{output}");
+        int.Parse(tally.Groups[2].Value).ShouldBe(0);
+        // The number is not asserted exactly — it moves whenever a check is
+        // added, which is the point. What must hold is that it is REPORTED,
+        // and that it counts the ok lines actually printed.
+        int.Parse(tally.Groups[1].Value)
+            .ShouldBe(output.Split('\n').Count(l => l.StartsWith("ok    ", StringComparison.Ordinal)));
+        int.Parse(tally.Groups[3].Value)
+            .ShouldBe(output.Split('\n').Count(l => l.StartsWith("skip  ", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
     /// The regression this file exists for as of 2026-08-14: the two-application
     /// deployment §6.5 signs off, with Access ACTUALLY in front, refusing
     /// exactly as Cloudflare does. `verify` reported two FAILs here — the

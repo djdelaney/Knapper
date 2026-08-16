@@ -730,11 +730,17 @@ and still without a write.
    both tokens in the environment of every command run afterwards in that
    session.
 
-   Run it **from the dev box or the Proxmox host, NOT the CT** (a loopback URL
-   skips every ingress check). `--expect-access` is what makes "no skips" mean
-   something here: it asserts an Access edge fronts this URL, so a loopback
-   URL typed by mistake FAILS the ingress checks instead of skipping them into
-   a clean-looking run.
+   ⛔ **What decides whether this run tests ingress is the `--url`, not the
+   box.** A PUBLIC URL goes out to the edge and back through the tunnel from
+   anywhere — including the CT itself, which can reach its own public
+   hostname — and a LOOPBACK URL skips every ingress check no matter where it
+   is typed. The dev box and the Proxmox host are convenient, not required;
+   what is required is that the URL is the public one. `--expect-access` is
+   what makes "no skips" mean something: it asserts an Access edge fronts this
+   URL, so a loopback URL typed by mistake FAILS the ingress checks instead of
+   skipping them into a clean-looking run. Prefer the copy of `knapper` inside
+   the CT — an external copy is a second artifact that upgrades must
+   remember (§10.3).
 
    Now the skipped checks do the work: unauthenticated callers refused on
    both `/up` and the MCP endpoint, `/health` unreachable from outside, `/up`
@@ -1381,9 +1387,10 @@ on the command line, where they enter shell history.
 route and its Access app are torn down at §9 (that is a checklist item), so by
 the time §10 ever runs there is nothing at the smoke hostname — and a `verify`
 against a dead name fails at connect, which reads like the upgrade having
-broken the service. Run it from the dev box or the Proxmox host, with the ROOT
-app's service token, exactly as §6.5 does: from the CT a loopback URL works
-too, but it skips every ingress check.
+broken the service. Run it with the ROOT app's service token, exactly as §6.5
+does — from the CT is fine, and preferred now that the CT holds the only CLI:
+the public URL still traverses the edge from there. What must not happen is
+substituting a loopback URL, which skips every ingress check.
 
 Read-only, as always (`knapper verify` may never write; the vault here is
 Helios over Sync). `--expect-version <v>` takes the bare release and accepts
@@ -1402,19 +1409,19 @@ it is the one place in §10 where skipping the ingress checks is fine — §10.3
 asking which BUILD answered, and the tunnelled run above already asked the rest.
 `verify` prints which checks it skipped and why; read those lines.
 
-⚠️ **`--expect-this-version` belongs to the just-upgraded box and nowhere
-else.** It compares the RUNNING CLI's build to the server's, so from any other
-copy of `knapper` it is asserting that copy is current — and a deployment that
-keeps a CLI outside the container (on the Proxmox host, say, so `verify` can be
-run from outside and traverse the tunnel) has a second artifact that §10.1's
-install step does not touch. Upgrade the CT, forget the outside copy, and the
-check fails naming two versions, which reads as a deployment fault when it is a
-stale client. From anywhere but the box you just unpacked onto, pin the version
-explicitly with `--expect-version <v>`. And what makes a run traverse the
-tunnel is the `--url`, not which box it runs from — a public URL goes out to
-the edge and back in even from the CT itself; the CT is called out above
-because a *loopback* URL there skips the ingress checks, not because the box is
-disqualified.
+⛔ **`--expect-this-version` belongs to the just-upgraded box and nowhere
+else, and a CLI kept anywhere else is a second artifact §10.1 does not
+touch.** The flag compares the RUNNING CLI's build to the server's, so from
+any other copy it is asserting that copy is current. Upgrade the CT, forget an
+outside copy, and the check fails naming two versions — which the message used
+to blame on the server, sending its reader to restart or re-unpack a service
+that was entirely correct (§8b, 2026-08-16; the message now names both sides
+and calls out an older CLI as the likelier fault, and the run header prints
+which `knapper` produced the transcript). **Prefer keeping one CLI, inside the
+CT**: a public `--url` traverses the edge from there just as well, so an
+external copy buys nothing and drifts silently — this deployment's drifted two
+releases. If one must exist, upgrade it with the CT and pin the expectation
+with `--expect-version <v>` rather than `--expect-this-version`.
 
 A failure here means the service is not the build just installed. Do not
 "restart again and see" — go to §10.4.
@@ -1422,6 +1429,16 @@ A failure here means the service is not the build just installed. Do not
 The `tools/list` line reports the count it saw (`ok tools/list is EXACTLY the
 locked surface (13 tools)`), so the acceptance checklist's "13 tool names" is
 answered by this run rather than by a second `tools/list` call by hand.
+
+**Read the header and the tally, not only the verdict.** The first line names
+the CLI that produced the transcript (`verifying … · knapper CLI <v>`) and the
+line above the verdict counts what ran (`14 ok, 0 failed, 1 skipped`). Both are
+there because everything else in the output describes the FAR end: a stale CLI
+runs the check list it shipped with and prints "all checks passed" over a
+shorter one, with every line reading ok. Compare the count against the previous
+run's; a drop means the client, not the service. `verify` also prints a `warn`
+line of its own when the CLI is an older release than the service — the case
+that needs no comparison at all.
 
 Also confirm `knapper doctor` still passes: a release can add a dependency
 gate (ripgrep's minimum major is the precedent) that the CT does not satisfy.
