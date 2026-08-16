@@ -221,6 +221,30 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Counts_mode_reports_the_grand_total_on_a_paginated_final_page()
+    {
+        // The whole point of totalMatches is answering "how many, in total"
+        // without paging to exhaustion and summing — so nulling it the moment
+        // a cursor appears withheld it in exactly the case that needs it.
+        // A final page runs the stream to completion and the sum accumulates
+        // above the cursor filter, so it IS the grand total; a mid-page stops
+        // rg early and must still report null rather than a partial sum.
+        var query = new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["many"], MaxResults = 3 };
+
+        var first = _vault.Search.SearchCounts(query);
+        first.Items.Count.ShouldBe(3);
+        first.Truncated.ShouldBeTrue();
+        first.TotalMatches.ShouldBeNull(); // cut short — a partial sum would be a guess
+        first.NextCursor.ShouldNotBeNull();
+
+        var last = _vault.Search.SearchCounts(query with { Cursor = first.NextCursor });
+        last.Items.Count.ShouldBe(1);
+        last.Truncated.ShouldBeFalse();
+        last.TotalMatches.ShouldBe(60); // all four files, not just this page's one
+        last.Items[0].Count.ShouldBe(15);
+    }
+
+    [Fact]
     public void Invalid_regex_is_a_typed_error_with_rg_diagnostics()
     {
         var ex = Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(Q("unclosed(")));

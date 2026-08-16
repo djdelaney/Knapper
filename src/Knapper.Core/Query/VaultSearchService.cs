@@ -145,9 +145,16 @@ public sealed class VaultSearchService(
             last = pos;
             return true;
         });
-        // TotalMatches = the full sum, known only when the whole scope was
-        // counted from the start (no cursor, ran to completion).
-        var total = outcome.Completed && plan.CursorPosition is null ? sum : (long?)null;
+        // TotalMatches = the sum over the WHOLE scope, honest whenever the
+        // stream ran to completion — with a cursor or without one. `sum`
+        // accumulates ABOVE the cursor filter, so it counts the files behind
+        // the cursor too, and a final page never fills (nothing stops rg
+        // early), so it carries the true grand total. Demanding no cursor as
+        // well threw that away on every page but a single complete one —
+        // which is precisely when a caller cannot get the total any other way
+        // than paging to exhaustion and summing. Mid-pages still report null:
+        // filling the page stops rg, and a partial sum is a guess.
+        var total = outcome.Completed ? sum : (long?)null;
         return Finish(plan, items, last, total, scannedFiles: null, outcome, hasMore);
     }
 

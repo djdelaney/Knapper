@@ -82,6 +82,32 @@ field, thread it through the service, and:
 New rg flags go into the args build in `VaultSearchService`; the baseline
 (`--no-config --no-ignore --no-follow --sort=path`) is not negotiable.
 
+`totalMatches` is deliberately NOT uniform across surfaces, and a new surface
+has to decide which case it is in rather than copy a neighbour. What the field
+means is fixed — a count over the WHOLE scope, across every page, null when
+this query could not establish one, never a guess and never a zero standing in
+for "unknown" — but what each surface can honestly claim differs with how it
+gets its data:
+
+| Surface | Populated | Why |
+|---|---|---|
+| `vault_files` | always | the lister walks and sorts the whole scope in memory before paginating, so the total is known on every page |
+| `vault_search` counts | whenever the rg stream ran to completion, cursor or not | the sum accumulates above the cursor filter; a final page never fills, so nothing stops rg early |
+| `vault_search` matches | on a complete stream | the page size or `MaxOutputBytes` cutting the stream leaves a lower bound, not a total |
+| `vault_search` files | never | it counts FILES, not matches; a number here would answer a different question than the field name asks |
+| `vault_search_frontmatter` | first complete page only | continuation pages do not re-examine what is behind the cursor |
+
+The trap is the middle two: "no cursor" is NOT the condition — completion is.
+`SearchCounts` demanded both, which withheld the total on every page of a
+paginated search including the last, i.e. exactly when a caller cannot get it
+any other way than paging to exhaustion and summing. And whatever a surface
+does, the tool DESCRIPTION has to say it: an unqualified "the envelope's
+totalMatches is the grand total" shipped in every release from 0.1.0 to 0.5.1
+against a field that was usually null. No schema check can catch that — a null
+is a legal value of `long?`, and the description is prose. Both halves were
+found by running §8b against a real client (2026-08-16), which is the only
+gate that reads a tool description the way an agent does.
+
 A new query SURFACE returns `QueryEnvelope<T>` itself. If it carries an
 extra field of its own, DERIVE from `QueryEnvelope<T>` and add the field —
 do not hold an envelope as a member. A member nests it under a key on the

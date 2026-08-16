@@ -11,7 +11,9 @@ public sealed class VaultFilesTool(VaultFileLister lister, ToolSupport support)
     [McpServerTool(Name = "vault_files", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
     [Description(
         "List vault files/directories with filters, sorted by path. Every response carries the completeness " +
-        "envelope: truncated + nextCursor (pass cursor back to continue), scannedFiles, totalMatches, and the " +
+        "envelope: truncated + nextCursor (pass cursor back to continue), scannedFiles, totalMatches (here the " +
+        "count of matching entries across ALL pages, known on every page — this listing walks the whole scope " +
+        "before paginating), and the " +
         "vault generation span (changedDuringQuery=true means the vault moved while listing). " +
         "Hidden entries and control dirs (.git/.obsidian/.trash) are never visible.")]
     public QueryEnvelope<VaultFileEntry> Files(
@@ -58,9 +60,14 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
     [McpServerTool(Name = "vault_search", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
     [Description(
         "Full-text search over the vault (server-side ripgrep). Modes: 'matches' (records with path/line/column/" +
-        "text and optional context), 'files' (paths containing a match), 'counts' (per-file match counts; the " +
-        "envelope's totalMatches is the grand total). Responses wear the completeness envelope — truncated=false " +
+        "text and optional context), 'files' (paths containing a match), 'counts' (per-file match counts). " +
+        "Responses wear the completeness envelope — truncated=false " +
         "means the scope was exhaustively searched; pass nextCursor back to continue a truncated page. " +
+        "totalMatches is a match count across the WHOLE scope and is null whenever this search could not " +
+        "establish one: always in files mode (which counts files, not matches — use vault_files for a total " +
+        "entry count), and on any page that was cut short by the page size or the time budget. It is populated " +
+        "in counts mode on a page that ran to completion, including the last page of a paginated search. " +
+        "A null is never a zero. " +
         "Column is a 1-based byte offset. Hidden files and control dirs are never searched. Every mode returns " +
         "the same item shape: 'path' always, plus line/column/text (+context) in matches mode and 'count' in " +
         "counts mode; fields the mode does not fill are omitted.")]
