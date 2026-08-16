@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Knapper.Core.Query;
 
 /// <summary>
@@ -32,6 +34,15 @@ public sealed record QueryEnvelope<T>(
 {
     bool IFreshnessSignals.WasTruncated => Truncated;
     bool IFreshnessSignals.MovedDuringQuery => ChangedDuringQuery;
+
+    /// <summary>
+    /// Project the items, carrying every completeness/freshness field through
+    /// untouched. Field-by-field re-construction at a call site is how a
+    /// truncation flag or a generation bound gets silently dropped.
+    /// </summary>
+    public QueryEnvelope<TOut> Map<TOut>(Func<T, TOut> project) =>
+        new([.. Items.Select(project)], Truncated, NextCursor, ScannedFiles, ReturnedItems,
+            TotalMatches, GenerationStart, GenerationEnd, ChangedDuringQuery);
 }
 
 public enum CaseMode
@@ -93,6 +104,37 @@ public sealed record SearchMatch(
     IReadOnlyList<string>? ContextAfter);
 
 public sealed record FileMatchCount(string Path, long Count);
+
+/// <summary>
+/// The ONE wire shape vault_search returns, across all three modes. The three
+/// modes produce genuinely different records (match / bare path / per-file
+/// count), and the obvious C# spelling of that — a tool method returning
+/// <c>object</c> — publishes an outputSchema of bare <c>true</c>, which
+/// strict MCP clients reject hard enough to discard the entire tool list.
+/// See <see cref="Knapper.Core.ToolSchemaContract"/>.
+///
+/// So the union is expressed in the DATA instead, where a schema can describe
+/// it: <c>Path</c> is always present, and which of the rest are populated
+/// follows the mode — matches fills line/column/text (+ context when asked),
+/// counts fills count, files fills neither. Nulls are omitted on the wire, so
+/// a files-mode record is <c>{"path": "…"}</c> and nothing more.
+/// </summary>
+public sealed record SearchResultItem(
+    string Path,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Line = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Column = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Text = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? ContextBefore = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? ContextAfter = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Count = null)
+{
+    public static SearchResultItem FromMatch(SearchMatch match) =>
+        new(match.Path, match.Line, match.Column, match.Text, match.ContextBefore, match.ContextAfter);
+
+    public static SearchResultItem FromPath(string path) => new(path);
+
+    public static SearchResultItem FromCount(FileMatchCount count) => new(count.Path, Count: count.Count);
+}
 
 public enum EntryKind
 {

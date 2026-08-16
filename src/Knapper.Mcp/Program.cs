@@ -110,8 +110,10 @@ builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
 builder.Services
     .AddMcpServer(ConfigureServerInfo)
     .WithHttpTransport()
-    .WithTools(ToolSurface.Resolve(
-        builder.Configuration.GetSection($"{McpOptions.SectionName}:{nameof(McpOptions.DisabledTools)}").Get<string[]>()));
+    .WithTools(
+        ToolSurface.Resolve(
+            builder.Configuration.GetSection($"{McpOptions.SectionName}:{nameof(McpOptions.DisabledTools)}").Get<string[]>()),
+        ToolSerialization.Options);
 
 // Registered unconditionally and inertly; everything reads resolved options
 // at request time. See AccessAuth.

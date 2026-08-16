@@ -50,6 +50,21 @@ How to add capability without breaking the contracts. Read
 5. Wire DTOs over Core enums: tool parameters use strings/POCOs (see
    `EditOp`, `BatchOp`), parsed with a typed `InvalidArgument` on bad
    values — enum JSON binding is not part of the wire contract.
+6. **Return a concrete type — never `object`.** The declared return type is
+   what the SDK turns into the published `outputSchema`, and for a loosely
+   typed return it publishes the permissive `true`. See the manifest
+   invariant in `CLAUDE.md`. If the tool has several result shapes, express
+   the union in the DATA (one record, optional members — `SearchResultItem`
+   is the worked example), not in the signature. Optional members carry a
+   C# default value AND
+   `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]`: the
+   default is what makes the schema call them optional, the attribute is
+   what keeps them out of the payload. Anything without a default is
+   `required` in the schema and must appear in every response — the
+   serializer writes nulls (`ToolSerialization`) so it does.
+   `ToolManifestTests` and `ToolResponseConformanceTests` hold both halves;
+   the conformance test needs a case for the new tool, and fails if it does
+   not get one.
 
 ## Adding a query capability
 

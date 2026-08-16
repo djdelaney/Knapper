@@ -59,6 +59,13 @@ public sealed class VaultSearchService(
         {
             if (line.Length == 0)
                 return true;
+            // Same normalization the match stream does, for the same reason:
+            // an unprefixed search is handed "." and rg echoes it back on
+            // every path. A "./" survivor is not cosmetic — it is not a vault
+            // path, so it cannot be fed to vault_read, does not compare equal
+            // to the same file from any other surface, and rides inside the
+            // cursor as the resume position.
+            var path = NormalizeRgPath(line);
             // Through the FULL resolver gate, not a bare Path.Combine —
             // rg output is trusted-adjacent, but every string that becomes a
             // filesystem path goes through the one gate (defense in depth).
@@ -68,7 +75,7 @@ public sealed class VaultSearchService(
             string absolute;
             try
             {
-                absolute = resolver.Resolve(line).Absolute;
+                absolute = resolver.Resolve(path).Absolute;
             }
             catch (KnapperException e)
             {
@@ -82,7 +89,7 @@ public sealed class VaultSearchService(
                     "ripgrep filename-list entry does not resolve to a vault file — a filename may " +
                     "contain a newline (rename it), or the vault changed mid-query (re-run)");
             }
-            var pos = (line, 0, 0);
+            var pos = (path, 0, 0);
             if (plan.CursorPosition is { } cur && QueryCursor.ComparePosition(pos, cur) <= 0)
                 return true;
             if (items.Count == plan.PageSize)
@@ -90,7 +97,7 @@ public sealed class VaultSearchService(
                 hasMore = true;
                 return false;
             }
-            items.Add(line);
+            items.Add(path);
             last = pos;
             return true;
         });
@@ -122,7 +129,9 @@ public sealed class VaultSearchService(
                     "unparseable ripgrep --count-matches output — a vault filename may contain a " +
                     "newline (rename it); refusing to report a possibly-incomplete count");
             }
-            var path = line[..nul];
+            // Normalized for the same reason as the -l path above: rg echoes
+            // back the "." it was handed on an unprefixed search.
+            var path = NormalizeRgPath(line[..nul]);
             sum += count;
             var pos = (path, 0, 0);
             if (plan.CursorPosition is { } cur && QueryCursor.ComparePosition(pos, cur) <= 0)

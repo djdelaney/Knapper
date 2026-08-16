@@ -186,6 +186,32 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Unscoped_files_and_counts_modes_report_vault_paths_not_rg_echoes()
+    {
+        // WITHOUT PathPrefixes — the case the two tests above never reach.
+        // rg is handed an explicit "." (it must be: given nothing it may read
+        // stdin and report an empty search as an exhaustive no-match), and it
+        // echoes that target back on every path it prints. The match stream
+        // strips it; these two streams did not, so files/counts answered
+        // "./Notes/Daily.md" — a string that is not a vault path, cannot be
+        // fed back to vault_read, does not compare equal to the same file
+        // from any other surface, and rides inside nextCursor as the resume
+        // position.
+        var files = _vault.Search.SearchFilesOnly(Q("needle"));
+        files.Items.ShouldNotBeEmpty();
+        files.Items.ShouldAllBe(p => !p.StartsWith("./"));
+        files.Items.ShouldContain("many/needles-0.md");
+
+        var counts = _vault.Search.SearchCounts(Q("needle"));
+        counts.Items.ShouldNotBeEmpty();
+        counts.Items.ShouldAllBe(c => !c.Path.StartsWith("./"));
+
+        // The same file, spelled the same way, on every surface.
+        var matches = _vault.Search.SearchMatches(Q("needle"));
+        files.Items.ShouldContain(matches.Items[0].Path);
+    }
+
+    [Fact]
     public void Counts_mode_reports_per_file_and_total()
     {
         var result = _vault.Search.SearchCounts(new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["many"] });

@@ -435,6 +435,31 @@ internal static class Verify
                     return $"{names.Count} tools";
                 }).ConfigureAwait(false);
 
+                // What the previous check does NOT cover: it asserts the tool
+                // NAMES, and a manifest can carry all thirteen correct names
+                // and still be one no client can load. The 2026-08-14 run that
+                // accepted §6 ingress returned 14 ok and exit 0 against a
+                // server whose vault_search published outputSchema `true` —
+                // Claude Code rejected the tool list whole and could not call
+                // anything. A green verify has to mean a usable server.
+                await CheckAsync("every published tool schema is one a client can load", async () =>
+                {
+                    var tools = await RawToolsListAsync().ConfigureAwait(false);
+                    var problems = tools
+                        .SelectMany(tool => ToolSchemaContract.Validate(
+                            tool.TryGetProperty("name", out var name) ? name.GetString() ?? "?" : "?",
+                            tool.TryGetProperty("inputSchema", out var input) ? input : null,
+                            tool.TryGetProperty("outputSchema", out var output) ? output : null))
+                        .ToList();
+                    if (problems.Count > 0)
+                    {
+                        throw new InvalidOperationException(
+                            string.Join("; ", problems.Take(3)) +
+                            (problems.Count > 3 ? $"; (+{problems.Count - 3} more)" : ""));
+                    }
+                    return $"{tools.Count} schemas";
+                }).ConfigureAwait(false);
+
                 await CheckAsync("a no-match search still reports exhaustive scan evidence", async () =>
                 {
                     var result = await CallOkAsync(client, "vault_search", new()
@@ -572,6 +597,46 @@ internal static class Verify
             };
             request.Headers.Accept.ParseAdd("application/json, text/event-stream");
             return await http.SendAsync(request).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// tools/list off the WIRE, deliberately not through the SDK client:
+        /// the client does not hand back what the server sent. For a tool
+        /// returning a scalar the server publishes the wrapped
+        /// <c>{"properties": {"result": …}}</c> schema while
+        /// <c>McpClientTool.ProtocolTool.OutputSchema</c> reports the
+        /// UNWRAPPED inner one — so a schema check run through the client
+        /// inspects a document no client ever receives, and would both accuse
+        /// the wrapper tools and miss the real defect in the shape that
+        /// reaches Claude Code. Read-only, like everything here.
+        /// </summary>
+        private async Task<IReadOnlyList<JsonElement>> RawToolsListAsync()
+        {
+            using var http = NewClient(owner);
+            using (var initialize = await PostInitializeAsync(http).ConfigureAwait(false))
+            {
+                initialize.EnsureSuccessStatusCode();
+            }
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(
+                    """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", Encoding.UTF8, "application/json"),
+            };
+            request.Headers.Accept.ParseAdd("application/json, text/event-stream");
+            using var response = await http.SendAsync(request).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            // The transport answers either plain JSON or an SSE frame.
+            var payload = body.TrimStart().StartsWith('{')
+                ? body
+                : body.Split('\n').FirstOrDefault(l => l.StartsWith("data:", StringComparison.Ordinal))?[5..].Trim()
+                  ?? throw new InvalidOperationException("tools/list returned neither JSON nor an SSE data frame");
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.TryGetProperty("error", out var error))
+                throw new InvalidOperationException($"tools/list returned a JSON-RPC error: {error}");
+            // Cloned: JsonElements outlive the document they came from here.
+            return [.. document.RootElement.GetProperty("result").GetProperty("tools")
+                .EnumerateArray().Select(t => t.Clone())];
         }
 
         private static async Task<JsonElement> CallOkAsync(McpClient client, string tool, Dictionary<string, object?> args)

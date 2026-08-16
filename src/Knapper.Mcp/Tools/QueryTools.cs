@@ -61,8 +61,10 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
         "text and optional context), 'files' (paths containing a match), 'counts' (per-file match counts; the " +
         "envelope's totalMatches is the grand total). Responses wear the completeness envelope — truncated=false " +
         "means the scope was exhaustively searched; pass nextCursor back to continue a truncated page. " +
-        "Column is a 1-based byte offset. Hidden files and control dirs are never searched.")]
-    public object Search(
+        "Column is a 1-based byte offset. Hidden files and control dirs are never searched. Every mode returns " +
+        "the same item shape: 'path' always, plus line/column/text (+context) in matches mode and 'count' in " +
+        "counts mode; fields the mode does not fill are omitted.")]
+    public QueryEnvelope<SearchResultItem> Search(
         [Description("The pattern (Rust regex syntax unless literal=true)")] string pattern,
         [Description("Treat pattern as a literal string, not a regex")] bool literal = false,
         [Description("'smart' (default: insensitive unless pattern has uppercase), 'sensitive', or 'insensitive'")] string? caseMode = null,
@@ -78,7 +80,12 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
         [Description("Page size (server-capped)")] int? maxResults = null,
         [Description("Continuation cursor from a previous truncated response")] string? cursor = null,
         CancellationToken ct = default) =>
-        support.Run<object>("vault_search", () =>
+        // The declared return type is load-bearing, not decoration: an
+        // 'object' here (the natural spelling of a three-shape union) makes
+        // the SDK publish outputSchema = true, which strict clients reject —
+        // taking the whole tool list down with it. Every mode is projected
+        // onto the ONE concrete item type a schema can describe.
+        support.Run("vault_search", () =>
         {
             var query = new VaultSearchQuery
             {
@@ -98,9 +105,14 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
             };
             return mode?.ToLowerInvariant() switch
             {
-                null or "" or "matches" => search.SearchMatches(query, ct),
-                "files" => search.SearchFilesOnly(query with { Mode = SearchMode.FilesOnly }, ct),
-                "counts" => search.SearchCounts(query with { Mode = SearchMode.Counts }, ct),
+                null or "" or "matches" =>
+                    search.SearchMatches(query, ct).Map(SearchResultItem.FromMatch),
+                "files" =>
+                    search.SearchFilesOnly(query with { Mode = SearchMode.FilesOnly }, ct)
+                        .Map(SearchResultItem.FromPath),
+                "counts" =>
+                    search.SearchCounts(query with { Mode = SearchMode.Counts }, ct)
+                        .Map(SearchResultItem.FromCount),
                 _ => throw new KnapperException(VaultErrorCode.InvalidArgument,
                     $"mode must be 'matches', 'files', or 'counts', got '{mode}'"),
             };

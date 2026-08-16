@@ -34,6 +34,11 @@ public sealed class VerifyCommandTests : IDisposable
         exitCode.ShouldBe(0, output);
         output.ShouldContain("all checks passed");
         output.ShouldContain("ok    tools/list is EXACTLY the locked surface");
+        // Names are not validity: the 2026-08-14 run that accepted §6 ingress
+        // passed the line above, exit 0, no skips, against a manifest Claude
+        // Code rejected outright. The count rides on the ok line so an
+        // operator can see the check actually inspected thirteen schemas.
+        output.ShouldContain("ok    every published tool schema is one a client can load (13 schemas)");
         output.ShouldContain("ok    a no-match search still reports exhaustive scan evidence");
         output.ShouldContain("ok    the mutation surface is wired and answers with typed codes");
         // Loopback is the Access exemption's own target: the ingress checks

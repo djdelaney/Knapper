@@ -185,6 +185,39 @@ format by default.
   default puts results only in text content; structured content is the
   client contract the tests pin. A new tool that forgets the flag ships
   differently-shaped responses without any compile-time complaint.
+- **Every tool method returns a CONCRETE type, and the published manifest is
+  checked at the wire.** The declared return type is what becomes
+  `outputSchema`; an `object` return publishes the permissive `true`, which
+  is legal draft 2020-12 and useless — strict clients (Claude Code) reject
+  the tool list and discard ALL THIRTEEN tools, while the server logs
+  nothing and every test that merely CALLS a tool stays green. Shipped in
+  0.3.2 on `vault_search` (three result shapes, spelled as `object`); it
+  blocked the CT 106 cutover. A multi-shape result expresses its union in
+  the DATA — one record with optional members (`SearchResultItem`) — never
+  in the signature. Two traps in the check itself: the SDK client does NOT
+  hand back what the server sent (for a scalar return the wire carries the
+  wrapped `{"properties":{"result":…}}` while `ProtocolTool.OutputSchema`
+  reports the unwrapped inner schema), so schema checks read RAW JSON-RPC
+  (`RawMcp`, and `verify`'s own raw tools/list) — a check through the client
+  inspects a document no client receives; and `additionalProperties: false`
+  is a legal boolean in a non-subschema position, so the walk must not
+  flag it. `ToolSchemaContract` is the ONE definition, shared by
+  `ToolManifestTests` and `knapper verify` for the same reason `ToolNames`
+  is shared: a build gate and a deployment gate that disagree about what a
+  loadable manifest is are worse than one gate.
+- **A response must carry every property its own schema marks `required`.**
+  The SDK's serializer omits nulls while the schema exporter marks every
+  member without a C# default `required` — opposite defaults, so a null
+  `nextCursor` silently vanished from responses that still advertised it,
+  and any client validating structured content (the spec says clients
+  SHOULD) rejects a correct answer as malformed. `ToolSerialization` writes
+  nulls to close it; a member may be omitted only when it is genuinely
+  optional, which means it carries a C# default AND
+  `[JsonIgnore(Condition = WhenWritingNull)]`. The SDK's own client does
+  not validate, so nothing else here would ever notice
+  (`ToolResponseConformanceTests` compares every tool's real response
+  against its published schema — schema and payload read at the same
+  layer, both off the wire).
 - **Tool errors lead with the bracketed code** (`[PreconditionFailed] …`) via
   `ToolSupport.Run` — agents parse that prefix to decide "re-read and
   rebuild" vs "give up". New tools go through `Run`; a bare exception would
@@ -385,6 +418,12 @@ format by default.
   ordinary exhaustive "no match". Paths then come back `./note.md`;
   `NormalizeRgPath` strips the prefix, because a vault path is the identity
   behind cursor fingerprints, prefix scoping, and the lister differential.
+  EVERY stream that parses rg output normalizes — matches, `-l`, and
+  `--count-matches`. Only the match stream did until 0.3.3, so unscoped
+  files/counts searches answered `./Notes/Daily.md`: a string no other
+  surface agrees with, that `vault_read` refuses, and that rode inside
+  `nextCursor` as the resume position. Prefixed searches hid it (rg echoes
+  those verbatim) and so did every test, which all passed `pathPrefixes`.
 - **ripgrep 15+ is part of the query contract, not a packaging choice.**
   rg 14 and earlier report `"searches": 0` in the JSON summary for a query
   that matched nothing, so `scanned_files` — the evidence that "no match"

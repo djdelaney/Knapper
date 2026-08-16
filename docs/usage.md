@@ -88,6 +88,13 @@ wear the completeness envelope (`items`, `truncated`, `nextCursor`,
 `changedDuringQuery`); `truncated: false` means the scope was exhaustively
 searched, and `totalMatches` is null rather than guessed.
 
+Every tool publishes an `outputSchema` describing its result, and every
+response conforms to the one it published — a property with a schema is
+always present (null when it has no value); only properties the schema
+marks optional are omitted. Both halves are pinned by tests, and
+`knapper verify --url` re-checks the schema half against the deployed
+manifest.
+
 ### Read / query
 
 | Tool | Essentials |
@@ -96,7 +103,7 @@ searched, and `totalMatches` is null rather than guessed.
 | `vault_batch_read` | `items: [{path, startLine?, endLine?}]`. Envelope with a batch-wide generation span; per-item results (each with its own span); one bad file never hides the rest. |
 | `vault_stat` | Existence/type/size/mtime/encoding/lines/sha (streamed past the read cap — large attachments still hash) without the body; generation span included. |
 | `vault_files` | `pathPrefix`, `glob`, `extensions`, `kind`, `mtimeAfter/Before`, `minSize/maxSize`, `includeSha`, paging. |
-| `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. |
+| `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. Every mode returns the same item shape — `path` always, plus `line`/`column`/`text` (+`contextBefore`/`contextAfter`) in matches mode and `count` in counts mode; fields a mode does not fill are omitted. |
 | `vault_search_frontmatter` | `field`, `op` exists/equals/contains, `value`, `pathPrefix`. Response lists `unparseableFiles` — check it before trusting "no match". |
 
 ### Mutations (all conditional; no unconditional write exists)
