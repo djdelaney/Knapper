@@ -200,6 +200,52 @@ public sealed class HealthServiceTests : IDisposable
     }
 
     /// <summary>
+    /// The conflict walk's own budget, reaching only that probe. It is the
+    /// walk whose finding decides 200 vs 503, so an expired budget must
+    /// degrade — reporting "no conflicts" off a walk that never finished is
+    /// how an unreconciled conflict file looks like a green board.
+    /// </summary>
+    [Fact]
+    public void A_conflict_walk_that_runs_out_of_budget_degrades_health_rather_than_hanging_it()
+    {
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var health = NewService(rg, Path.Combine(_outsideDir, "audit"));
+        health.ConflictScanBudget = TimeSpan.Zero;
+        File.WriteAllText(Path.Combine(_vaultDir, "note.md"), "small\n");
+
+        var report = health.Check();
+
+        report.Status.ShouldBe("degraded");
+        report.Vault.ConflictScanComplete.ShouldBeFalse();
+        report.Vault.ConflictFiles.ShouldBeEmpty(); // empty means UNKNOWN here, which is why the flag exists
+        report.Vault.ConflictScanError.ShouldStartWith("timeout:");
+        report.Oversized.Scanned.ShouldBeTrue(); // the other walk is unaffected
+
+        // /up says only what the monitor acts on: not fine, no paths.
+        var up = health.CheckUp();
+        up.Status.ShouldBe("degraded");
+        up.Conflicts.Ok.ShouldBeFalse();
+        up.Oversized.Ok.ShouldBeTrue();
+    }
+
+    /// <summary>A walk that could not complete is never cached — see the oversized twin.</summary>
+    [Fact]
+    public void A_failed_conflict_scan_is_not_cached()
+    {
+        var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
+        var health = NewService(rg, Path.Combine(_outsideDir, "audit"));
+        health.ConflictScanBudget = TimeSpan.Zero;
+
+        health.Check().Vault.ConflictScanComplete.ShouldBeFalse();
+
+        health.ConflictScanBudget = ConflictDetector.DefaultBudget;
+        var report = health.Check();
+        report.Vault.ConflictScanComplete.ShouldBeTrue();
+        report.Vault.ConflictScanError.ShouldBeNull(); // the reason clears with the state
+        report.Status.ShouldBe("ok");
+    }
+
+    /// <summary>
     /// The unknown state must not stick: a failure is never cached, or the
     /// probe would keep answering "could not tell" for a TTL after the vault
     /// became readable again — a self-clearing fault that stops self-clearing.

@@ -32,6 +32,9 @@ internal static partial class Posix
     [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int open(string path, int flags);
 
+    [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int rename(string oldPath, string newPath);
+
     [LibraryImport("libc", SetLastError = true)]
     private static partial int fsync(int fd);
 
@@ -123,6 +126,38 @@ internal static partial class Posix
         throw errno == EEXIST
             ? new KnapperException(VaultErrorCode.AlreadyExists, $"file already exists: {newPath}")
             : new KnapperException(VaultErrorCode.IoError, $"link({existingPath}, {newPath}) failed (errno {errno})");
+    }
+
+    /// <summary>
+    /// ATOMIC CAPTURE of a pathname: move whatever <paramref name="existingPath"/>
+    /// names to <paramref name="newPath"/> in one syscall.
+    ///
+    /// <para>This is the primitive that lets move and delete stop deleting.
+    /// Every content check expires the instant it returns, so a
+    /// check-then-<c>unlink</c> can always remove a replacement that landed
+    /// in between — and POSIX offers no inode-conditional unlink to close
+    /// that. rename(2) sidesteps the question: it TAKES the pathname
+    /// whatever it currently holds, and the decision about what may be
+    /// destroyed is made afterwards, against a private name no other writer
+    /// knows. If what we captured turns out to be somebody else's, it is
+    /// linked back.</para>
+    ///
+    /// <para>Callers pass a fresh hidden temp as <paramref name="newPath"/>:
+    /// rename(2) silently replaces an existing destination, so a name that
+    /// cannot already exist is what makes that safe. NEVER hand this a
+    /// pathname an agent or Sync could hold — use <see cref="Link"/> for any
+    /// commit that must not clobber.</para>
+    /// </summary>
+    internal static void Rename(string existingPath, string newPath)
+    {
+        if (rename(existingPath, newPath) == 0)
+            return;
+        var errno = Marshal.GetLastPInvokeError();
+        const int ENOENT = 2;
+        throw errno == ENOENT
+            ? new KnapperException(VaultErrorCode.NotFound, $"no such file: {existingPath}")
+            : new KnapperException(VaultErrorCode.IoError,
+                $"rename({existingPath}, {newPath}) failed (errno {errno})");
     }
 
     /// <summary>

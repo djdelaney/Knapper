@@ -100,18 +100,33 @@ int Status()
 {
     var (resolver, locks) = Open();
     var job = new GitCommitJob(resolver, locks);
-    var conflicts = new ConflictDetector(resolver).ScanAll();
+    // Bounded like every other vault walk, and "could not tell" is not
+    // "none": a status line reading `conflicts: none` off a walk that never
+    // finished is the one answer this command must never give.
+    IReadOnlyList<string>? conflicts;
+    string? conflictScanError = null;
+    try
+    {
+        conflicts = new ConflictDetector(resolver).ScanAll();
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
+    {
+        conflicts = null;
+        conflictScanError = e.Message;
+    }
     Console.WriteLine($"vault:      {resolver.Root}");
     Console.WriteLine($"locks:      {vaultOptions.LockDirectory}");
     Console.WriteLine($"audit:      {vaultOptions.AuditLogPath}");
-    Console.WriteLine($"conflicts:  {(conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
+    Console.WriteLine($"conflicts:  {(conflicts is null
+        ? $"UNKNOWN — the walk could not complete: {conflictScanError}"
+        : conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
     Console.WriteLine($"git:        {(job.RepoExists ? $"repo present, last commit {Describe(job.LastCommitAgeSeconds())}" : "NO repo (knapper git-init)")}");
     Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (syncOptions.Mode == "heartbeat"
         ? string.IsNullOrWhiteSpace(syncOptions.HeartbeatPath)
             ? " — NO heartbeat path configured (mutations would be blocked; set Sync__HeartbeatPath)"
             : $" — heartbeat {Describe(new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds())} (max {syncOptions.MaxAgeSeconds}s)"
         : " (mutations NOT gated — dev only)"));
-    return conflicts.Count == 0 ? 0 : 1;
+    return conflicts is { Count: 0 } ? 0 : 1;
 
     static string Describe(double? ageSeconds) =>
         ageSeconds is { } age ? $"{age:F0}s ago" : "never/missing";

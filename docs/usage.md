@@ -138,14 +138,14 @@ Tool errors are structured MCP errors whose message leads with the code:
 
 | Code | Meaning / agent action |
 |---|---|
-| `InvalidPath`, `PathOutsideVault`, `SymlinkRejected`, `BannedPath` | Bad path argument. Fix the path; ALL dot-entries (`.git`, `.obsidian`, `.trash`, `.env`, any hidden segment at any depth) are unaddressable — hidden means invisible on both surfaces. |
+| `InvalidPath`, `PathOutsideVault`, `SymlinkRejected`, `BannedPath` | Bad path argument. Fix the path; ALL dot-entries (`.git`, `.obsidian`, `.trash`, `.env`, any hidden segment at any depth) are unaddressable — hidden means invisible on both surfaces. From `vault_delete` or `vault_move` these two can also mean the DESTINATION's directory chain is symlinked or resolves outside the vault (a human's doing — no tool can create one): nothing was moved or removed, and it needs a person, not a retry. |
 | `NotFound` | Missing file, or missing parent for create/move. |
 | `AlreadyExists` | No-clobber create/move found the target present. |
 | `PreconditionFailed` | Stale `expect_sha256`. Re-read, rebuild, retry with the new hash. |
 | `AnchorMismatch` | An edit's `old` matched ≠ `count` times. File untouched. Re-read and re-anchor. |
 | `GuardViolation` | Guard absent before, or wouldn't survive after. File untouched. |
 | `NotUtf8` | Binary/non-UTF-8 file; text operations refuse it (`vault_stat` still works). |
-| `VerifyFailed` | Post-write reopen/byte-compare failed — surface to the user; do not retry blindly. |
+| `VerifyFailed` | Post-write reopen/byte-compare failed — surface to the user; do not retry blindly. From `vault_move`/`vault_delete` it can also mean the destination did not survive the operation AND the source pathname was taken by another writer; the message names the hidden file holding the original content, which a human must place. |
 | `LockTimeout` | Couldn't get the lock in time (long snapshot or contention). Retry later. |
 | `MutationBlocked` | Conflict file or unhealthy sync. Report to the user; never work around it. |
 | `InvalidArgument`, `InvalidCursor` | Malformed request; cursors only work with the query that made them. |
@@ -214,7 +214,10 @@ Tool errors are structured MCP errors whose message leads with the code:
   `knapper-monitor.sh` does, or a routine upgrade in the middle silently turns
   the baseline into the previous process's final flush.
 - `knapper status` / `knapper doctor` — one-screen summary / checks with
-  exit codes for scripting.
+  exit codes for scripting. `status` exits non-zero on conflict files AND on
+  a conflict walk that could not complete, which it prints as
+  `conflicts: UNKNOWN — …` rather than `none`: the walk is bounded like
+  every other, and "could not tell" is not "clean".
 - `knapper version` — the build identity of that binary, alone on stdout:
   `0.2.0+g1f5ff1c`, or `0.2.0+g1f5ff1c.dirty` when built from a tree with
   uncommitted changes. The same string `/health`, `/up` and

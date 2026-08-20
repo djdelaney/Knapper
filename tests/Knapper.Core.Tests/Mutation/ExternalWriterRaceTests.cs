@@ -3,12 +3,15 @@ using Knapper.Core.Mutation;
 namespace Knapper.Core.Tests.Mutation;
 
 /// <summary>
-/// Move and soft delete are link-then-unlink; an EXTERNAL writer (Sync, a
-/// human shell — nothing that honors our locks) can replace the source in
-/// the read→link or link→unlink window. A failed operation must leave no
-/// new destination and no new .trash entry, and must never destroy the
-/// external writer's replacement. The test hooks run inside the critical
-/// section and stand in for that writer deterministically.
+/// Move and soft delete link the content to a private name, capture the
+/// source pathname, then commit the destination; an EXTERNAL writer (Sync, a
+/// human shell — nothing that honors our locks) can replace the source in the
+/// read→link or link→capture window. A failed operation must leave no new
+/// destination and no new .trash entry, and must never destroy the external
+/// writer's replacement. The test hooks run inside the critical section and
+/// stand in for that writer deterministically. The window immediately before
+/// the capture — the one that used to delete their write and report success —
+/// is `SourceCaptureRaceTests`.
 /// </summary>
 public sealed class ExternalWriterRaceTests : IDisposable
 {
@@ -50,9 +53,9 @@ public sealed class ExternalWriterRaceTests : IDisposable
         ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
 
         File.Exists(Path.Combine(_v.VaultDir.Path, "Notes/b.md"))
-            .ShouldBeFalse("the rolled-back move must remove its link");
+            .ShouldBeFalse("a rolled-back move publishes no destination");
         _v.ReadText("Notes/a.md").ShouldBe("sync won\n",
-            "unlinking the source would have silently destroyed the external write");
+            "the capture put their write back where it was");
     }
 
     [Fact]
@@ -84,7 +87,7 @@ public sealed class ExternalWriterRaceTests : IDisposable
         ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
 
         File.Exists(Path.Combine(_v.VaultDir.Path, ".trash/Notes/a.md"))
-            .ShouldBeFalse("the rolled-back delete must remove its trash link");
+            .ShouldBeFalse("a rolled-back delete publishes no trash entry");
         _v.ReadText("Notes/a.md").ShouldBe("sync won\n");
     }
 

@@ -114,12 +114,22 @@ explains: if the audit sink is down, the mutation is refused BEFORE any
 write (fail closed); a post-write audit failure keeps the success receipt
 and surfaces through the durable audit-failure metric instead. Anchored
 edits demand exact occurrence counts; guards must exist before and survive
-after; create is hard-link no-clobber; move is link-then-unlink (rename
-would silently replace), with the just-created link rolled back on any
-failure before the source unlink and the source re-verified BY CONTENT
-immediately before unlinking — an external writer's replacement is never
-destroyed; delete is soft, into `.trash/`, with the same two-window
-protection. Batch validates every item under sorted-order locks before the
+after; create is hard-link no-clobber; move and soft delete share one core with two
+rules. It never removes a pathname another writer could own — the only names
+it deletes are its own GUID temps, and the source is CAPTURED with `rename(2)`
+rather than unlinked, then examined under a private name (a check-then-unlink
+destroyed an external writer's replacement while reporting success, fixed
+2026-08-19). And a public pathname holds the content at every instant: the
+destination is committed with `link(2)` BEFORE the source is captured, so no
+crash can leave the note reachable only through hidden temps. The order is:
+private link + verify → containment → courtesy check that the source is
+unchanged → commit → containment again (a directory can be swapped between the
+check and the link) → verify the destination → capture the source → confirm
+what was captured was ours, linking it back if not. A published destination is
+never retracted; when the capture reveals a raced source the operation fails
+with a visible duplicate, named in the error, rather than deleting a pathname
+other writers can see. `.trash/` chains are checked for symlinked components
+and proved by `realpath` to be inside the vault. Batch validates every item under sorted-order locks before the
 first write. Verification is by content, never by receipt — the vault has
 a documented history of writes that reported success without landing.
 
@@ -151,6 +161,11 @@ proven by tests that spawn real second processes (`LockProbe`,
   heartbeat file — touched every minute by a probe that checks the
   obsidian-headless unit — to be fresh. Missing or stale = mutations
   blocked. Reads stay up.
+- **When**: both gates run before the locks and again with them held (batch:
+  after its validate phase, the last moment nothing has been written). The
+  second pass exists because waiting for a lock takes real time; it narrows
+  the staleness window rather than closing it, since the locks bind
+  cooperating Knapper processes only and Sync honors none of them.
 - **Startup**: missing vault root; a vault root the process cannot write;
   lock dir, audit path, or metrics path equal to or inside the vault
   (realpath-canonicalized, symlinked ancestors included); bad Access config

@@ -12,9 +12,8 @@ namespace Knapper.Core.Vault;
 /// control directories (.git/.obsidian/.trash), and Knapper's own hidden
 /// temp files. Non-existent tails resolve fine — create needs that — and the
 /// symlink walk stops at the first missing component (nothing deeper can
-/// exist). A dangling symlink in the tail is invisible to the walk
-/// (File/Directory.Exists follow links), which is safe: reads fail NotFound,
-/// and the hard-link no-clobber create refuses to replace the link itself.</para>
+/// exist). A DANGLING symlink is rejected like any other: the walk asks
+/// whether the component is a link, not whether it resolves.</para>
 /// </summary>
 public sealed class VaultPathResolver
 {
@@ -84,17 +83,39 @@ public sealed class VaultPathResolver
         return new VaultPath { Relative = relative, Absolute = full };
     }
 
-    private void RejectSymlinkComponents(List<string> segments, string original)
+    private void RejectSymlinkComponents(List<string> segments, string original) =>
+        RejectSymlinkComponents(Root, segments, original);
+
+    /// <summary>
+    /// The symlink rule, stated once. <c>Resolve</c> applies it to every
+    /// agent-supplied path; <c>VaultMutationService</c> applies it to the
+    /// <c>.trash/</c> chain it assembles itself — a path no agent can name
+    /// (dot segments are unaddressable) and which therefore never passes
+    /// through <c>Resolve</c>, but which still ends in <c>link(2)</c> against
+    /// a directory chain a human could have replaced with a symlink. Two
+    /// copies of this walk would be two chances to disagree about what
+    /// "inside the vault" means.
+    /// </summary>
+    internal static void RejectSymlinkComponents(string root, IReadOnlyList<string> segments, string original)
     {
-        var current = Root;
+        var current = root;
         foreach (var segment in segments)
         {
             current = current + Path.DirectorySeparatorChar + segment;
-            if (!File.Exists(current) && !Directory.Exists(current))
-                return; // nothing deeper can exist either
-            if (File.ResolveLinkTarget(current, returnFinalTarget: false) is not null)
+            // FileInfo.LinkTarget, not Exists-then-ResolveLinkTarget: it is
+            // non-null for EVERY symlink including a dangling one, null for a
+            // missing path, and throws for neither — so the answer does not
+            // ride on whether File.Exists follows links on this runtime and
+            // platform. ResolveLinkTarget throws on a missing path, which is
+            // what forced the existence check to come first and made a
+            // dangling link depend on that detail.
+            if (new FileInfo(current).LinkTarget is not null)
+            {
                 throw new KnapperException(VaultErrorCode.SymlinkRejected,
                     $"refusing symlink path component '{segment}': {original}");
+            }
+            if (!File.Exists(current) && !Directory.Exists(current))
+                return; // nothing deeper can exist either
         }
     }
 

@@ -8,7 +8,19 @@
 //   Knapper.MutationProbe create <vaultRoot> <lockDir> <path> <text>
 //   Knapper.MutationProbe append <vaultRoot> <lockDir> <path> <expectSha> <text>
 //
-// Exit 0 = mutation applied; 1 = typed rejection (JSON carries the code).
+// And the crash modes, which exist because a durable disappearance can only
+// be observed from OUTSIDE the process that caused it — a try/finally proves
+// nothing about a machine that lost power mid-operation:
+//
+//   Knapper.MutationProbe crash-move   <vaultRoot> <lockDir> <path> <destination> <expectSha> <killPoint>
+//   Knapper.MutationProbe crash-delete <vaultRoot> <lockDir> <path> <expectSha> <killPoint>
+//
+// killPoint = after-link | after-commit | after-capture. The process is
+// terminated with Environment.FailFast, so no finally, no cleanup, no
+// rollback — exactly what a kill -9 or a power cut leaves behind.
+//
+// Exit 0 = mutation applied; 1 = typed rejection (JSON carries the code);
+// anything else = the deliberate crash.
 
 using System.Text.Json;
 using Knapper.Core;
@@ -39,6 +51,26 @@ var service = new VaultMutationService(
     StaticSyncGate.Open,
     options,
     new SyncOptions());
+
+if (command is "crash-move" or "crash-delete")
+{
+    var killPoint = args[^1];
+    void Die(string at)
+    {
+        if (at == killPoint)
+            Environment.FailFast($"deliberate crash at {at}");
+    }
+    service.AfterLinkTestHook = _ => Die("after-link");
+    service.AfterCommitTestHook = (_, _) => Die("after-commit");
+    service.AfterCaptureTestHook = (_, _) => Die("after-capture");
+
+    if (command == "crash-move")
+        service.Move(path, args[4], args[5]);
+    else
+        service.Delete(path, args[4]);
+    Console.WriteLine(JsonSerializer.Serialize(new { ok = true, code = (string?)null, newSha = (string?)null }));
+    return 0;
+}
 
 try
 {

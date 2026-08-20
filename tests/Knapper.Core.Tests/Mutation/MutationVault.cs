@@ -55,6 +55,10 @@ public sealed class MutationVault : IDisposable
         Resolver, Locks, Generation, Conflicts,
         new StaticSyncGate(false), Options, SyncOptions, Audit);
 
+    /// <summary>A service whose sync gate the test drives call by call.</summary>
+    public VaultMutationService ServiceWithSyncGate(ISyncGate gate) => new(
+        Resolver, Locks, Generation, Conflicts, gate, Options, SyncOptions, Audit);
+
     /// <summary>A service with a deliberately tiny sync ceiling.</summary>
     public VaultMutationService ServiceWithMaxFileBytes(long max) => new(
         Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options,
@@ -68,6 +72,20 @@ public sealed class MutationVault : IDisposable
 
     public string ReadText(string relative) =>
         File.ReadAllText(Path.Combine(VaultDir.Path, relative));
+
+    public string Absolute(string relative) => Path.Combine(VaultDir.Path, relative);
+
+    /// <summary>
+    /// Knapper's hidden temps anywhere in the vault. A completed operation
+    /// leaves none: both temps a move/delete uses — the private link beside
+    /// the destination and the captured source — are cleaned on every path
+    /// but the one that deliberately keeps the captured copy.
+    /// </summary>
+    public string[] TempFiles() =>
+        Directory.EnumerateFiles(VaultDir.Path, AtomicFile.TempPrefix + "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(VaultDir.Path, f))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     public string[] AuditLines() =>
         File.Exists(AuditPath) ? File.ReadAllLines(AuditPath) : [];

@@ -51,6 +51,9 @@ public sealed class HealthService(
     /// <summary>Walk bound. A walk that will not finish must degrade health, not hang /up.</summary>
     internal TimeSpan OversizedBudget = OversizedFiles.DefaultBudget;
 
+    /// <summary>Test seam for the conflict walk's wall clock (see <see cref="OversizedBudget"/>).</summary>
+    internal TimeSpan ConflictScanBudget = ConflictDetector.DefaultBudget;
+
     public sealed record Report(
         string Status,
         string Version,
@@ -200,14 +203,31 @@ public sealed class HealthService(
         try
         {
             _conflictScanError = null;
-            return conflicts.ScanAll();
+            return conflicts.ScanAll(ConflictScanBudget);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
         {
-            _conflictScanError = $"io: {e.Message}";
-            logger.LogWarning(e,
-                "Conflict-file walk could not complete — /health reports it as unknown, not clean. " +
-                "The vault contains a directory this process cannot read.");
+            // Labelled like the oversized walk's, because the two causes need
+            // OPPOSITE responses: `io` is usually transient, while `timeout`
+            // means the walk cannot finish in the budget and will keep not
+            // finishing. TimeoutException MUST be caught here — the budget
+            // exists to keep this walk off the request thread indefinitely,
+            // and letting its expiry escape would turn a bounded walk into a
+            // 500, which /health's own contract says it must never answer.
+            _conflictScanError = e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}";
+            if (e is TimeoutException)
+            {
+                logger.LogWarning(e,
+                    "Conflict-file walk exceeded its {Budget}s budget — /health reports it as unknown, " +
+                    "not clean. This does not clear on its own: the vault has outgrown the budget.",
+                    ConflictScanBudget.TotalSeconds);
+            }
+            else
+            {
+                logger.LogWarning(e,
+                    "Conflict-file walk could not complete — /health reports it as unknown, not clean. " +
+                    "The vault contains a directory this process cannot read.");
+            }
             return null;
         }
     }

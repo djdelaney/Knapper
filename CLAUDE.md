@@ -283,15 +283,93 @@ format by default.
   transform → validate guards → hidden temp + fsync → final SHA check →
   atomic replace → reopen and byte-compare → unlock. `Mutate()` embodies it;
   new operations go THROUGH it or replicate it exactly (move/delete do).
-- **Move and delete are link-then-unlink, not rename.** rename(2) silently
-  replaces an existing destination; link(2) cannot. Same inode means no data
-  copy and no window where content could diverge. Deletes are SOFT — into
-  `.trash/` with structure preserved, collisions timestamped, never
-  overwriting an earlier trash copy. A failure after the link and before
-  the unlink rolls the new link back (a failed operation leaves no new
-  pathname), and the source is re-verified by content immediately before
-  the unlink — an external writer's replacement landing mid-operation must
-  never be silently destroyed (`ExternalWriterRaceTests`).
+- **Move and delete never remove a pathname another writer could own.** The
+  only names they delete are their own hidden temps, under fresh GUIDs no
+  agent can address and no other writer can know; everything public is either
+  linked (no-clobber — the kernel refuses rather than replacing) or captured
+  by `rename(2)` and examined afterwards. A check-then-`unlink` cannot be made
+  safe: every check has expired by the next syscall and POSIX has no
+  inode-conditional `unlink(2)`, so the version that re-verified the source
+  and then deleted it destroyed an external writer's replacement while
+  reporting SUCCESS (`SourceCaptureRaceTests`). `LinkPublishCapture` is the
+  ONE implementation, shared by both operations.
+- **A PUBLIC pathname holds the content at every instant, so the destination
+  is published BEFORE the source is captured.** This is a crash property, not
+  a race property, and it is the reason the order cannot be flipped back: an
+  ordering that captured first put an fsynced `rename` between the source's
+  disappearance and the destination's creation, so a kill -9, an OOM, or
+  systemd restarting the unit mid-deploy left the note reachable only through
+  `.knapper-tmp-*` names — gitignored, skipped by every walk, unaddressable
+  through the resolver — while Sync propagated the visible deletion to every
+  device. Pinned by `CrashDurabilityTests`, which kills REAL processes at each
+  boundary, because a try/finally proves nothing about a machine that lost
+  power. The corollary is what makes crash residue safe to reason about: it is
+  always a hidden DUPLICATE of content that is also at a normal pathname,
+  never the only copy — so no journal, no startup recovery pass, and no
+  sweeper is needed.
+- **A published destination is never retracted.** If the source turns out to
+  have been replaced in the window before the capture, the operation fails
+  with the destination still there — a visible duplicate of the previous
+  content, named in the error and audited. That is the deliberate price of
+  publishing first: retracting a pathname other writers can already see means
+  deleting something that may not be ours, which is the defect this design
+  exists to prevent. `RequireStillOurBytes` survives ONLY as a courtesy check
+  that keeps the duplicate rare — nothing destructive may ever be gated on it
+  again.
+- **Containment is proved on BOTH sides of the commit.** The pre-commit proof
+  describes the directory as it was one syscall ago; a directory can be moved
+  out of the vault and replaced with a symlink in between, and then the commit
+  and its verification both succeed through the symlink — a delete reported
+  success with the note outside the vault (review, 2026-08-19). The
+  post-commit `RealPath` check catches it while the source is still untouched,
+  which is the whole point of it landing before the capture. It does NOT
+  remove the escaped link: unlinking a path on the strength of having created
+  it a syscall earlier is the exact shape banned above, and descriptor-relative
+  `linkat` would not have prevented this either — a directory MOVED out of the
+  vault is followed by any handle to it (`PostCommitFailureTests`).
+- **Byte equality is not ownership and not continued existence.** An earlier
+  fix decided rollback by comparing content and pinned a test asserting a
+  byte-identical replacement gets deleted "because no distinct content is
+  lost". Wrong twice: the pathname belongs to whoever created it, and after an
+  external rename that pathname can be the only place the note still exists.
+  Nothing may delete a publicly-named file on the strength of a content
+  comparison. Content comparison decides only whether one of Knapper's OWN
+  temps may go, and only ever in the KEEP direction when uncertain
+  (`HiddenLinkIsTheLastCopy`): unreadable answers "keep".
+- **Every exception at the post-commit verification is caught, not just
+  `IOException`.** `File.ReadAllBytes` answers `UnauthorizedAccessException`
+  when the destination has become a directory or an unreadable file — not an
+  `IOException`, so it escaped a handler that listed only
+  `KnapperException or IOException`, skipped the recovery block, and took the
+  last links to the original out with it through `finally` while the caller
+  saw a typed `IoError` (review, 2026-08-19). A handler at a boundary where
+  the wrong exception type costs a note must be exhaustive by construction,
+  not by enumeration.
+- **The `.trash/` chain is held to the resolver's symlink rule, and the link
+  is proved to have landed inside the vault.** Soft delete is the one place
+  Knapper builds a vault path itself — `.trash/` + an already-validated
+  relative path — because `.trash` is deliberately unaddressable and can
+  never come back out of `Resolve`. That left the whole chain unchecked: a
+  symlink at `.trash` or any directory under it sends `link(2)` outside the
+  vault, so the note leaves the vault, leaves git, leaves every backup, and
+  the receipt still says `.trash/...`. The chain is walked with
+  `VaultPathResolver`'s own rule (ONE definition — `RejectSymlinkComponents`)
+  before AND after `Directory.CreateDirectory`, which follows an existing
+  directory symlink. Both checks are TOCTOU against the link that follows,
+  which is why the post-link `RealPath` containment check exists: it cannot
+  stop a link from briefly escaping, but it catches the escape before the
+  source is captured, and that is the part that matters (`TrashChainTests`).
+  Do not "simplify" this by routing `.trash` through the public resolver — it
+  stays unaddressable.
+- **The conflict and sync gates are asserted TWICE: before the locks, and
+  again with them held.** A mutation can wait up to `Vault:LockTimeoutMs`
+  for a lock and a batch adds its whole validate phase, so a pre-lock answer
+  can be that stale by the time it is acted on. This NARROWS a window rather
+  than closing one — the locks bind cooperating Knapper processes only, so
+  Sync can materialize a conflict sibling the instant after any check — and
+  it must be described that way; a fail-closed claim it cannot support is
+  worse than the window. Batch re-asserts after VALIDATE, the last point at
+  which nothing has been written (`GateRecheckTests`).
 - **Batch validates EVERYTHING under the locks before the first write.** A
   bad hash/anchor/guard anywhere fails the whole batch untouched. The apply
   phase is not cross-file atomic (documented; git history is recovery), and
@@ -343,8 +421,14 @@ format by default.
   cycle made it non-terminating — on the request path of `/health` and `/up`,
   which the host monitor polls every 5 minutes. A new walk gets the filter AND
   a wall-clock bound whose expiry degrades health rather than hanging it (the
-  same contract as `HealthService.RipgrepTimeoutMs`). Dot-entries stay skipped
-  at every depth, which is also why `.trash/` is invisible: deletes are soft,
+  same contract as `HealthService.RipgrepTimeoutMs`) — both vault walks on
+  that request path now have one (`OversizedFiles.Scan`,
+  `ConflictDetector.ScanAll`), and the conflict walk is UNCACHED on every
+  poll, so its budget is what stands between a slow tree and a hung /up.
+  A budget added without teaching the caller to catch its `TimeoutException`
+  turns a bounded walk into a 500, which is the contract it was added to
+  protect. Dot-entries stay skipped at every depth, which is also why
+  `.trash/` is invisible: deletes are soft,
   so an over-ceiling file deleted through `vault_delete` still sits there, and
   alerting on it would be an alert about a file the human already dealt with
   and cannot clear through any tool.

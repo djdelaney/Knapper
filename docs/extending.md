@@ -486,6 +486,74 @@ line (accuracy nit, documented); the batch-read worst-case memory ceiling
 involved); resolver-gate rejections staying unaudited (no vault object to
 audit).
 
+`CreateDirectory` was re-raised by the 2026-08-19 production-safety review
+and stays closed. The two consequences it named are real and neither is
+silent corruption: two concurrent calls can both report success (mkdir is
+idempotent, and the directory that results is the one both asked for), and
+a creation can overlap the exclusive git snapshot lock (git does not track
+empty directories, so a snapshot cannot capture a half-made one). Taking
+the global shared lock would be three lines if it ever buys something;
+today it buys tidiness in a document, and the closed list exists so that
+does not keep being rediscovered. Confirmed closed by the reviewer on the
+third pass, in their words: "its idempotent empty-directory semantics do not
+create the content-loss or corruption shape under review".
+
+A second review (2026-08-19) overturned one thing the first round closed, and
+the correction is worth keeping because the wrong answer looked principled:
+**pathname ownership was decided by comparing CONTENT, and a byte-identical
+replacement was documented as safe to delete "because no distinct content is
+lost".** Both halves were wrong. A pathname belongs to whoever created it,
+whatever its bytes; and after an external rename that pathname can be the only
+place the note still exists, so deleting it loses the note. The review also
+demonstrated the larger version of the same mistake: the source was re-verified
+by content and then `File.Delete`d, so an external writer replacing it in that
+window had its write destroyed while the move reported SUCCESS.
+
+The fix was an algorithm change, not another check, and it closes the question
+rather than answering it: move and delete now CAPTURE the source pathname with
+`rename(2)` and commit the destination with `link(2)`, so the only names
+Knapper ever deletes are its own GUID temps. Nothing destructive hangs on a
+content comparison any more — a comparison that comes out wrong now costs a
+spurious failure and some hidden residue, never a deletion. **Do not
+reintroduce a content-conditional delete of a publicly-named path**, and do not
+close a finding of that shape as acceptable: "retain uncertain data and fail
+loudly" is always available, so an unlink of an ambiguous pathname is a design
+choice rather than a constraint.
+
+A third review then rejected the ordering that fix used. Capturing the source
+before publishing the destination left an instant — fsynced, so it survived a
+crash — in which the note existed only under hidden names, invisible to every
+surface while Sync propagated the deletion. The order is now publish-then-
+capture, which makes that window not exist. Its cost is stated where it is
+paid: a source replaced in the window before the capture leaves the published
+destination standing, because retracting a public pathname is the banned
+operation. **Do not flip this order back**, and do not "fix" the duplicate by
+retracting.
+
+Crash residue was ruled release-blocking while the capture came first, and is
+closed by the same reorder: with the destination published before the source is
+captured, a hidden temp is always a DUPLICATE of content that also sits at a
+normal pathname, never the only copy (`CrashDurabilityTests` asserts exactly
+that, per kill point). So no journal, no startup recovery pass, and no sweeper
+is needed — and a sweeper, if one is ever added for `AtomicFile`'s temps, is
+safe for these too. That safety is a consequence of the ordering, not a
+property of the temps: **flip the order back and a sweeper becomes capable of
+deleting the last copy of a note.**
+
+What remains constrained, and is NOT closed: the instant between a
+directory-chain symlink check and the `link(2)` through it. The post-commit
+`realpath` check catches the escape before the source is captured, so nothing
+is lost and no success is reported — but a link containing note bytes can
+briefly exist outside the vault and is deliberately left there rather than
+unlinked. **Descriptor-relative `openat`/`linkat` does not close this**, which
+is worth stating because it reads like the obvious fix: the demonstrated
+attack MOVES the directory out of the vault and symlinks its old name, and a
+handle opened before the move follows the directory to its new location. No
+in-process design can prevent writing into a directory that was taken out from
+under it; what is achievable is detection before the destructive step, which is
+what is implemented. The residual disclosure is nil in practice — an actor who
+can move a vault directory can already read the vault.
+
 Also closed: **birth time is not preserved on the Linux CT, and nothing
 here reads it.** `ob sync` restores mtime but not btime — the package ships
 btime-setting binaries for darwin and win32 only, because Linux has no API
