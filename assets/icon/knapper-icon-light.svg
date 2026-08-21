@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" role="img" aria-label="Knapper">
+  <polygon points="50,4 76,62 66,72 76,96 50,86 24,96 34,72 24,62" fill="#5C47AD"></polygon>
+  <polygon points="50,4 50,72 24,62" fill="#9781E8"></polygon>
+  <polygon points="50,4 76,62 50,72" fill="#4A3894"></polygon>
+  <polygon points="24,96 34,72 50,86" fill="#9781E8"></polygon>
+  <polygon points="76,96 66,72 50,86" fill="#3C2C7C"></polygon>
+</svg>

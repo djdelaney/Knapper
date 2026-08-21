@@ -1,4 +1,10 @@
-# Knapper
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/icon/knapper-icon-dark.svg">
+    <img src="assets/icon/knapper-icon-light.svg" alt="" height="40" align="top">
+  </picture>
+  Knapper
+</h1>
 
 *A [knapper](https://en.wikipedia.org/wiki/Knapping) shapes obsidian into
 tools. This one shapes an Obsidian vault into tools for AI agents.*
