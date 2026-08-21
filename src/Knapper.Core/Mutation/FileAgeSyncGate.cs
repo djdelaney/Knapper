@@ -11,6 +11,19 @@ namespace Knapper.Core.Mutation;
 /// </summary>
 public sealed class FileAgeSyncGate(SyncOptions options) : ISyncGate
 {
+    /// <summary>
+    /// How far into the FUTURE the heartbeat mtime may sit before the gate
+    /// fails closed. A future timestamp is not health — it is a clock that
+    /// stepped backward, a container restored from a snapshot, or a bad
+    /// touch, and under `age > max` alone it read as "fresh" for the whole
+    /// skew (hours, after a restore) while the sync service could be dead the
+    /// entire time. The tolerance exists only because mtime granularity and
+    /// small NTP corrections make exactly-zero too strict; it is deliberately
+    /// far below the heartbeat tick (60s), so a withheld touch can never hide
+    /// inside it.
+    /// </summary>
+    internal const double FutureToleranceSeconds = 30;
+
     public void AssertMutationsAllowed()
     {
         var age = HeartbeatAgeSeconds();
@@ -19,6 +32,13 @@ public sealed class FileAgeSyncGate(SyncOptions options) : ISyncGate
             throw new KnapperException(VaultErrorCode.MutationBlocked,
                 $"sync heartbeat file is missing ({options.HeartbeatPath}) — the sync service looks dead; " +
                 "mutations are blocked (fail closed; there is no local fallback)");
+        }
+        if (age < -FutureToleranceSeconds)
+        {
+            throw new KnapperException(VaultErrorCode.MutationBlocked,
+                $"sync heartbeat is {-age:F0}s in the FUTURE — the clock stepped or the heartbeat file was " +
+                "restored from elsewhere, so the sync watchdog cannot be proven alive; mutations are blocked " +
+                "(fail closed) until a fresh touch lands");
         }
         if (age > options.MaxAgeSeconds)
         {

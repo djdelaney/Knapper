@@ -161,8 +161,11 @@ public sealed class VaultMutationService(
             {
                 AssertGates([vp]); // again with the lock held — see AssertGates
                 RequireAuditIntent("create", vp.Relative, ctx);
+                // Containment on both sides of the commit — see Mutate.
+                RequireIntendedTargetInsideVault(vp.Absolute, "create");
                 AtomicFile.CreateNew(vp.Absolute, written);
                 AtomicFile.VerifyOnDisk(vp.Absolute, written);
+                RequireLinkInsideVault(vp.Absolute, "create", "target");
             }
             var gen = generation.Increment();
             var sha = VaultHash.Sha256Hex(written);
@@ -359,9 +362,9 @@ public sealed class VaultMutationService(
         }
 
         var resolved = items.Select(i => resolver.Resolve(i.Path)).ToList();
-        AssertGates(resolved);
+        BatchWideStage(resolved, ctx, () => AssertGates(resolved));
 
-        using (locks.AcquirePathLocks(resolved, LockTimeout)) // rejects duplicate paths
+        using (BatchWideStage(resolved, ctx, () => locks.AcquirePathLocks(resolved, LockTimeout))) // rejects duplicate paths
         {
             // Validate phase: plan every write. Any failure here = nothing mutated.
             var plans = new List<(VaultPath Vp, byte[]? Before, byte[] After, BatchItem Item)>();
@@ -396,7 +399,7 @@ public sealed class VaultMutationService(
             // last point at which nothing has been written yet, and the one
             // that matters for a batch: validating N items can take
             // meaningfully longer than acquiring the locks did.
-            AssertGates(resolved);
+            BatchWideStage(resolved, ctx, () => AssertGates(resolved));
 
             // Apply phase.
             var results = new List<BatchItemResult>(items.Count);
@@ -417,11 +420,14 @@ public sealed class VaultMutationService(
                     // that into Failed + NotAttempted) — items already landed
                     // keep both their audit records and their receipt.
                     RequireAuditIntent(opName, vp.Relative, ctx);
+                    // Containment on both sides of the commit — see Mutate.
+                    RequireIntendedTargetInsideVault(vp.Absolute, opName);
                     if (item.Kind == BatchItemKind.Create)
                         AtomicFile.CreateNew(vp.Absolute, after);
                     else
                         AtomicFile.Replace(vp.Absolute, after, VaultHash.Sha256Hex(before!));
                     AtomicFile.VerifyOnDisk(vp.Absolute, after);
+                    RequireLinkInsideVault(vp.Absolute, opName, "target");
                     generation.Increment();
                     var sha = VaultHash.Sha256Hex(after);
                     TryAudit(opName, vp.Relative, "ok", ctx,
@@ -434,7 +440,7 @@ public sealed class VaultMutationService(
                     // the caller is owed the Applied/Failed/NotAttempted
                     // receipt for the items that already landed.
                     var ke = NormalizeIo(e, "batch-apply", vp.Relative);
-                    TryAudit(opName, vp.Relative, ke.Code.ToString(), ctx);
+                    TryAudit(opName, vp.Relative, ke.Code.ToString(), ctx, detail: NoteRecoveredSibling(ke));
                     results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message));
                     failedAt = i;
                 }
@@ -510,8 +516,17 @@ public sealed class VaultMutationService(
                 RequireSyncable(vp, after);
                 var beforeSha = VaultHash.Sha256Hex(before);
                 RequireAuditIntent(op, vp.Relative, ctx);
+                // Containment on BOTH sides of the commit (same rule as
+                // move/delete): the resolver's symlink walk happened before
+                // the lock wait, so re-prove before writing — and again
+                // after, because the pre-proof describes the directory as it
+                // was one syscall ago. The post-proof is what stands between
+                // a parent swapped mid-write and a success receipt for bytes
+                // that landed outside the vault.
+                RequireIntendedTargetInsideVault(vp.Absolute, op);
                 AtomicFile.Replace(vp.Absolute, after, beforeSha);
                 AtomicFile.VerifyOnDisk(vp.Absolute, after);
+                RequireLinkInsideVault(vp.Absolute, op, "target");
                 var gen = generation.Increment();
                 var afterSha = VaultHash.Sha256Hex(after);
                 TryAudit(op, vp.Relative, "ok", ctx, beforeSha, afterSha);
@@ -522,11 +537,30 @@ public sealed class VaultMutationService(
         {
             // Rejections are audited too — a stale-write rejection is signal.
             var ke = NormalizeIo(e, op, vp.Relative);
-            TryAudit(op, vp.Relative, ke.Code.ToString(), ctx);
+            TryAudit(op, vp.Relative, ke.Code.ToString(), ctx, detail: NoteRecoveredSibling(ke));
             if (ReferenceEquals(ke, e))
                 throw;
             throw ke;
         }
+    }
+
+    /// <summary>
+    /// A raced replace that had to republish a displaced external version
+    /// says so in the exception's Data (<see cref="AtomicFile.RecoveredPathDataKey"/>).
+    /// The vault visibly changed even though the mutation failed, so the
+    /// generation moves, and the audit entry carries the sibling's name —
+    /// the durable reconciliation pointer that survives a lost MCP response.
+    /// Filename only: path-derived, never note content.
+    /// </summary>
+    private string? NoteRecoveredSibling(KnapperException ke)
+    {
+        if (!ke.Data.Contains(AtomicFile.RecoveredPathDataKey)
+            || ke.Data[AtomicFile.RecoveredPathDataKey] is not string recovered)
+        {
+            return null;
+        }
+        generation.Increment();
+        return "displaced external version preserved → " + recovered;
     }
 
     // ---- the shared link/publish/capture core --------------------------
@@ -547,15 +581,28 @@ public sealed class VaultMutationService(
     /// inode-conditional unlink(2), so the version that re-verified the
     /// source and then deleted it destroyed an external writer's replacement
     /// while reporting SUCCESS (`SourceCaptureRaceTests`).</item>
-    /// <item><b>A public pathname holds the content at every instant.</b>
-    /// The destination is published BEFORE the source is captured, so there
-    /// is no window — not even a crash-durable one — in which the note exists
-    /// only under hidden names. The version that captured first put an
-    /// fsynced rename between the source's disappearance and the
-    /// destination's creation: a process death there left the bytes reachable
-    /// through nothing an agent, a query, a health walk or git could see,
-    /// while Sync propagated the deletion (`CrashDurabilityTests`).</item>
+    /// <item><b>A public pathname holds the content at every instant — as
+    /// far as this operation's own actions reach.</b> The destination is
+    /// published BEFORE the source is captured, so no step of ours — and no
+    /// crash between steps — leaves the note only under hidden names. The
+    /// version that captured first put an fsynced rename between the
+    /// source's disappearance and the destination's creation: a process
+    /// death there left the bytes reachable through nothing an agent, a
+    /// query, a health walk or git could see, while Sync propagated the
+    /// deletion (`CrashDurabilityTests`).</item>
     /// </list>
+    ///
+    /// <para><b>The commit boundary</b>: once the destination is published
+    /// and VERIFIED, the operation is committed. An external writer that
+    /// removes or replaces that destination afterwards — even before the
+    /// source capture and cleanup finish — has deleted or overwritten the
+    /// note, exactly as if it had acted a millisecond after the operation
+    /// returned, and the operation still reports success. That is the
+    /// linearizable reading and it is deliberate: the alternative, holding a
+    /// hidden recovery link and deciding later whether the destination "still"
+    /// holds ours, is check-then-act over a pathname other writers own, the
+    /// exact shape this design removed. `DestinationRaceTests` pins both
+    /// sides of the boundary.</para>
     ///
     /// <para>The price of publishing first is that a source replaced in the
     /// narrow window before the capture leaves the destination published — a
@@ -565,15 +612,16 @@ public sealed class VaultMutationService(
     /// human; the alternatives are deleting something that may not be ours,
     /// or a note that exists nowhere anything can find it.</para>
     ///
-    /// <para>Steps: link a private second name and verify it → prove
-    /// containment → confirm the source is still what was authorized (a
-    /// courtesy check: it prevents publishing a destination we would then
-    /// have to abandon, and NOTHING destructive rests on it) → commit the
-    /// destination with link(2) → prove containment again, because a
-    /// directory can be swapped between the check and the link → verify the
+    /// <para>Steps: prove the source resolves inside the vault → link a
+    /// private second name and verify it → prove destination containment →
+    /// confirm the source is still what was authorized (a courtesy check: it
+    /// prevents publishing a destination we would then have to abandon, and
+    /// NOTHING destructive rests on it) → commit the destination with
+    /// link(2) → prove destination containment again, because a directory
+    /// can be swapped between the check and the link → verify the
     /// destination by content → capture the source pathname with rename(2) →
-    /// confirm what we captured was ours, and link it back if it was
-    /// not.</para>
+    /// prove the CAPTURED name resolves inside the vault → confirm what we
+    /// captured was ours, and link it back if it was not.</para>
     /// </summary>
     private void LinkPublishCapture(VaultPath source, string destinationAbsolute, byte[] data, string operation)
     {
@@ -585,13 +633,45 @@ public sealed class VaultMutationService(
         var keepCaptured = false;
         var keepTemp = false;
 
-        // 1. A private second name for the content.
+        // The SOURCE gets the same physical-containment treatment as the
+        // destination: the resolver's symlink walk ran before the lock wait,
+        // and a parent swapped since then would make the link below copy an
+        // OUT-OF-VAULT file's content into the vault — and the capture later
+        // remove that outside file's pathname — while the receipt names a
+        // vault note. Narrow here, and prove again on the captured name
+        // below, where it is load-bearing.
+        RequireLinkInsideVault(source.Absolute, operation, "source");
+
+        // 1. A private second name for the content. NO-FOLLOW, deliberately:
+        //    plain link(2) diverges on a source that has just been swapped
+        //    for a symlink — macOS follows it (hard-linking the OUT-OF-VAULT
+        //    target into the vault; reproduced 2026-08-20), Linux links the
+        //    symlink inode (publishing a symlink into the vault). linkat(…,0)
+        //    captures whatever the final component IS under our private
+        //    name, where the next line can inspect it without following.
         BeforeLinkTestHook?.Invoke(source.Absolute);
-        Posix.Link(source.Absolute, temp);
+        Posix.LinkNoFollow(source.Absolute, temp);
         try
         {
             AfterLinkTestHook?.Invoke(source.Absolute);
             Posix.FsyncDirectory(destinationDirectory);
+            var linked = Posix.LStat(temp);
+            if (linked.IsSymlink)
+            {
+                throw new KnapperException(VaultErrorCode.SymlinkRejected,
+                    $"{source.Relative} was replaced by a symlink after it was checked — the {operation} " +
+                    "is refused; nothing was published and nothing was removed (symlinks are rejected " +
+                    "everywhere, always)");
+            }
+            if (!linked.IsRegular)
+            {
+                // A FIFO here would BLOCK the verify read below forever while
+                // this operation holds its path locks; a socket or device is
+                // not vault content at all. Classified before any read.
+                throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                    $"{source.Relative} was replaced by a non-regular file (FIFO, socket, or device) after " +
+                    $"it was checked — the {operation} is refused; nothing was published and nothing was removed");
+            }
             try
             {
                 AtomicFile.VerifyOnDisk(temp, data);
@@ -660,6 +740,16 @@ public sealed class VaultMutationService(
             captured = captureTarget;
             Posix.FsyncDirectory(sourceDirectory);
             AfterCaptureTestHook?.Invoke(source.Absolute, destinationAbsolute);
+
+            // Containment AGAIN, on the captured name: if the source's parent
+            // was swapped after the pre-check, the rename above captured a
+            // file OUTSIDE the vault, and the success path would delete that
+            // capture — removing an out-of-vault file the receipt never
+            // mentions. Detected here, the rollback links it straight back
+            // where it was taken from; nothing is destroyed. (A directory
+            // moved out AFTER the capture makes this throw spuriously — the
+            // rollback then restores or keeps, both in the KEEP direction.)
+            RequireLinkInsideVault(captured, operation, "source");
 
             // Was what we captured the file we were authorized to move? If
             // not, an external writer replaced the source after the courtesy
@@ -774,7 +864,17 @@ public sealed class VaultMutationService(
         {
             try
             {
-                return File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(held);
+                // Same non-following discipline as every other judgement: a
+                // non-regular file at the public name neither holds our bytes
+                // nor may be read (a FIFO read would hang the rollback).
+                // Answering false keeps the temp — the safe direction.
+                return File.Exists(path)
+                    && Posix.LStat(path).IsRegular
+                    && File.ReadAllBytes(path).AsSpan().SequenceEqual(held);
+            }
+            catch (KnapperException)
+            {
+                return false;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -801,7 +901,16 @@ public sealed class VaultMutationService(
         bool same;
         try
         {
-            same = File.Exists(vp.Absolute) && File.ReadAllBytes(vp.Absolute).AsSpan().SequenceEqual(expected);
+            // Non-following type check first: a source swapped for a FIFO
+            // would hang this read under the path locks, and a symlink would
+            // compare some other file's bytes. Either way: not our content.
+            same = File.Exists(vp.Absolute)
+                && Posix.LStat(vp.Absolute).IsRegular
+                && File.ReadAllBytes(vp.Absolute).AsSpan().SequenceEqual(expected);
+        }
+        catch (KnapperException)
+        {
+            same = false;
         }
         catch (IOException)
         {
@@ -819,7 +928,21 @@ public sealed class VaultMutationService(
     {
         try
         {
+            // Never through a symlink, and never a blind read: if an external
+            // writer swapped the source after the publish, the capture rename
+            // took whatever was there — reading THROUGH a symlink would
+            // compare some other file's content and, on a match, let the
+            // success path delete a pathname that was never ours; reading a
+            // FIFO would block forever under the path locks. Non-regular
+            // answers not-ours, which routes to the rollback's no-follow
+            // restore.
+            if (!Posix.LStat(capturedPath).IsRegular)
+                return false;
             return File.ReadAllBytes(capturedPath).AsSpan().SequenceEqual(data);
+        }
+        catch (KnapperException)
+        {
+            return false;
         }
         catch (IOException)
         {
@@ -832,44 +955,65 @@ public sealed class VaultMutationService(
     }
 
     /// <summary>
-    /// Prove the pathname we just linked is really inside the vault, by
-    /// resolving it rather than by trusting the string.
+    /// Prove a pathname is really inside the vault, by resolving it rather
+    /// than by trusting the string.
     ///
-    /// <para>Both destination families are checked for symlinked components
-    /// before the link — the resolver does it for a move, and
-    /// <c>RequireNoSymlinkedTrashChain</c> for a delete — but a check against
-    /// a directory chain is only true until it is not: a component swapped
-    /// for a symlink between the check and <c>link(2)</c> is a window nothing
-    /// short of descriptor-relative <c>linkat</c> can close. This does not
-    /// close it either. What it does is stop the CONSEQUENCE, which is the
-    /// part that matters: the source unlink comes after this, so a link that
-    /// escaped is rolled back and refused while the note still exists under
-    /// its own name. The alternative is a note that left the vault, left git,
-    /// left every backup, and a receipt that says otherwise.</para>
+    /// <para>Every mutation path is checked for symlinked components before
+    /// it acts — the resolver at <c>Resolve</c>,
+    /// <c>RequireNoSymlinkedTrashChain</c> for a delete's trash chain — but a
+    /// check against a directory chain is only true until it is not: a
+    /// component swapped for a symlink between the check and the syscall is a
+    /// window nothing short of descriptor-relative operations can close, and
+    /// not even those survive a directory MOVED out of the vault (a handle
+    /// follows it). This does not close the window either. What it does is
+    /// stop the CONSEQUENCE, which is the part that matters: called before a
+    /// destructive step, it refuses while everything still exists under its
+    /// own name; called after a commit, it turns a success receipt for an
+    /// out-of-vault write into a loud failure. The alternative is a note that
+    /// left the vault, left git, left every backup, and a receipt that says
+    /// otherwise.</para>
     /// </summary>
-    private void RequireLinkInsideVault(string linkAbsolute, string operation)
+    /// <summary>
+    /// The PRE-write half of the containment proof, tolerant of a parent that
+    /// does not exist: a missing directory must surface as the operation's
+    /// own typed <see cref="VaultErrorCode.NotFound"/> (create's contract),
+    /// not as realpath's IoError. Skipping the proof there gives nothing
+    /// away — a chain that does not resolve is one no write can land
+    /// through, and the strict post-commit proof runs after every successful
+    /// write, where the chain necessarily resolves.
+    /// </summary>
+    private void RequireIntendedTargetInsideVault(string absolute, string operation)
+    {
+        if (Directory.Exists(Path.GetDirectoryName(absolute)!))
+            RequireLinkInsideVault(absolute, operation, "target");
+    }
+
+    private void RequireLinkInsideVault(string linkAbsolute, string operation, string role = "destination")
     {
         var directory = Posix.RealPath(Path.GetDirectoryName(linkAbsolute)!);
         if (directory != resolver.Root
             && !directory.StartsWith(resolver.Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
         {
             throw new KnapperException(VaultErrorCode.PathOutsideVault,
-                $"the {operation} destination resolves to '{directory}', outside the vault — a directory in " +
-                "its path was replaced by a symlink after it was checked. The operation is refused and rolled " +
-                "back; nothing was removed.");
+                $"the {operation} {role} resolves to '{directory}', outside the vault — a directory in " +
+                "its path was replaced or moved after it was checked. The operation reports failure and " +
+                "removes nothing.");
         }
     }
 
     /// <summary>
     /// Put the original content back at the source pathname after a failed
-    /// unlink-side race. link(2), not rename: if another writer has already
-    /// taken the pathname, the kernel refuses rather than replacing them.
+    /// unlink-side race. link semantics, not rename: if another writer has
+    /// already taken the pathname, the kernel refuses rather than replacing
+    /// them. NO-FOLLOW, so a captured SYMLINK is restored as the symlink it
+    /// was — plain link(2) on macOS would follow it and plant a hard link to
+    /// its out-of-vault target at the source name instead.
     /// </summary>
     private static bool TryRestoreSource(string recovery, string sourceAbsolute, string sourceDirectory)
     {
         try
         {
-            Posix.Link(recovery, sourceAbsolute);
+            Posix.LinkNoFollow(recovery, sourceAbsolute);
             Posix.FsyncDirectory(sourceDirectory);
             return true;
         }
@@ -922,6 +1066,44 @@ public sealed class VaultMutationService(
         syncGate.AssertMutationsAllowed();
     }
 
+    /// <summary>
+    /// The audited boundary for a BATCH-WIDE rejection: the gates (both
+    /// passes), duplicate-path refusal, and lock timeout fail the whole batch
+    /// before any write, and each used to do so without an audit entry —
+    /// unlike every single-item operation, whose outer catch audits the same
+    /// rejections. One entry lands per resolved path (a stale gate answer or
+    /// a lock that never came refused every one of them), with a detail
+    /// marking it batch-wide; per-item validate/apply failures keep their own
+    /// audit paths and never pass through here, so nothing is audited twice.
+    /// Paths and counts only — never note content.
+    /// </summary>
+    private T BatchWideStage<T>(IReadOnlyList<VaultPath> resolved, AuditContext? ctx, Func<T> stage)
+    {
+        try
+        {
+            return stage();
+        }
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
+        {
+            var ke = NormalizeIo(e, "batch", $"{resolved.Count} paths");
+            foreach (var vp in resolved)
+            {
+                TryAudit("batch", vp.Relative, ke.Code.ToString(), ctx,
+                    detail: $"batch of {resolved.Count} rejected before any write");
+            }
+            if (ReferenceEquals(ke, e))
+                throw;
+            throw ke;
+        }
+    }
+
+    private void BatchWideStage(IReadOnlyList<VaultPath> resolved, AuditContext? ctx, Action stage) =>
+        _ = BatchWideStage<object?>(resolved, ctx, () =>
+        {
+            stage();
+            return null;
+        });
+
     // ---- helpers -------------------------------------------------------
 
     /// <summary>
@@ -951,6 +1133,17 @@ public sealed class VaultMutationService(
             throw new KnapperException(VaultErrorCode.InvalidArgument, $"path is a directory: {vp.Relative}");
         if (!File.Exists(vp.Absolute))
             throw new KnapperException(VaultErrorCode.NotFound, $"no such file: {vp.Relative}");
+        // Classify before reading: this is the FIRST read of every mutation,
+        // and it runs holding the path locks — a FIFO here would hang the
+        // whole operation (open(2) for read blocks until a writer appears),
+        // and a symlink swapped in since Resolve would read some other
+        // file's bytes as the note's.
+        if (!Posix.LStat(vp.Absolute).IsRegular)
+        {
+            throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                $"{vp.Relative} is not a regular file (a symlink, FIFO, socket, or device was put at its " +
+                "pathname by an external writer) — refused");
+        }
         return File.ReadAllBytes(vp.Absolute);
     }
 

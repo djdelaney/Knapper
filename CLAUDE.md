@@ -103,8 +103,15 @@ format by default.
 - **`TreatWarningsAsErrors=true`** in `Directory.Build.props`.
 - **Unix-only by design** (`SupportedOSPlatform` linux+macos, asserted
   repo-wide in `Directory.Build.props`): the mutation contract stands on
-  flock(2), link(2), rename(2), and Unix file modes. Don't add Windows guards
-  or a Windows code path.
+  flock(2), link(2), linkat(2) with no-follow, rename(2), the atomic pathname
+  exchange (renameat2 `RENAME_EXCHANGE` on Linux, renamex_np `RENAME_SWAP` on
+  macOS — ext4 and APFS both support it), non-following stat (statx(2) on
+  Linux — its layout is arch-independent, unlike struct stat; lstat(2) on
+  macOS arm64, the layouts pinned by `PosixStatTests` on the running
+  platform), and Unix file modes. Don't add
+  Windows guards or a Windows code path, and never "handle" a filesystem
+  without the exchange by falling back to an overwriting rename — that
+  fallback IS the destroyed-external-write defect the exchange replaced.
 - **`<Version>` in `Directory.Build.props` is the ONE version carrier, and
   `Knapper.Core.BuildInfo` is the ONE read of it.** Bump it with
   `ops/release.sh`, never by hand. Everything downstream is derived:
@@ -134,9 +141,10 @@ format by default.
 
 - **`AtomicFile` is the only code that writes vault bytes.** Hidden
   same-directory temp (`.knapper-tmp-`) → fsync → last-instant SHA re-check →
-  rename/hard-link → directory fsync, temps cleaned on every failure path.
-  A write path that bypasses it loses atomicity, mode preservation, or the
-  no-clobber guarantee without any test necessarily noticing. The
+  atomic exchange (replace) / hard-link (create) → directory fsync, temps
+  cleaned on every failure path. A write path that bypasses it loses
+  atomicity, mode preservation, or the no-clobber guarantee without any test
+  necessarily noticing. The
   `KNAPPER_FAULT_SHORT_WRITE` env hook inside it is a fault INJECTOR for the
   acceptance suite (it can only break a write so `VerifyOnDisk` must catch
   it) — it is not, and must never become, a way to land unverified bytes.
@@ -144,6 +152,54 @@ format by default.
   zero-byte temp-prefixed probe in the vault root — raw create/delete IS
   its measurement, so it cannot go through AtomicFile. Nothing else may
   join it.
+- **`Replace` commits by ATOMIC EXCHANGE, never by overwriting rename — and a
+  raced commit is exchanged BACK.** The SHA re-check expires a syscall before
+  the commit, and `File.Move(..., overwrite: true)` destroys whatever the
+  target holds at THAT instant — an external replacement landing in the gap
+  was silently lost while edit, append, and every non-create batch item
+  reported success (the review P0 this closed). The exchange swaps the
+  target's bytes to the hidden temp and judges them there — classified
+  NON-FOLLOWING, then by BYTES against the EXPECTED BASE, never by metadata:
+  an equal dev/inode/size/mtime tuple is NOT proof of unchanged content (an
+  in-place writer preserves all four — mtime-faithful sync tooling restores
+  mtime as a matter of course, and timestamp granularity aliases
+  back-to-back writes unaided — while ctime, the one field that would
+  notice, is bumped by the exchange itself, so NO stat tuple can ever carry
+  this proof; a stamp fast path shipped here and silently destroyed a raced
+  in-place write while reporting success — round four, and the reason
+  `ReplaceCommitRaceTests` pins the restored-mtime overwrite). A hash match
+  is the ordinary success; a displaced base that cannot be READ can no
+  longer be proven to be the base, so it routes to the swap-back — a
+  spurious but safe rejection over a net-unchanged file, never an unverified
+  success. A hash mismatch means the commit raced an external write,
+  and brief §7 is explicit that stale input rejects WITHOUT MUTATING, so the
+  swap is undone and the external bytes return to the canonical pathname (a
+  first remediation that kept them hidden while our stale bytes stayed
+  canonical matched NEITHER serialization, and hidden means invisible to
+  Sync, git, and every query — data loss wearing a failure receipt; review
+  follow-up 2026-08-20). The instant the exchange lands, the temp's default
+  flips to RETAIN: every branch — including exceptions nobody anticipated —
+  keeps the displaced version unless a step positively proves it safe to
+  discard (an inspection that threw used to ride the false-by-default flag
+  into the cleanup and delete the only copy; round three). Only when a third
+  write or delete lands between the two exchanges does the fallback engage:
+  every surviving version is made VISIBLE — a `(Knapper displaced …)`
+  conflict sibling, published NO-FOLLOW, that the conflict walk lists, the
+  audit detail names, the generation counter reflects, and the conflict gate
+  blocks on until a human reconciles. Hidden-only survival is not an
+  acceptable success OR failure state. A target deleted externally in the
+  gap stays deleted (the old rename silently resurrected it). The honest
+  residual: a crash between the two exchanges leaves the raced state as
+  crash residue with no receipt — a window one lstat plus one page-cached
+  read-and-hash of the displaced bytes (bounded by `Sync__MaxFileBytes`)
+  wide, plus the undo's syscalls when raced. It is deliberately NOT narrowed
+  back to a metadata compare: the precondition that prevents silent loss
+  outranks the window's width, and narrowing it needs durable recovery
+  metadata, never a stat proxy for content. Closing
+  it needs a journal and a startup pass this design deliberately lacks;
+  `CrashDurabilityTests` DEMONSTRATES the state with a real killed process,
+  and accepting it is the vault owner's recorded decision, not an
+  implementation default. Pinned by `ReplaceCommitRaceTests`.
 - **`VaultPathResolver` is the only gate between agent-supplied path strings
   and the filesystem.** Nothing else may combine user input with the vault
   root. `VaultPath`'s constructor is internal so an API taking one is stating
@@ -306,7 +362,16 @@ format by default.
   power. The corollary is what makes crash residue safe to reason about: it is
   always a hidden DUPLICATE of content that is also at a normal pathname,
   never the only copy — so no journal, no startup recovery pass, and no
-  sweeper is needed.
+  sweeper is needed. Both claims are about Knapper's OWN actions, and the
+  COMMIT BOUNDARY is where they end: once the destination is published and
+  VERIFIED, the operation is committed, and an external writer removing or
+  replacing that destination afterwards — even before the capture and cleanup
+  finish — has deleted or overwritten the note exactly as if it had acted
+  after the receipt; the operation still reports success (the linearizable
+  reading; `DestinationRaceTests` pins both sides of the boundary). Do not
+  "strengthen" this with a post-capture destination re-check deciding whether
+  the hidden links may be kept — that is check-then-act over a pathname other
+  writers own, the exact shape this design removed.
 - **A published destination is never retracted.** If the source turns out to
   have been replaced in the window before the capture, the operation fails
   with the destination still there — a visible duplicate of the previous
@@ -326,7 +391,45 @@ format by default.
   remove the escaped link: unlinking a path on the strength of having created
   it a syscall earlier is the exact shape banned above, and descriptor-relative
   `linkat` would not have prevented this either — a directory MOVED out of the
-  vault is followed by any handle to it (`PostCommitFailureTests`).
+  vault is followed by any handle to it (`PostCommitFailureTests`). The same
+  both-sides rule now covers EVERY mutation, not just the move/delete
+  destination: edit/append/create/batch prove the target's parent resolves
+  inside the vault before the write (tolerant of a missing parent — that is
+  create's own NotFound) and again after it, so a parent swapped mid-write
+  becomes a typed `PathOutsideVault` instead of a success receipt for bytes
+  that landed elsewhere; and move/delete prove the SOURCE before linking and
+  the CAPTURED name after the capture, so a swapped source parent can never
+  end with an out-of-vault file quietly captured and deleted
+  (`ParentSwapTests`). The window itself stays open — only the consequence,
+  a lying success receipt or an outside deletion, is closed.
+- **The final component is linked NO-FOLLOW and judged under the private
+  name, never through a symlink.** `Resolve` rejects symlink components, but
+  the note itself can be swapped for an equal-content symlink one syscall
+  later, and plain `link(2)` diverges exactly there: macOS FOLLOWS it — the
+  move/delete link then hard-links the OUT-OF-VAULT target into the vault
+  (published note aliased to an external file, external edits silently
+  becoming vault content; reproduced 2026-08-20) — while Linux links the
+  symlink inode and publishes a symlink into a vault that bans them. So the
+  source→temp link is `linkat(…, 0)` (`Posix.LinkNoFollow`, both platforms
+  link the symlink ITSELF), the private temp is inspected with non-following
+  metadata and refused `[SymlinkRejected]` before anything is published, and
+  the same non-following rule governs every judgement over a captured or
+  displaced name: `CapturedIsOurs` calls a captured symlink not-ours (restore,
+  don't read through), `TryRestoreSource` restores it AS a symlink, and
+  `Replace`'s displaced-bytes check routes a symlink to the swap-back. A
+  content comparison that reads THROUGH a link is comparing some other
+  file's bytes (`SymlinkSwapRaceTests` — equal content everywhere, so only
+  the non-following checks can be what passes them). The RECOVERY branches
+  are held to the same rule: `Replace`'s restore-to-canonical and its
+  visible-sibling publication both link no-follow — plain macOS link(2)
+  there "restored" a displaced symlink as a hard link to its out-of-vault
+  target, recreating inside the rollback the exact alias the main path had
+  been cured of (round three). And symlinks are not the only non-regular
+  shape: a FIFO swapped in at any judged pathname would HANG the read while
+  the operation holds its path locks, so every such read classifies with
+  `Posix.LStat` first and refuses non-regular files — `ReadExisting` (the
+  first read of every mutation), the private-name inspection,
+  `CapturedIsOurs`, `RequireStillOurBytes`, and the rollback's `Holds`.
 - **Byte equality is not ownership and not continued existence.** An earlier
   fix decided rollback by comparing content and pinned a test asserting a
   byte-identical replacement gets deleted "because no distinct content is
@@ -335,7 +438,13 @@ format by default.
   Nothing may delete a publicly-named file on the strength of a content
   comparison. Content comparison decides only whether one of Knapper's OWN
   temps may go, and only ever in the KEEP direction when uncertain
-  (`HiddenLinkIsTheLastCopy`): unreadable answers "keep".
+  (`HiddenLinkIsTheLastCopy`): unreadable answers "keep". The raced-replace
+  reclaim demands BOTH proofs before discarding — device+inode identity AND
+  the exact bytes this call wrote: bytes alone blessed a byte-identical
+  third-party inode for deletion (round three), and identity alone would
+  trust ext4 handing a just-freed inode number straight back to a stranger.
+  Either proof failing is a KEEP, and the kept object is published visibly,
+  never left hidden-only.
 - **Every exception at the post-commit verification is caught, not just
   `IOException`.** `File.ReadAllBytes` answers `UnauthorizedAccessException`
   when the destination has become a directory or an unreadable file — not an
@@ -414,7 +523,12 @@ format by default.
   measurement at all — it persists exactly as long as a conflict file does,
   and alert fatigue is the monitor cadence rules' job, not the status
   code's. Never cache the unknown, and never let a walk failure reach the
-  endpoint as an exception (both shipped here once).
+  endpoint as an exception (both shipped here once). A scan's list and its
+  error are ONE value (`ScanOutcome`), and a cached success is one immutable
+  snapshot: /health and /up run concurrently, and when the error lived in a
+  singleton field beside the returned list, overlapping requests could pair
+  a COMPLETED scan with another request's error — or lose their own
+  (`A_reports_scan_error_always_belongs_to_its_own_scan`).
 - **Every vault walk filters `FileAttributes.ReparsePoint`.** Symlinks are
   rejected everywhere else (resolver, lock manager) and skipped by every
   lister; the oversized scan was the one exception, so a directory-symlink
@@ -439,16 +553,32 @@ format by default.
   onward: a path that never resolves to a vault path (`InvalidPath`,
   `BannedPath`) is refused before the audited region, deliberately — there
   is no vault object for the entry to be about. A stale-write rejection is
-  signal (someone raced, or an agent is retrying a stale base). Audit writes
+  signal (someone raced, or an agent is retrying a stale base). Batch-WIDE
+  rejections — either gate pass, duplicate paths, a lock timeout — land one
+  entry per resolved path through `BatchWideStage`: the single-item
+  operations audit the same failures via their outer catch, and a batch
+  refused on a stale gate answer must not be invisible to the trail
+  (`BatchRejectionAuditTests`); per-item validate/apply failures keep their
+  own entries and never double-audit through it. Audit writes
   are fsynced and live OUTSIDE the vault; vault content must never reach the
   audit path — which is why the audit `Detail` field never carries an
   exception message: anchor/guard failure text IS note content (the error
   CODE is the audit signal; rich diagnostics stay on the MCP response).
-- **Conflict gate: agents never resolve Sync conflict files.** A
-  `* (Conflicted copy ...)*` sibling blocks mutations to both the original
-  and the sibling until a human reconciles. The sync gate (`ISyncGate`)
-  fails mutations closed when continuous sync is unhealthy — no local
-  fallback, ever.
+- **Conflict gate: agents never resolve conflict files, and there are TWO
+  families.** A Sync `* (Conflicted copy ...)*` sibling and a Knapper
+  `* (Knapper displaced ...)*` sibling (a raced replace's displaced external
+  version, republished visibly by `AtomicFile`) both block mutations to the
+  original and the sibling until a human reconciles — the gate, the sibling
+  check, and the health walk treat them identically (`ConflictDetector` is
+  the ONE matcher). The Knapper family deliberately does NOT forge Sync's
+  marker: same operational meaning, honest attribution. Because the sibling
+  is published no-follow it can itself BE a symlink; the conflict walk
+  therefore judges by NAME before its reparse-point skip (recognition never
+  follows the entry, recursion still refuses every directory symlink), and a
+  symlink-shaped recovery object is a filesystem-visible artifact for the
+  human — not ordinary queryable or syncable vault content
+  (`ConflictMarkerTests`). The sync gate (`ISyncGate`) fails mutations
+  closed when continuous sync is unhealthy — no local fallback, ever.
 - **The heartbeat TICK is a term in the fail-closed budget, so
   `knapper-heartbeat.timer` pins `AccuracySec=1s`.** Withholding the touch is
   the only way Knapper learns sync is unhealthy, so total exposure ≈ ob's
@@ -457,7 +587,14 @@ format by default.
   period that silently nearly halves the margin (measured 116s gaps on CT
   106, presenting as a two-minute blip blocking every mutation and reading
   like a Knapper bug). Dropping `AccuracySec=1s`, or changing the period
-  without moving `MaxAgeSeconds`, moves the budget silently. And
+  without moving `MaxAgeSeconds`, moves the budget silently. The gate fails
+  closed in BOTH directions: a heartbeat mtime in the FUTURE (a stepped
+  clock, a CT restored from snapshot — the runbook's own procedure) proves
+  nothing about the watchdog, and under `age > max` alone it read as "fresh"
+  for the entire skew — past a 30s tolerance
+  (`FileAgeSyncGate.FutureToleranceSeconds`, deliberately far below the 60s
+  tick so a withheld touch can never hide inside it) mutations block
+  (`FileAgeSyncGateTests`). And
   `ops/sync-heartbeat.sh` LOGS every withheld touch in our own words (never
   text lifted from ob's log, which interleaves vault filenames): `journalctl
   -u knapper-heartbeat | grep withheld` is the deployment's only durable

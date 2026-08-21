@@ -21,7 +21,9 @@ namespace Knapper.Core.Tests.Mutation;
 /// <para>Note what is NOT required: a journal, a startup recovery pass, or a
 /// sweeper. There is nothing to recover — the vault is always in one of two
 /// consistent states, and the residue is a hidden duplicate of content that
-/// is already at a normal pathname.</para>
+/// is already at a normal pathname. ONE demonstrated exception exists — a
+/// kill between a raced replace's two exchanges — pinned at the bottom of
+/// this class as the accepted residual it is, not hidden behind the rule.</para>
 /// </summary>
 public sealed class CrashDurabilityTests : IDisposable
 {
@@ -147,5 +149,46 @@ public sealed class CrashDurabilityTests : IDisposable
                     "a sweeper could not safely remove it, and no ordinary surface can see it");
             }
         }
+    }
+
+    /// <summary>
+    /// The ONE exception to the residue-is-a-duplicate rule, DEMONSTRATED so
+    /// the vault owner's risk decision rests on evidence (review round
+    /// three): a process killed between a raced replace's two exchanges
+    /// leaves the stale agent bytes canonical and the displaced external
+    /// version only under a hidden temp — a state no serialization of the
+    /// raced writes produces, with no receipt issued. Reaching it requires
+    /// an external write inside the one-syscall window of the final check
+    /// AND a kill inside the few syscalls before the swap-back. Closing it
+    /// needs durable recovery metadata plus a startup pass, which this
+    /// design deliberately does not have; this test PINS the accepted state
+    /// so any change to it — either direction — is loud.
+    /// </summary>
+    [Fact]
+    public void A_raced_replace_killed_between_the_exchanges_leaves_the_documented_residual()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+
+        var dll = Path.Combine(AppContext.BaseDirectory, "Knapper.MutationProbe.dll");
+        File.Exists(dll).ShouldBeTrue($"probe not found at {dll}");
+        var psi = new ProcessStartInfo { FileName = "dotnet", RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add(dll);
+        foreach (var a in new[] { "crash-replace-raced", _v.VaultDir.Path, _v.Options.LockDirectory,
+                     "Notes/a.md", sha, "agent base", "agent update", "sync won\n" })
+        {
+            psi.ArgumentList.Add(a);
+        }
+        using var probe = Process.Start(psi)!;
+        probe.StandardOutput.ReadToEnd();
+        probe.StandardError.ReadToEnd();
+        probe.WaitForExit(30_000).ShouldBeTrue("probe never exited");
+        probe.ExitCode.ShouldNotBe(0, "the probe was supposed to die between the exchanges");
+
+        // The residual, exactly as accepted: stale agent bytes canonical…
+        _v.ReadText("Notes/a.md").ShouldBe("agent update\n");
+        // …and the displaced external version surviving ONLY at a hidden name.
+        var kept = _v.TempFiles().ShouldHaveSingleItem();
+        _v.ReadText(kept).ShouldBe("sync won\n");
     }
 }

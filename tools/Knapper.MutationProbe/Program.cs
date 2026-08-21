@@ -19,6 +19,14 @@
 // terminated with Environment.FailFast, so no finally, no cleanup, no
 // rollback — exactly what a kill -9 or a power cut leaves behind.
 //
+//   Knapper.MutationProbe crash-replace-raced <vaultRoot> <lockDir> <path> <expectSha> <old> <new> <racedContent>
+//
+// The raced-replace kill point: an external writer (simulated via
+// AtomicFile.BeforeExchangeTestHook) replaces the target with racedContent
+// in the final window, and the process dies between the first exchange and
+// the swap-back — the interval whose on-disk state is the accepted residual
+// a crash test must DEMONSTRATE rather than hide (review round three).
+//
 // Exit 0 = mutation applied; 1 = typed rejection (JSON carries the code);
 // anything else = the deliberate crash.
 
@@ -51,6 +59,27 @@ var service = new VaultMutationService(
     StaticSyncGate.Open,
     options,
     new SyncOptions());
+
+if (command == "crash-replace-raced")
+{
+    var target = resolver.Resolve(path).Absolute;
+    AtomicFile.BeforeExchangeTestHook = p =>
+    {
+        if (p != target)
+            return;
+        var sibling = p + ".sync-replace";
+        File.WriteAllText(sibling, args[7]);
+        File.Move(sibling, p, overwrite: true);
+    };
+    AtomicFile.AfterRacedExchangeTestHook = p =>
+    {
+        if (p == target)
+            Environment.FailFast("deliberate crash between the exchanges of a raced replace");
+    };
+    service.Edit(path, args[4], [new EditSpec(args[5], args[6])]);
+    Console.WriteLine(JsonSerializer.Serialize(new { ok = true, code = (string?)null, newSha = (string?)null }));
+    return 0;
+}
 
 if (command is "crash-move" or "crash-delete")
 {

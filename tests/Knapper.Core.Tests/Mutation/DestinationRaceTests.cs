@@ -17,6 +17,15 @@ namespace Knapper.Core.Tests.Mutation;
 /// <para>Every test asserts the CONTENTS and existence of both pathnames, not
 /// just the error code: an operation that reports the right failure while
 /// losing a file passes a code-only assertion.</para>
+///
+/// <para><b>The commit boundary</b> (see `LinkPublishCapture`): the
+/// destination being published and VERIFIED is the commit. An external
+/// writer attacking the destination BEFORE that point makes the operation
+/// fail with everything preserved; attacking it AFTER that point is an
+/// ordinary external delete/overwrite of the note — the operation reports
+/// success and the external action stands, exactly as if it had landed a
+/// millisecond after the operation returned. Both sides are pinned below;
+/// the after-capture tests are the boundary's far side.</para>
 /// </summary>
 public sealed class DestinationRaceTests : IDisposable
 {
@@ -98,13 +107,14 @@ public sealed class DestinationRaceTests : IDisposable
     }
 
     /// <summary>
-    /// The loss case that started this: destination verified, then dropped by
-    /// someone else, then the source removed — under a check-then-delete
-    /// design the last link to the content went with it and the operation
-    /// still reported success.
+    /// Removal in the window between the commit link and the destination
+    /// verification: the verification notices, the operation fails, and the
+    /// source comes back from the captured copy. (This hook fires BEFORE the
+    /// destination is verified — the post-verification window is the
+    /// after-capture family below, on the far side of the commit boundary.)
     /// </summary>
     [Fact]
-    public void A_destination_removed_after_the_commit_keeps_the_content()
+    public void A_destination_removed_between_commit_and_verification_keeps_the_content()
     {
         var sha = _v.Write("Notes/a.md", "the only copy\n");
         _v.Service.AfterCommitTestHook = (_, destination) => File.Delete(destination);
@@ -114,6 +124,76 @@ public sealed class DestinationRaceTests : IDisposable
 
         _v.ReadText("Notes/a.md").ShouldBe("the only copy\n");
         File.Exists(_v.Absolute("Notes/b.md")).ShouldBeFalse();
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    // ---- the far side of the commit boundary: after capture -----------------
+
+    /// <summary>
+    /// The destination removed AFTER it was published, verified, and the
+    /// source captured. The move is already committed at that point, so this
+    /// is the external writer deleting the note — the operation reports
+    /// SUCCESS and their delete stands, the same as a delete landing a
+    /// millisecond after the move returned. The alternative — a second
+    /// destination check deciding whether the hidden links may go — is
+    /// check-then-delete over a pathname other writers own, the exact shape
+    /// this design removed. The review that prompted this test flagged the
+    /// window as uncovered; this pins the chosen (linearizable) semantics.
+    /// </summary>
+    [Fact]
+    public void A_destination_removed_after_the_capture_is_the_external_writers_delete()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCaptureTestHook = (_, destination) => File.Delete(destination);
+
+        var result = _v.Service.Move("Notes/a.md", "Notes/b.md", sha);
+
+        result.Path.ShouldBe("Notes/b.md");
+        File.Exists(_v.Absolute("Notes/a.md")).ShouldBeFalse("the move completed");
+        File.Exists(_v.Absolute("Notes/b.md")).ShouldBeFalse("their post-commit delete stands");
+        _v.TempFiles().ShouldBeEmpty("hidden links are cleanup, not a recovery journal");
+    }
+
+    [Fact]
+    public void A_destination_replaced_after_the_capture_is_the_external_writers_overwrite()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCaptureTestHook = (_, destination) => ExternalReplace(destination, "sync wrote here\n");
+
+        var result = _v.Service.Move("Notes/a.md", "Notes/b.md", sha);
+
+        result.Path.ShouldBe("Notes/b.md");
+        File.Exists(_v.Absolute("Notes/a.md")).ShouldBeFalse();
+        _v.ReadText("Notes/b.md").ShouldBe("sync wrote here\n", "their post-commit overwrite stands");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_trash_entry_removed_after_the_capture_is_the_external_writers_delete()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCaptureTestHook = (_, trash) => File.Delete(trash);
+
+        var result = _v.Service.Delete("Notes/a.md", sha);
+
+        result.TrashPath.ShouldBe(".trash/Notes/a.md");
+        File.Exists(_v.Absolute("Notes/a.md")).ShouldBeFalse("the delete completed");
+        File.Exists(_v.Absolute(".trash/Notes/a.md")).ShouldBeFalse("their removal of the trash copy stands");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_trash_entry_replaced_after_the_capture_is_the_external_writers_overwrite()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCaptureTestHook = (_, trash) => ExternalReplace(trash, "someone else's trash\n");
+
+        var result = _v.Service.Delete("Notes/a.md", sha);
+
+        result.TrashPath.ShouldBe(".trash/Notes/a.md");
+        File.Exists(_v.Absolute("Notes/a.md")).ShouldBeFalse();
+        _v.ReadText(".trash/Notes/a.md").ShouldBe("someone else's trash\n",
+            "their post-commit overwrite of the trash copy stands");
         _v.TempFiles().ShouldBeEmpty();
     }
 

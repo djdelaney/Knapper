@@ -39,7 +39,8 @@ Dependency direction is strictly `Mcp`/`Cli` → `Core`. Core's only NuGet
 dependency is YamlDotNet; the Mcp host adds the MCP SDK and JwtBearer.
 Everything is Unix-only by design (`SupportedOSPlatform` linux+macos,
 asserted repo-wide): the guarantees stand on flock(2), link(2), rename(2),
-and Unix file modes.
+the atomic pathname exchange (renameat2 `RENAME_EXCHANGE` / renamex_np
+`RENAME_SWAP`), and Unix file modes.
 
 ## Knapper.Core layout
 
@@ -47,13 +48,13 @@ and Unix file modes.
 Core/
   KnapperException.cs      VaultErrorCode + the one exception type crossing layers
   KnapperMetrics.cs        bounded counters → atomic JSON snapshot (the monitor's rate signals)
-  Interop/Posix.cs         flock / link / creat / fsync-dir / realpath (LibraryImport)
+  Interop/Posix.cs         flock / link / linkat-nofollow / creat / exchange / fsync-dir / realpath (LibraryImport)
   Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions (POCOs)
   Vault/
     VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/dot-segments)
     VaultPath.cs           proof-of-validation record (internal ctor)
     VaultHash.cs           SHA-256 lowercase hex — the precondition currency
-    AtomicFile.cs          THE writer: temp+fsync → last-instant SHA check → rename/link → verify
+    AtomicFile.cs          THE writer: temp+fsync → last-instant SHA check → exchange/link → verify
     PathContainment.cs     realpath-canonicalized "is this inside the vault" for startup checks
     CaseSensitivityProbe.cs  detects case-insensitive vault FS (doctor fails; server warns)
   Locking/
@@ -130,7 +131,27 @@ never retracted; when the capture reveals a raced source the operation fails
 with a visible duplicate, named in the error, rather than deleting a pathname
 other writers can see. `.trash/` chains are checked for symlinked components
 and proved by `realpath` to be inside the vault. Batch validates every item under sorted-order locks before the
-first write. Verification is by content, never by receipt — the vault has
+first write. Replace commits by atomic exchange rather than overwriting
+rename: whatever the target held at the instant of the commit ends up under
+the hidden temp and is judged there by CONTENT — classified non-following,
+then hashed against the expected base; metadata is never a content
+precondition, because an equal dev/inode/size/mtime tuple does not prove
+unchanged bytes (round four) — and from
+that instant the temp is RETAINED by default until a branch proves it safe
+to discard (ownership is device+inode plus the exact written bytes, never
+byte equality alone). A raced commit is exchanged straight back, so the
+rejection leaves the external bytes at the note's own pathname, and when a
+second race makes exact rollback impossible the displaced version is
+republished visibly (no-follow) as a `(Knapper displaced …)` conflict
+sibling that blocks the note until a human reconciles. The source of a
+move/delete is linked no-follow and inspected under the private name, so a
+note swapped for a symlink or a FIFO mid-operation is refused rather than
+followed or blocked on; every content read taken under the path locks
+classifies the file first. Every mutation proves
+its target's parent resolves inside the vault on both sides of the commit,
+so a parent directory swapped for a symlink mid-operation surfaces as
+`PathOutsideVault` instead of a success receipt for an out-of-vault write.
+Verification is by content, never by receipt — the vault has
 a documented history of writes that reported success without landing.
 
 ## Locking model

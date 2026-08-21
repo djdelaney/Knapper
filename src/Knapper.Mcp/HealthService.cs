@@ -127,12 +127,22 @@ public sealed class HealthService(
 
     public sealed record UpBool(bool Ok);
 
+    /// <summary>
+    /// A walk's answer and its failure reason are ONE value: /health and /up
+    /// can run concurrently, and when the error lived in a singleton field a
+    /// completed scan could be reported with ANOTHER request's error (or an
+    /// incomplete scan lose its own). Files is null when the walk could not
+    /// complete — and only then does Error carry the labelled cause.
+    /// </summary>
+    private sealed record ScanOutcome(IReadOnlyList<string>? Files, string? Error);
+
     public Report Check()
     {
         var version = BuildInfo.Version;
 
         var vaultReachable = Directory.Exists(resolver.Root);
-        var conflictFiles = vaultReachable ? ScanConflicts() : null;
+        var conflictScan = vaultReachable ? ScanConflicts() : new ScanOutcome(null, null);
+        var conflictFiles = conflictScan.Files;
 
         bool mutationsAllowed;
         string? blockedReason = null;
@@ -150,7 +160,8 @@ public sealed class HealthService(
 
         var rgVersion = RipgrepVersion();
         var auditWritable = AuditWritable();
-        var oversized = vaultReachable ? Oversized() : null;
+        var oversizedScan = vaultReachable ? Oversized() : new ScanOutcome(null, null);
+        var oversized = oversizedScan.Files;
 
         // ── The rule, stated once, because two probes could otherwise drift
         // into an unexplained difference ──────────────────────────────────
@@ -181,12 +192,12 @@ public sealed class HealthService(
             version,
             new VaultInfo(
                 vaultReachable, resolver.Root, generation.Current,
-                conflictFiles ?? [], conflictFiles is not null, _conflictScanError),
+                conflictFiles ?? [], conflictFiles is not null, conflictScan.Error),
             new SyncInfo(syncOptions.Value.Mode, mutationsAllowed, heartbeatAge, blockedReason),
             new RipgrepInfo(rgVersion is not null, rgVersion),
             new AuditInfo(auditWritable, vaultOptions.Value.AuditLogPath),
             new OversizedInfo(
-                oversized is not null, _oversizedScanError, oversized?.Count ?? 0,
+                oversized is not null, oversizedScan.Error, oversized?.Count ?? 0,
                 syncOptions.Value.MaxFileBytes, oversized ?? []));
     }
 
@@ -198,12 +209,11 @@ public sealed class HealthService(
     /// monitor can only report as "knapper degraded/down, tunnel down, or
     /// Access rejecting the token" — every diagnosis except the true one.
     /// </summary>
-    private IReadOnlyList<string>? ScanConflicts()
+    private ScanOutcome ScanConflicts()
     {
         try
         {
-            _conflictScanError = null;
-            return conflicts.ScanAll(ConflictScanBudget);
+            return new ScanOutcome(conflicts.ScanAll(ConflictScanBudget), null);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
         {
@@ -214,7 +224,6 @@ public sealed class HealthService(
             // exists to keep this walk off the request thread indefinitely,
             // and letting its expiry escape would turn a bounded walk into a
             // 500, which /health's own contract says it must never answer.
-            _conflictScanError = e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}";
             if (e is TimeoutException)
             {
                 logger.LogWarning(e,
@@ -228,12 +237,9 @@ public sealed class HealthService(
                     "Conflict-file walk could not complete — /health reports it as unknown, not clean. " +
                     "The vault contains a directory this process cannot read.");
             }
-            return null;
+            return new ScanOutcome(null, e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}");
         }
     }
-
-    private string? _conflictScanError;
-    private string? _oversizedScanError;
 
     /// <summary>
     /// Every boolean means "probed, and fine" — an incomplete walk is false,
@@ -263,8 +269,15 @@ public sealed class HealthService(
             new UpBool(report.Oversized is { Scanned: true, Count: 0 }));
     }
 
-    private IReadOnlyList<string> _oversized = [];
-    private long _oversizedScannedAt; // Stopwatch timestamp; 0 = never scanned
+    /// <summary>
+    /// Only a SUCCESS is ever cached, and it is cached as one immutable
+    /// snapshot (list + timestamp together): the reference swap is atomic, so
+    /// a concurrent request sees either the whole previous snapshot or the
+    /// whole new one — never one scan's list under another scan's clock.
+    /// </summary>
+    private sealed record OversizedSnapshot(IReadOnlyList<string> Files, long ScannedAt);
+
+    private OversizedSnapshot? _oversizedSnapshot;
 
     /// <summary>
     /// Vault files Obsidian Sync refuses to carry. This is the BACKSTOP, not
@@ -287,14 +300,16 @@ public sealed class HealthService(
     /// too — a list from a previous minute presented as this minute's answer
     /// is a smaller version of the same lie.
     /// </summary>
-    private IReadOnlyList<string>? Oversized()
+    private ScanOutcome Oversized()
     {
-        if (_oversizedScannedAt != 0 && Stopwatch.GetElapsedTime(_oversizedScannedAt) < OversizedTtl)
-            return _oversized;
+        var cached = _oversizedSnapshot;
+        if (cached is not null && Stopwatch.GetElapsedTime(cached.ScannedAt) < OversizedTtl)
+            return new ScanOutcome(cached.Files, null);
 
+        IReadOnlyList<string> files;
         try
         {
-            _oversized = OversizedFiles.Scan(resolver.Root, syncOptions.Value.MaxFileBytes, OversizedBudget);
+            files = OversizedFiles.Scan(resolver.Root, syncOptions.Value.MaxFileBytes, OversizedBudget);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or TimeoutException)
         {
@@ -308,7 +323,6 @@ public sealed class HealthService(
             // means the walk cannot finish in the budget and will keep not
             // finishing — the vault has outgrown a design assumption, and the
             // lever is OversizedFiles.DefaultBudget, not patience.
-            _oversizedScanError = e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}";
             if (e is TimeoutException)
             {
                 logger.LogWarning(e,
@@ -322,14 +336,13 @@ public sealed class HealthService(
                     "Oversized-file walk could not complete — /health reports it as unknown, not clean. " +
                     "The vault contains a directory this process cannot read.");
             }
-            _oversized = [];
-            _oversizedScannedAt = 0;
-            return null;
+            // The failure never enters the cache: "could not tell" must
+            // re-probe on the next request, not be served for a TTL.
+            return new ScanOutcome(null, e is TimeoutException ? $"timeout: {e.Message}" : $"io: {e.Message}");
         }
 
-        _oversizedScanError = null;
-        _oversizedScannedAt = Stopwatch.GetTimestamp();
-        return _oversized;
+        _oversizedSnapshot = new OversizedSnapshot(files, Stopwatch.GetTimestamp());
+        return new ScanOutcome(files, null);
     }
 
     private string? RipgrepVersion()
