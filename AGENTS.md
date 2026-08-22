@@ -400,8 +400,14 @@ format by default.
   that landed elsewhere; and move/delete prove the SOURCE before linking and
   the CAPTURED name after the capture, so a swapped source parent can never
   end with an out-of-vault file quietly captured and deleted
-  (`ParentSwapTests`). The window itself stays open — only the consequence,
-  a lying success receipt or an outside deletion, is closed.
+  (`ParentSwapTests`). EVERY means mkdir too: it sat outside the pattern
+  until 2026-08-22 with no lock, no conflict gate and no containment proof on
+  either side, so a parent swapped after `Resolve` had
+  `Directory.CreateDirectory` FOLLOW it and build the directory outside the
+  vault under a receipt naming a vault path. A mutation surface that creates
+  no content is still a mutation surface. The window itself stays open —
+  only the consequence, a lying success receipt or an outside deletion, is
+  closed.
 - **The final component is linked NO-FOLLOW and judged under the private
   name, never through a symlink.** `Resolve` rejects symlink components, but
   the note itself can be swapped for an equal-content symlink one syscall
@@ -607,7 +613,18 @@ format by default.
   (`SecretScanner`) refuses commits containing credential-shaped strings —
   scanning the STAGED blob (`git show :file`), not the working tree, because
   the staged bytes are what would enter history. Findings are masked in the
-  error; never echo a whole secret into logs or exceptions.
+  error; never echo a whole secret into logs or exceptions. **Every git
+  invocation drains both pipes CONCURRENTLY and waits with a BOUND**
+  (`GitTimeoutMs`): that lock is exclusive and every mutation needs it
+  shared, so anything blocking in `Run` blocks all vault writes with no
+  caller in a position to time it out. Draining stdout to EOF before
+  starting stderr deadlocks the moment git puts more than a pipe buffer on
+  the stream nobody is reading, and an unbounded `WaitForExit` wedges the
+  vault just as hard on a git that hangs without filling any pipe. A commit
+  is a background job — failing it loudly costs one cycle and the next tick
+  picks the work up, which is why the bound is the safe direction
+  (`A_git_flooding_stderr_does_not_wedge_the_commit_lock`,
+  `A_git_that_never_exits_is_killed_rather_than_holding_the_lock_forever`).
 
 ## Query-layer invariants (silent-corruption-prone)
 
@@ -659,6 +676,30 @@ format by default.
   Honoring a cursor against different filters would omit or duplicate
   records across pages — that's why the mismatch is a typed `InvalidCursor`,
   not a best-effort resume.
+- **UTF-8 byte order is THE path order, and that includes the ORDER THE
+  PREFIXES ARE HANDED TO rg.** `QueryCursor.ComparePathUtf8` is the one
+  comparer; `StringComparer.Ordinal` is UTF-16 code units and the two
+  diverge exactly where a non-BMP name (emoji — ordinary in Obsidian) meets
+  U+E000..U+FFFF, surrogates sorting low in UTF-16 and high in UTF-8. rg
+  does NOT sort globally across multiple search roots — it emits one
+  internally-sorted group per root IN ARGV ORDER — so the prefix list is not
+  a bookkeeping detail, it IS the emission order the cursor is compared
+  against. Sorted with the wrong comparer, every record of the byte-earlier
+  group compares `<=` the cursor and is dropped from page two onward while
+  the final page still reports `truncated: false`: a silent omission on
+  deterministic, ordinary input with no race involved (shipped through
+  0.5.3 — the only two-prefix test in the suite was the overlap one, so
+  nothing looked). Pinned by
+  `Two_prefixes_paginate_in_the_cursors_own_order_without_omission`.
+- **The prefix overlap check compares ALL PAIRS, never neighbours.** A
+  parent and its child need not be adjacent once sorted: any byte below `/`
+  (0x2F) sorts a sibling between them, and `-` (0x2D) and `.` (0x2E) are
+  ordinary in folder names — `["Notes", "Notes-old", "Notes/Daily"]` puts
+  `Notes-old` in the middle, so an adjacent-only walk compares neither pair
+  that overlaps. rg then searches `Notes/Daily` under both roots and every
+  file beneath it is reported TWICE, which is the duplicate the check exists
+  to refuse. The cap is 64 prefixes, so the quadratic walk is free
+  (`Overlapping_prefixes_are_refused_even_when_a_sibling_sorts_between_them`).
 - **Ranged reads return the WHOLE file's SHA-256.** The hash is the mutation
   precondition currency; a range-scoped hash would let an agent build a
   precondition that can never match and, worse, look like it should.

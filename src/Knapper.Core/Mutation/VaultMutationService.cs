@@ -191,17 +191,38 @@ public sealed class VaultMutationService(
         var vp = resolver.Resolve(path);
         try
         {
-            syncGate.AssertMutationsAllowed();
-            if (Directory.Exists(vp.Absolute) || File.Exists(vp.Absolute))
-                throw new KnapperException(VaultErrorCode.AlreadyExists, $"already exists: {vp.Relative}");
-            var parent = Path.GetDirectoryName(vp.Absolute)!;
-            if (!Directory.Exists(parent))
+            // The full gate pair, not syncGate alone: mkdir is a mutation and
+            // the conflict gate governs mutations. Asserted twice around the
+            // lock for the reason AssertGates documents.
+            AssertGates([vp]);
+            using (locks.AcquirePathLock(vp, LockTimeout))
             {
-                throw new KnapperException(VaultErrorCode.NotFound,
-                    $"parent directory does not exist: create it first (one deliberate level at a time)");
+                AssertGates([vp]);
+                // Under the lock, so the AlreadyExists answer is still true
+                // when it is acted on — outside it this was check-then-act
+                // and two concurrent mkdirs of one path both reported success.
+                if (Directory.Exists(vp.Absolute) || File.Exists(vp.Absolute))
+                    throw new KnapperException(VaultErrorCode.AlreadyExists, $"already exists: {vp.Relative}");
+                var parent = Path.GetDirectoryName(vp.Absolute)!;
+                if (!Directory.Exists(parent))
+                {
+                    throw new KnapperException(VaultErrorCode.NotFound,
+                        $"parent directory does not exist: create it first (one deliberate level at a time)");
+                }
+                RequireAuditIntent("mkdir", vp.Relative, ctx);
+                // Containment on both sides of the commit, like every other
+                // mutation. Resolve rejects symlinked components, but that
+                // answer expires one syscall later, and CreateDirectory
+                // FOLLOWS a parent swapped for an out-of-vault symlink — the
+                // directory is then created outside the vault and the receipt
+                // says otherwise. The post check turns that into a typed
+                // PathOutsideVault. It removes nothing: unlinking a path on
+                // the strength of having created it a syscall earlier is the
+                // shape this layer refuses everywhere.
+                RequireIntendedTargetInsideVault(vp.Absolute, "mkdir");
+                Directory.CreateDirectory(vp.Absolute);
+                RequireLinkInsideVault(vp.Absolute, "mkdir", "target");
             }
-            RequireAuditIntent("mkdir", vp.Relative, ctx);
-            Directory.CreateDirectory(vp.Absolute);
             generation.Increment();
             TryAudit("mkdir", vp.Relative, "ok", ctx);
         }
@@ -912,8 +933,16 @@ public sealed class VaultMutationService(
         {
             same = false;
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            // UnauthorizedAccessException, not IOException, is what
+            // File.ReadAllBytes answers for a mode-000 file — the same
+            // exhaustive pair the sibling judgements (CapturedIsOurs, Holds)
+            // catch. Omitting it let a source chmod'ed unreadable inside this
+            // window escape as [IoError] ("filesystem failure") when the
+            // honest answer is [PreconditionFailed] ("re-read and retry"):
+            // an unreadable source cannot be PROVEN to still hold our bytes,
+            // and unprovable is exactly what this precondition rejects.
             same = false;
         }
         if (!same)

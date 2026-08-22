@@ -304,14 +304,42 @@ public sealed class VaultSearchService(
             throw new KnapperException(VaultErrorCode.NotFound,
                 $"path prefix does not exist or is not a directory: {vp.Relative}");
         }
-        var sorted = resolved.Select(vp => vp.Relative).Order(StringComparer.Ordinal).ToList();
-        for (var i = 1; i < sorted.Count; i++)
+        // UTF-8 byte order, NOT StringComparer.Ordinal (UTF-16 code units) —
+        // QueryCursor.ComparePathUtf8 is THE path order of the query surface
+        // and this list IS a path order: rg does not sort globally across
+        // multiple search roots, it emits one internally-sorted group per
+        // root IN ARGV ORDER (verified against rg 15.2.0), so argv order is
+        // the emission order the (path,line,column) cursor filter is compared
+        // against. Ordinal and byte order diverge exactly where a non-BMP
+        // name (emoji — common in Obsidian) meets U+E000..U+FFFF: surrogates
+        // sort low in UTF-16 and high in UTF-8. Under the wrong comparer
+        // every record of the byte-earlier group compares <= the cursor and
+        // is dropped from every later page, while the final page still
+        // reports truncated:false — the silent-completeness-lie this layer
+        // exists to prevent.
+        var sorted = resolved.Select(vp => vp.Relative)
+            .Order(Comparer<string>.Create(QueryCursor.ComparePathUtf8))
+            .ToList();
+        // ALL PAIRS, not adjacent ones. A parent and its child are not
+        // necessarily neighbours in sorted order: any byte below '/' (0x2F)
+        // sorts a sibling between them, and '-' (0x2D) and '.' (0x2E) are
+        // ordinary in folder names — ["Notes", "Notes-old", "Notes/Daily"]
+        // sorts with "Notes-old" in the middle, so an adjacent-only walk
+        // compares neither pair that overlaps and lets "Notes" and
+        // "Notes/Daily" through together. rg then searches Notes/Daily under
+        // both roots and every file beneath it is reported TWICE — the
+        // duplicate this check exists to refuse. The cap above is 64, so the
+        // quadratic walk is free.
+        for (var i = 0; i < sorted.Count; i++)
         {
-            if (sorted[i] == sorted[i - 1] || sorted[i].StartsWith(sorted[i - 1] + '/', StringComparison.Ordinal))
+            for (var j = i + 1; j < sorted.Count; j++)
             {
-                throw new KnapperException(VaultErrorCode.InvalidArgument,
-                    $"path prefixes overlap ('{sorted[i - 1]}' covers '{sorted[i]}') — overlapping scopes " +
-                    "would duplicate results, which the completeness contract forbids");
+                if (sorted[j] == sorted[i] || sorted[j].StartsWith(sorted[i] + '/', StringComparison.Ordinal))
+                {
+                    throw new KnapperException(VaultErrorCode.InvalidArgument,
+                        $"path prefixes overlap ('{sorted[i]}' covers '{sorted[j]}') — overlapping scopes " +
+                        "would duplicate results, which the completeness contract forbids");
+                }
             }
         }
         return sorted;

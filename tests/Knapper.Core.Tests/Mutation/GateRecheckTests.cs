@@ -99,6 +99,23 @@ public sealed class GateRecheckTests : IDisposable
     }
 
     /// <summary>
+    /// mkdir is a mutation and gets the same treatment as the other four.
+    /// It used to assert the sync gate ONCE and never take a lock at all —
+    /// the one mutation surface outside the pattern.
+    /// </summary>
+    [Fact]
+    public void A_mkdir_whose_sync_gate_goes_stale_under_the_lock_creates_nothing()
+    {
+        var service = Staleing(out var gate);
+
+        Should.Throw<KnapperException>(() => service.CreateDirectory("Notes/sub"))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+
+        gate.Calls.ShouldBe(2);
+        Directory.Exists(_v.Absolute("Notes/sub")).ShouldBeFalse();
+    }
+
+    /// <summary>
     /// Batch re-asserts after VALIDATE, not just after the locks: validating
     /// every item is the long pole, and it is the last moment at which
     /// nothing has been written.

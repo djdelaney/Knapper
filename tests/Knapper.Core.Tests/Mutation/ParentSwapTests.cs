@@ -122,6 +122,30 @@ public sealed class ParentSwapTests : IDisposable
     }
 
     /// <summary>
+    /// mkdir escaped the both-sides rule entirely: it resolved, then called
+    /// Directory.CreateDirectory on the resolved STRING with no containment
+    /// proof on either side. CreateDirectory follows a parent swapped for an
+    /// out-of-vault symlink, so the directory was created outside the vault
+    /// and the receipt named a vault path. Nothing is destroyed by that — but
+    /// a success receipt for a write that landed elsewhere is the exact
+    /// consequence the pair exists to convert into a loud typed failure.
+    /// </summary>
+    [Fact]
+    public void A_mkdir_whose_parent_was_swapped_before_the_call_creates_nothing_outside()
+    {
+        _v.Service.CreateDirectory("Notes");
+        _v.Service.CreateDirectory("Notes/holder");
+        string? moved = null;
+        var service = _v.ServiceWithSyncGate(new SwapOnSecondCall(() => moved = SwapOut("Notes/holder")));
+
+        var ex = Should.Throw<KnapperException>(() => service.CreateDirectory("Notes/holder/sub"));
+
+        ex.Code.ShouldBe(VaultErrorCode.PathOutsideVault);
+        Directory.Exists(Path.Combine(moved!, "sub"))
+            .ShouldBeFalse("the pre-commit proof refuses before the directory is created outside");
+    }
+
+    /// <summary>
     /// The source half of a move. Post-publish, the capture rename follows
     /// the swapped chain and takes a pathname OUTSIDE the vault — and the
     /// success path would then delete that capture. The post-capture proof

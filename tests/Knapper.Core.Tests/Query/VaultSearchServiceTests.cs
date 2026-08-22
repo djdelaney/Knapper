@@ -353,6 +353,81 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void Two_prefixes_paginate_in_the_cursors_own_order_without_omission()
+    {
+        // The multi-root twin of the test above, and the reason the prefix
+        // list is sorted with ComparePathUtf8 rather than
+        // StringComparer.Ordinal. rg does NOT sort globally across search
+        // roots — it emits one internally-sorted group per root IN ARGV
+        // ORDER — so the prefix order IS the emission order the cursor is
+        // compared against. Under UTF-16 ordinal the emoji directory goes
+        // first in argv while the cursor filter (UTF-8 bytes) rates it LAST,
+        // so every record in it compares <= the cursor and is dropped from
+        // page 2 onward, with the final page still reporting
+        // truncated:false. Both names are top-level directories, both
+        // spellings are ordinary in an Obsidian vault, and no race is
+        // involved: this is deterministic on plain input.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        dir.File("\U0001F600emoji/a.md", "needle one\n");
+        dir.File("pua/a.md", "needle two\n");
+        var search = new VaultSearchService(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions());
+        var query = new VaultSearchQuery
+        {
+            Pattern = "needle",
+            PathPrefixes = ["\U0001F600emoji", "pua"],
+            MaxResults = 1,
+        };
+
+        var all = new List<string>();
+        var page = search.SearchMatches(query);
+        var pages = 0;
+        while (true)
+        {
+            all.AddRange(page.Items.Select(m => m.Path));
+            if (++pages > 10)
+                throw new Xunit.Sdk.XunitException("pagination did not terminate");
+            if (!page.Truncated)
+                break;
+            page = search.SearchMatches(query with { Cursor = page.NextCursor.ShouldNotBeNull() });
+        }
+
+        // Neither file may be lost, and the page order is the cursor's own
+        // UTF-8 order (EE.. before F0..) — not UTF-16's.
+        all.ShouldBe(["pua/a.md", "\U0001F600emoji/a.md"]);
+    }
+
+    [Fact]
+    public void Overlapping_prefixes_are_refused_even_when_a_sibling_sorts_between_them()
+    {
+        // The overlap check compares ALL PAIRS, not neighbours: a parent and
+        // its child are not necessarily adjacent once a sibling whose next
+        // byte is below '/' (0x2F) sorts between them — and '-' (0x2D) and
+        // '.' (0x2E) are ordinary in folder names. An adjacent-only walk
+        // compares "Notes"/"Notes-old" and "Notes-old"/"Notes/Daily",
+        // neither of which overlaps, and lets the pair that DOES through;
+        // rg then searches Notes/Daily under both roots and reports every
+        // file beneath it twice.
+        using var dir = new TempDir();
+        using var gen = new Knapper.Core.Generation.VaultGenerationCounter();
+        dir.File("Notes/Daily/a.md", "needle\n");
+        dir.File("Notes-old/b.md", "needle\n");
+        var search = new VaultSearchService(
+            new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
+            new Knapper.Core.Options.VaultOptions());
+
+        var e = Should.Throw<Knapper.Core.KnapperException>(() => search.SearchMatches(new VaultSearchQuery
+        {
+            Pattern = "needle",
+            PathPrefixes = ["Notes", "Notes-old", "Notes/Daily"],
+        }));
+        e.Code.ShouldBe(Knapper.Core.VaultErrorCode.InvalidArgument);
+        e.Message.ShouldContain("overlap");
+    }
+
+    [Fact]
     public void Trailing_after_context_crossing_the_budget_at_eof_is_still_a_complete_result()
     {
         // After-context alone crosses the limit and nothing follows: the

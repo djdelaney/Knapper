@@ -38,6 +38,22 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// </summary>
     public const long MaxScanBlobBytes = 4_000_000;
 
+    /// <summary>
+    /// Wall-clock bound on any one git invocation. Every git call in this
+    /// class runs while the vault-wide commit lock is held EXCLUSIVELY, and
+    /// every mutation needs that lock in shared mode — so a git that never
+    /// returns does not merely fail a commit, it blocks all vault writes with
+    /// no caller in a position to time it out. Sized for the worst honest
+    /// case (an `add -A` restaging a whole large vault on a cold cache), not
+    /// for the typical one, because the cost of expiring early is a skipped
+    /// commit cycle and the cost of never expiring is a wedged vault.
+    /// </summary>
+    public const int GitTimeoutMs = 120_000;
+
+    /// <summary>Test seams: a stand-in git, and a bound short enough to assert.</summary>
+    internal string GitExecutable = "git";
+    internal int TimeoutMs = GitTimeoutMs;
+
     public bool RepoExists => Directory.Exists(Path.Combine(resolver.Root, ".git"));
 
     /// <summary>
@@ -216,7 +232,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = GitExecutable,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -228,9 +244,50 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
         using var process = Process.Start(psi)
             ?? throw new KnapperException(VaultErrorCode.IoError, "failed to start git");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        // Both pipes drained CONCURRENTLY, and the wait is BOUNDED. This runs
+        // under the vault-wide commit lock, which every mutation needs in
+        // shared mode, so anything that blocks here blocks all writes until
+        // the process restarts — there is no caller to time it out.
+        //
+        // Draining one pipe to EOF before starting the other deadlocks the
+        // moment git emits more than a pipe buffer on the stream nobody is
+        // reading: the child blocks writing stderr, the parent blocks reading
+        // stdout, and neither ever moves. The bound covers the rest — a git
+        // that hangs without filling a pipe at all (a stalled filesystem, an
+        // index.lock it decides to wait on) wedges the lock just as hard, and
+        // a commit is a background job: failing it loudly costs one cycle,
+        // and the next tick picks the work up.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(TimeoutMs))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (Exception e) when (e is InvalidOperationException or NotSupportedException
+                or System.ComponentModel.Win32Exception)
+            {
+                // Already gone between the timeout and the kill, or unkillable.
+                // Either way the throw below is the answer.
+            }
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"git {args[0]} did not exit within {TimeoutMs} ms and was killed — " +
+                "the commit is abandoned and will be retried on the next tick");
+        }
+        // WaitForExit(int) does not itself await the redirected streams, and
+        // this wait is bounded for the same reason the one above is: a
+        // grandchild inheriting the pipe holds it open past git's own exit,
+        // and an unbounded wait here would hand back the wedge the timeout
+        // just removed.
+        if (!Task.WaitAll([stdoutTask, stderrTask], TimeoutMs))
+        {
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"git {args[0]} exited but its output pipes stayed open past {TimeoutMs} ms — " +
+                "the commit is abandoned and will be retried on the next tick");
+        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         if (process.ExitCode != 0)
         {
             throw new KnapperException(VaultErrorCode.IoError,

@@ -269,6 +269,70 @@ public sealed class GitCommitJobTests : IDisposable
         _job.Commit(Ample).Committed.ShouldBeTrue();
     }
 
+    /// <summary>A stand-in git: an executable shell script, returned as a path.</summary>
+    private string FakeGit(string body)
+    {
+        // RepoExists short-circuits HasRemote before it ever shells out.
+        Directory.CreateDirectory(Path.Combine(_v.VaultDir.Path, ".git"));
+        var path = Path.Combine(_v.Outside.Path, "fake-git.sh");
+        File.WriteAllText(path, "#!/bin/sh\n" + body);
+        File.SetUnixFileMode(path,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
+
+    /// <summary>
+    /// Every git call here runs under the vault-wide commit lock, held
+    /// EXCLUSIVELY, and every mutation needs that lock shared — so anything
+    /// that blocks in Run() blocks all vault writes until the process
+    /// restarts. Draining stdout to EOF before starting on stderr deadlocks
+    /// the moment git puts more than a pipe buffer (64 KiB on Linux, 16 KiB
+    /// on macOS) on the stream nobody is reading: the child blocks writing
+    /// stderr, the parent blocks reading stdout, and neither moves again.
+    /// Both pipes are drained concurrently, so the volume is irrelevant.
+    /// </summary>
+    [Fact]
+    public async Task A_git_flooding_stderr_does_not_wedge_the_commit_lock()
+    {
+        // 1 MiB of stderr — far past any platform's pipe buffer — while
+        // stdout stays open to the end.
+        _job.GitExecutable = FakeGit(
+            """
+            i=0
+            while [ $i -lt 8192 ]; do
+              printf '%0128d\n' $i >&2
+              i=$((i + 1))
+            done
+            echo done
+            """);
+
+        var run = Task.Run(() => _job.HasRemote());
+        ReferenceEquals(await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30))), run)
+            .ShouldBeTrue("reading one pipe to EOF before the other deadlocks — drain both concurrently");
+        (await run).ShouldBeTrue("the flood is drained and stdout still arrives intact");
+    }
+
+    /// <summary>
+    /// The bound covers what concurrency cannot: a git that hangs without
+    /// filling any pipe (a stalled filesystem, an index.lock it waits on)
+    /// wedges the lock just as hard. A commit is a background job — failing
+    /// it loudly costs one cycle, and the next tick picks the work up.
+    /// </summary>
+    [Fact]
+    public async Task A_git_that_never_exits_is_killed_rather_than_holding_the_lock_forever()
+    {
+        _job.GitExecutable = FakeGit("sleep 300\n");
+        _job.TimeoutMs = 1_000;
+
+        var run = Task.Run(() => Should.Throw<KnapperException>(() => _job.HasRemote()));
+        ReferenceEquals(await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30))), run)
+            .ShouldBeTrue("an unbounded WaitForExit holds the commit lock for as long as git hangs");
+
+        var ex = await run;
+        ex.Code.ShouldBe(VaultErrorCode.IoError);
+        ex.Message.ShouldContain("did not exit");
+    }
+
     [Theory]
     [InlineData("-----BEGIN OPENSSH PRIVATE KEY-----", "private-key")]
     [InlineData("ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github-token")]

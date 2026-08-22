@@ -34,6 +34,51 @@ public sealed class SourceCaptureRaceTests : IDisposable
     }
 
     /// <summary>
+    /// The courtesy check must classify an UNREADABLE source as "not ours",
+    /// like its two sibling judgements do. The replacement lands between the
+    /// link and the courtesy read, so the hard-linked temp still holds the
+    /// original inode and verifies fine while the SOURCE PATHNAME now names
+    /// a different, mode-000 file — the shape that separates the two.
+    ///
+    /// <para><c>File.ReadAllBytes</c> answers
+    /// <c>UnauthorizedAccessException</c> there, not <c>IOException</c>, so a
+    /// handler listing only <c>KnapperException or IOException</c> let it
+    /// escape: nothing was destroyed (the rollback catch is exhaustive by
+    /// construction) but the agent was told <c>[IoError]</c>, "filesystem
+    /// failure", for what is a plain lost race. An agent parses that code to
+    /// choose between re-reading and giving up, and only
+    /// <c>[PreconditionFailed]</c> tells it the true thing. Unreadable means
+    /// the source cannot be PROVEN to still hold our bytes, and unprovable is
+    /// what this precondition exists to reject.</para>
+    /// </summary>
+    [Fact]
+    public void A_source_replaced_by_an_unreadable_file_fails_the_precondition_not_the_filesystem()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterLinkTestHook = source =>
+        {
+            ExternalReplace(source, "sync replacement\n");
+            File.SetUnixFileMode(source, UnixFileMode.None);
+        };
+
+        try
+        {
+            var ex = Should.Throw<KnapperException>(() => _v.Service.Move("Notes/a.md", "Notes/b.md", sha));
+
+            ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed,
+                "an unreadable source is a lost race, not a filesystem failure");
+            File.Exists(_v.Absolute("Notes/b.md")).ShouldBeFalse(
+                "the courtesy check runs BEFORE the publish — nothing may be published");
+            _v.TempFiles().ShouldBeEmpty("no unexplained temp may be left behind");
+        }
+        finally
+        {
+            // Restore readability or TempDir.Dispose cannot clean up.
+            File.SetUnixFileMode(_v.Absolute("Notes/a.md"), UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    /// <summary>
     /// The original reproduction. The bug it pins: the source was re-verified
     /// and then File.Delete'd, so the replacement was destroyed and the move
     /// reported SUCCESS.
