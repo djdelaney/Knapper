@@ -21,6 +21,9 @@ namespace Knapper.AcceptanceTests;
 ///                    (`OAuth ME`) alongside Service Auth. A caller with no
 ///                    assertion might be a human with a browser, so Access
 ///                    sends them to log in: 302 → the login page → 200 HTML.
+///                    With Managed OAuth on (<see cref="RootRefusal"/>) the
+///                    SAME app, with the same policies, refuses machine-
+///                    readably instead: 401 + an RFC 9728 pointer.
 ///   /up            — the monitoring application, Service Auth ONLY. There is
 ///                    no human to send anywhere, so it refuses flat: 403.
 ///
@@ -29,6 +32,20 @@ namespace Knapper.AcceptanceTests;
 /// because a flat 403 has nothing to follow — which is exactly why the defect
 /// survived: the check that would have caught it passed.
 /// </summary>
+/// <summary>
+/// How the root Access application encodes a refusal. NOT a policy
+/// difference — the application carries an identity policy either way, and
+/// `verify` must describe both as an app that HAS an authorization path.
+/// </summary>
+internal enum RootRefusal
+{
+    /// <summary>Without Managed OAuth: 302 to the Access login page.</summary>
+    LoginRedirect,
+
+    /// <summary>With Managed OAuth: 401 + the RFC 9728 pointer.</summary>
+    ManagedOAuth,
+}
+
 internal sealed class FakeAccessEdge : IDisposable
 {
     // The host application's service token — `verify`'s --client-id/secret.
@@ -57,6 +74,7 @@ internal sealed class FakeAccessEdge : IDisposable
     private readonly WebApplication _app;
     private readonly HttpClient _origin;
     private readonly bool _vaultSurfaceExposed;
+    private readonly RootRefusal _rootRefusal;
 
     /// <param name="originPort">The real <see cref="AcceptanceServer"/> behind the edge.</param>
     /// <param name="vaultSurfaceExposed">
@@ -64,9 +82,18 @@ internal sealed class FakeAccessEdge : IDisposable
     /// lets an unauthenticated caller straight through to the MCP surface.
     /// Everything else about the deployment still looks right.
     /// </param>
-    internal FakeAccessEdge(int originPort, bool vaultSurfaceExposed = false)
+    /// <param name="rootRefusal">
+    /// How the ROOT application encodes a refusal. Both values are the same
+    /// application with the same policies — only Managed OAuth differs, and
+    /// turning it on is what changed CT 106's 302s into 401s.
+    /// </param>
+    internal FakeAccessEdge(
+        int originPort,
+        bool vaultSurfaceExposed = false,
+        RootRefusal rootRefusal = RootRefusal.LoginRedirect)
     {
         _vaultSurfaceExposed = vaultSurfaceExposed;
+        _rootRefusal = rootRefusal;
         _origin = new HttpClient
         {
             BaseAddress = new Uri($"http://127.0.0.1:{originPort}/"),
@@ -124,6 +151,8 @@ internal sealed class FakeAccessEdge : IDisposable
 
         if (Presented(id, secret, VaultTokenId, VaultTokenSecret) || _vaultSurfaceExposed)
             await ProxyAsync(context);
+        else if (_rootRefusal == RootRefusal.ManagedOAuth)
+            RefuseWithOAuthChallenge(context);
         else
             RedirectToLogin(context);
     }
@@ -145,6 +174,25 @@ internal sealed class FakeAccessEdge : IDisposable
         context.Response.StatusCode = 302;
         context.Response.Headers.Location = new Uri(Url, $"{LoginPath}{Url.Host}").ToString();
         context.Response.Headers["www-authenticate"] = "Cloudflare-Access";
+    }
+
+    /// <summary>
+    /// The Managed-OAuth refusal, verbatim in shape from CT 106's root
+    /// application (2026-08-22): a 401 whose challenge carries the RFC 9728
+    /// `resource_metadata` pointer — the thing that says an authorization
+    /// path EXISTS, which is what makes "no login to offer" false about this
+    /// app. The pointer's PATH is Cloudflare's own spelling and not RFC
+    /// 9728's canonical one, reproduced verbatim so that a check matching
+    /// the canonical PATH — the obvious reading of the RFC — fails here
+    /// rather than on the deployment.
+    /// </summary>
+    private void RefuseWithOAuthChallenge(HttpContext context)
+    {
+        context.Response.StatusCode = 401;
+        context.Response.Headers["www-authenticate"] =
+            "Bearer realm=\"OAuth\", error=\"invalid_token\", " +
+            "error_description=\"Missing or invalid access token\", " +
+            $"resource_metadata=\"{new Uri(Url, "/.well-known/cloudflare-access-protected-resource/")}\"";
     }
 
     private async Task ProxyAsync(HttpContext context)

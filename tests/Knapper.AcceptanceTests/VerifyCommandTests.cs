@@ -125,6 +125,58 @@ public sealed class VerifyCommandTests : IDisposable
     }
 
     /// <summary>
+    /// Enabling Managed OAuth on the ROOT application changes how it encodes
+    /// a refusal — 302 to the login page becomes 401 with an RFC 9728 pointer
+    /// — while changing no policy at all (CT 106, 2026-08-16). Every verdict
+    /// stayed correct across that change and every EXPLANATION did not: the
+    /// refusal text was selected from the status code, so three releases told
+    /// the operator that "a service-auth-only policy has no login to offer"
+    /// about the one application whose entire purpose is offering an OAuth
+    /// login to MCP clients (reported 2026-08-22).
+    ///
+    /// What is pinned is that ONE deployment's TWO applications are described
+    /// DIFFERENTLY, each from what its own response carries: a fix that moved
+    /// all three rows together would have swapped one wrong explanation for
+    /// another, since /up's app genuinely is service-auth-only and the root
+    /// app genuinely is not.
+    /// </summary>
+    [Fact]
+    public void A_Managed_OAuth_refusal_is_described_by_what_it_carries_not_by_its_status_code()
+    {
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir,
+            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+        using var edge = new FakeAccessEdge(server.Port, rootRefusal: RootRefusal.ManagedOAuth);
+
+        var (exitCode, output) = RunVerify(edge);
+
+        // The verdicts were never the defect and must not become one: the
+        // 401 is a refusal, exactly as the 302 it replaced was.
+        exitCode.ShouldBe(0, output);
+        output.ShouldContain("all checks passed");
+        output.ShouldNotContain("skip  ");
+
+        // Both rows that reach the root app: an application that HAS an
+        // authorization path, said to have one.
+        foreach (var row in new[]
+                 {
+                     Line(output, "ok    Access refuses an unauthenticated MCP request"),
+                     Line(output, "ok    the monitoring token cannot reach the vault surface"),
+                 })
+        {
+            row.ShouldContain("HTTP 401");
+            row.ShouldContain("RFC 9728");
+            row.ShouldNotContain("no login to offer");
+        }
+
+        // ...and the service-auth-only app, still described as the flat
+        // refusal it actually sends.
+        var up = Line(output, "ok    Access refuses an unauthenticated /up");
+        up.ShouldContain("HTTP 403");
+        up.ShouldContain("refused flat");
+        up.ShouldNotContain("RFC 9728");
+    }
+
+    /// <summary>
     /// The other half, and the reason the fix is a named allowlist of refusal
     /// statuses rather than "anything but 200": a probe that passes on
     /// not-200 passes on a 500, a misrouted tunnel, or a DNS failure just as
@@ -190,6 +242,16 @@ public sealed class VerifyCommandTests : IDisposable
         typeof(VerifyCommandTests).Assembly
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .Single(a => a.Key == "KnapperCliDll").Value!;
+
+    /// <summary>
+    /// One named check's own line. A bare ShouldContain over the whole
+    /// transcript is satisfied by any OTHER row carrying the text, which is
+    /// precisely the confusion these assertions exist to rule out.
+    /// </summary>
+    private static string Line(string output, string prefix) =>
+        output.Split('\n').Select(l => l.TrimEnd('\r'))
+            .SingleOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"no line starting '{prefix}' in:\n{output}");
 
     /// <summary>Straight at the server, no edge — the §5 same-box shape.</summary>
     private static (int ExitCode, string Output) RunVerify(int port) =>

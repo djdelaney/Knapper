@@ -268,15 +268,27 @@ internal static class Verify
         /// carrying no valid assertion — a short description of WHICH refusal
         /// arrived, or null if this response is not a refusal at all.
         ///
-        /// There are two shapes and both are correct; which one you get is a
-        /// property of the application's policy TYPE, not of how wrong the
-        /// caller was. An application with an identity policy might be
-        /// talking to a human, so it sends them to log in (302 →
-        /// team.cloudflareaccess.com/cdn-cgi/access/login/…). A Service-Auth-
-        /// only application has nobody to log in and refuses flat (403). The
-        /// origin is consulted in neither case — Access decides at the edge,
-        /// which is demonstrable by stopping cloudflared and watching the 302
-        /// still arrive.
+        /// There are THREE shapes and all are correct; which one arrives is a
+        /// property of the application's configuration, not of how wrong the
+        /// caller was. An identity policy might be talking to a human, so it
+        /// sends them to log in (302 → team.cloudflareaccess.com/cdn-cgi/
+        /// access/login/…) — or, with Managed OAuth on, refuses machine-
+        /// readably with a 401 carrying an RFC 9728 pointer to where the
+        /// authorization path lives. A Service-Auth-only application has
+        /// nobody to log in and refuses flat. The origin is consulted in none
+        /// of the three — Access decides at the edge, which is demonstrable by
+        /// stopping cloudflared and watching the refusal still arrive.
+        ///
+        /// The description is READ OFF THE RESPONSE, never inferred from the
+        /// status code, because the status code does not carry it. Enabling
+        /// Managed OAuth on CT 106's root app (2026-08-16) changed that app's
+        /// refusal from 302 to 401 while CHANGING NO POLICY — and a
+        /// status-to-policy mapping then printed "a service-auth-only policy
+        /// has no login to offer" about the one application whose entire
+        /// purpose is offering an OAuth login to MCP clients, on every run of
+        /// three consecutive releases (reported 2026-08-22). Every verdict was
+        /// correct throughout; only the explanations lied, at exactly the
+        /// moment someone is reading them to decide whether ingress broke.
         ///
         /// Deliberately a named allowlist and not "anything but 200": a probe
         /// whose pass condition is not-200 also passes on a 500, on a
@@ -287,7 +299,20 @@ internal static class Verify
         {
             var code = (int)response.StatusCode;
             if (code is 401 or 403)
-                return $"HTTP {code} at the edge — a service-auth-only policy has no login to offer";
+            {
+                // Naming the layer needs evidence, and only the pointer is
+                // evidence: nothing Knapper serves emits it, so it can only
+                // have come from the edge. A flat refusal names no layer —
+                // an origin whose edge application went missing refuses
+                // unauthenticated callers on its own (AccessAuth), and
+                // claiming "at the edge" over that would be this same bug
+                // one layer down.
+                return HasProtectedResourcePointer(response)
+                    ? $"HTTP {code} at the edge — an OAuth-protected resource refused it and offered the " +
+                      "RFC 9728 pointer an MCP client follows to log in"
+                    : $"HTTP {code} — refused flat: no login redirect and no authorization pointer, so " +
+                      "nothing on the wire says which layer refused";
+            }
             if (code is >= 300 and < 400)
             {
                 var location = response.Headers.Location;
@@ -297,6 +322,36 @@ internal static class Verify
                 return $"HTTP {code} at the edge → {where}";
             }
             return null;
+        }
+
+        /// <summary>
+        /// RFC 9728: a 401 from an OAuth-protected resource carries
+        /// <c>WWW-Authenticate: Bearer …, resource_metadata="…"</c> — "there
+        /// IS an authorization path and here is where to find it", the exact
+        /// opposite of having no login to offer. Cloudflare Access sends it
+        /// once Managed OAuth is on (observed on CT 106, 2026-08-22, pointing
+        /// at /.well-known/cloudflare-access-protected-resource/ — the
+        /// PARAMETER is the contract; the path is Cloudflare's own spelling
+        /// and is deliberately not matched).
+        ///
+        /// The parameter, never the scheme. Knapper's own origin authenticates
+        /// with JwtBearer (AccessAuth), so a caller that reaches it — a missing
+        /// or misrouted edge application — is challenged with a bare `Bearer`
+        /// and no pointer. Keying on the scheme would report that origin
+        /// refusal as an edge one.
+        ///
+        /// Joined, not per-value: WWW-Authenticate is a comma-separated
+        /// challenge list, so HttpHeaders may hand the auth-params back as
+        /// separate values and split the scheme away from the parameter that
+        /// qualifies it.
+        /// </summary>
+        private static bool HasProtectedResourcePointer(HttpResponseMessage response)
+        {
+            if (!response.Headers.TryGetValues("WWW-Authenticate", out var values))
+                return false;
+            var challenge = string.Join(", ", values);
+            return challenge.Contains("Bearer", StringComparison.OrdinalIgnoreCase)
+                && challenge.Contains("resource_metadata=", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>Refusal or bust, returning the evidence for the ok line.</summary>

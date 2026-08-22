@@ -294,13 +294,15 @@ format by default.
   across a run. Write-side races belong to the runbook's §8b
   disposable-vault session, never here.
 - **`knapper verify`'s ingress probes never follow redirects, and assert a
-  NAMED refusal status rather than "not 200".** A refusal has two shapes and
-  which one arrives is set by the Access application's POLICY TYPE, not by
-  the caller: an identity policy sends an unauthenticated caller to log in
-  (302 → `…cloudflareaccess.com/cdn-cgi/access/login/…` → **200 HTML**),
-  while a Service-Auth-only application refuses flat (403). Follow the
-  redirect and every refusal probe reads the login page's 200 as the vault
-  surface answering — shipped here, and on 2026-08-14 it called CT 106
+  NAMED refusal status rather than "not 200".** A refusal has three shapes
+  and which one arrives is set by the Access application's CONFIGURATION,
+  not by the caller: an identity policy sends an unauthenticated caller to
+  log in (302 → `…cloudflareaccess.com/cdn-cgi/access/login/…` → **200
+  HTML**); the SAME application with Managed OAuth on refuses
+  machine-readably instead (401 + `WWW-Authenticate: Bearer …,
+  resource_metadata="…"`); a Service-Auth-only application refuses flat
+  (403). Follow the redirect and every refusal probe reads the login page's
+  200 as the vault surface answering — shipped here, and on 2026-08-14 it called CT 106
   EXPOSED and a tunnel came down over it. It survived because the flat-403
   application has nothing to follow, so the twin check covering the same
   property passed. The inverse is just as bad and quieter: a probe whose
@@ -308,6 +310,21 @@ format by default.
   DNS failure. Both halves are pinned by
   `VerifyCommandTests.A_deployment_behind_two_Access_applications_passes_every_check`
   (a fake Access edge, both policy types) and its exposed-surface twin.
+  **And the explanation printed beside a refusal is read off the RESPONSE,
+  never mapped from the status code.** Enabling Managed OAuth flipped CT
+  106's root app from 302 to 401 with NO policy change, so a status→policy
+  mapping spent three releases telling operators that "a service-auth-only
+  policy has no login to offer" about the one application whose whole job is
+  offering an OAuth login to MCP clients — a correct verdict wearing a false
+  reason, read at exactly the moment someone is deciding whether ingress
+  broke. The discriminator is the RFC 9728 `resource_metadata` PARAMETER,
+  never the `Bearer` scheme (Knapper's own origin challenges with a bare
+  `Bearer`, so keying on the scheme would report an origin refusal as an
+  edge one) and never the pointer's PATH (Cloudflare spells it
+  `/.well-known/cloudflare-access-protected-resource/`, not the RFC's
+  canonical name). A flat refusal names no layer and the string must not
+  claim one. Pinned by
+  `VerifyCommandTests.A_Managed_OAuth_refusal_is_described_by_what_it_carries_not_by_its_status_code`.
 - **The Access loopback exemption requires loopback peer AND loopback
   Host** (`HostGuard.IsLocalRequest` — the one definition, used by both the
   audience handler and /health's filter). Production is
