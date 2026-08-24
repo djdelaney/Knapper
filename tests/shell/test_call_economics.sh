@@ -102,11 +102,27 @@ printf '%s' "$OUT" | grep -q 'vault_append' \
 printf '%s' "$OUT" | grep -q 'vault_create' \
     && fail "vault_create was listed despite never appearing in the window"
 
-# ---- 6. the client breakdown always shows the probe ---------------------
+# ---- 6. the client breakdown shows the probe, but MASKED ----------------
 # Excluded from the ratios, never hidden: an operator has to be able to see
-# that the exclusion happened and how big it was.
+# that the exclusion happened and how big it was. But the real values are an
+# owner email and an Access service-token client id, and this report is made
+# to be pasted — so a prefix plus a kind tag is what appears, and the full
+# strings must not.
+printf '%s' "$OUT" | grep -q '00000000… (service token)' \
+    || fail "the excluded client is missing (or unmasked) in the breakdown"
+printf '%s' "$OUT" | grep -q 'own…@… (user)' \
+    || fail "the human client is missing (or unmasked) in the breakdown"
 printf '%s' "$OUT" | grep -q '00000000000000000000000000000000.access' \
-    || fail "the excluded client is missing from the client breakdown"
+    && fail "the service-token id was printed in full"
+printf '%s' "$OUT" | grep -q 'owner@example.com' \
+    && fail "the client email was printed in full"
+
+# ---- 6b. --show-identities opts back in ---------------------------------
+IDS=$(sh "$SCRIPT" 7 --show-identities 2>&1)
+printf '%s' "$IDS" | grep -q '00000000000000000000000000000000.access' \
+    || fail "--show-identities did not print the service-token id in full"
+printf '%s' "$IDS" | grep -q 'owner@example.com' \
+    || fail "--show-identities did not print the client email in full"
 
 # ---- 7. --all-clients includes the probe --------------------------------
 ALL=$(sh "$SCRIPT" 7 --all-clients 2>&1)

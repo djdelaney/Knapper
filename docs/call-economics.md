@@ -50,6 +50,13 @@ of work, so "fewer calls" measures how busy the week was. The script excludes
 from a service-token identity, so leaving it in dilutes every ratio by however
 often someone happened to run verify.
 
+Client identities in the breakdown are **masked** (`8926bb31… (service
+token)`, `own…@… (user)`). This report is written to be pasted into an issue or
+a commit message, and reading it should not be what discloses an owner email
+or an Access service-token client id; a prefix and a kind tag answer every
+question the block exists for. `--show-identities` prints them verbatim, for
+the one case that needs it — an unrecognised client.
+
 ## Observed — 2026-08-24, 7-day window
 
 Produced by `ops/call-economics.sh 7` on CT 106 immediately after deploying

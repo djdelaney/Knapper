@@ -2,6 +2,7 @@
 # How many ROUND TRIPS is the client spending to do its vault work?
 #
 #   pct exec 106 -- sh /opt/knapper/ops/call-economics.sh [DAYS] [--all-clients]
+#                                                          [--show-identities]
 #
 # Runs INSIDE CT 106 — it reads this unit's journal, which is the only
 # telemetry that covers every client surface. Cowork, Claude Desktop, mobile
@@ -28,6 +29,10 @@
 # amount that depends on how often an operator happened to run verify. Pass
 # --all-clients to see it anyway; the client breakdown always prints.
 #
+# Client identities in that breakdown are MASKED — this report is made to be
+# pasted, and reading it should not be what discloses an owner email or an
+# Access service-token client id. --show-identities prints them verbatim.
+#
 # Comparing across a deployment: pass a window that does NOT straddle the
 # restart, or the "after" sample is half old-instructions traffic. Server
 # instructions reach a client at initialize, so existing sessions keep the old
@@ -37,8 +42,10 @@ set -eu
 DAYS="${1:-7}"
 case "$DAYS" in *[!0-9]*) DAYS=7 ;; esac
 ALL_CLIENTS=0
+SHOW_IDENTITIES=0
 for arg in "$@"; do
     [ "$arg" = "--all-clients" ] && ALL_CLIENTS=1
+    [ "$arg" = "--show-identities" ] && SHOW_IDENTITIES=1
 done
 
 command -v jq >/dev/null 2>&1 || { echo "call-economics: jq not found" >&2; exit 2; }
@@ -52,7 +59,24 @@ journalctl -u knapper --since "${DAYS} days ago" -o json \
     | select($m.Category=="Knapper.Mcp.Tools.ToolSupport" and $m.State.Outcome!=null)
     | [(.__REALTIME_TIMESTAMP|tonumber/1000000), $m.State.Tool, $m.State.ElapsedMs,
        $m.State.Outcome, $m.State.Client] | @tsv' \
-| awk -F'\t' -v days="$DAYS" -v allc="$ALL_CLIENTS" '
+| awk -F'\t' -v days="$DAYS" -v allc="$ALL_CLIENTS" -v showids="$SHOW_IDENTITIES" '
+# Client identities are MASKED in the report. This block exists so an operator
+# can see which clients were counted and which were excluded, and a prefix
+# answers that — but the full strings are an owner email and a Cloudflare
+# Access service-token client id, and this output is made to be pasted into an
+# issue, a commit message or a chat. Reading it should not be the thing that
+# discloses them. The prefix is long enough to tell two clients apart and the
+# kind tag preserves what the exclusion rule keyed on. --show-identities
+# prints them verbatim for the one case that needs it: an unrecognised client.
+function maskclient(c,   at, local) {
+    if (showids) return c
+    at = index(c, "@")
+    if (at > 0) {
+        local = substr(c, 1, at - 1)
+        return substr(local, 1, 3) (length(local) > 3 ? "…" : "") "@… (user)"
+    }
+    return substr(c, 1, 8) "… (service token)"
+}
 {
     allcalls++; clients[$5]++
     # The probe identity is a service token (Access common_name / sub), never
@@ -112,6 +136,6 @@ END {
     for (k in tool) if (tool[k] > 0) printf "  %-18s %5d\n", k, tool[k]
     print  "-- OUTCOMES --"
     for (k in out)  printf "  %-18s %5d\n", k, out[k]
-    print  "-- CLIENTS (pre-exclusion) --"
-    for (k in clients) printf "  %-40s %5d\n", k, clients[k]
+    printf "-- CLIENTS (pre-exclusion%s) --\n", showids ? "" : ", masked"
+    for (k in clients) printf "  %-34s %5d\n", maskclient(k), clients[k]
 }'
