@@ -45,6 +45,12 @@ chmod +x "$STAGE/ops/sync-heartbeat.sh"
 # shipped?" — so it has to travel in the artifact it checks.
 cp ops/check-installed.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/check-installed.sh"
+# Reads THIS unit's journal, so it has to travel with the deployment for the
+# same reason check-installed.sh does. The journal is the only telemetry that
+# covers the client surfaces leaving nothing on an operator's disk — Cowork,
+# Desktop, mobile, claude.ai (docs/call-economics.md).
+cp ops/call-economics.sh "$STAGE/ops/"
+chmod +x "$STAGE/ops/call-economics.sh"
 # The Proxmox-host monitor installs FROM THIS ARCHIVE (runbook §8) — a
 # tarball without it cannot perform the documented installation.
 cp -R ops/monitor "$STAGE/ops/monitor"
@@ -68,6 +74,7 @@ for required in \
     ./cli/knapper \
     ./ops/sync-heartbeat.sh \
     ./ops/check-installed.sh \
+    ./ops/call-economics.sh \
     ./ops/logrotate/knapper-sync-log \
     ./ops/systemd/knapper.service \
     ./ops/systemd/knapper-commit.service \

@@ -344,6 +344,25 @@ static void ConfigureServerInfo(ModelContextProtocol.Server.McpServerOptions opt
         "the old base. Anchored edits (vault_edit) with guard strings are the preferred mutation; " +
         "deletes are soft (to .trash/). [MutationBlocked] means a Sync conflict file or unhealthy " +
         "sync is blocking writes — report it to the user; never work around it.\n\n" +
+        // Measured 2026-08-24 over a week of real traffic (817 tool calls):
+        // server-side mean 12.2ms, against a client-observed round trip of
+        // ~2.9-3.6s. So >99% of what a user experiences as "the vault is slow"
+        // is relay latency this server never sees, and NO amount of
+        // server-side work can touch it — 390 of those calls were sequential
+        // hops averaging 7.2s apart, ~47 minutes of waiting in one week to do
+        // ~10 seconds of work. Call COUNT is the only lever and it is the
+        // CLIENT's to pull, which is why this lives in the instructions and
+        // nowhere in the code. Stated as economics rather than as a rule: an
+        // agent that understands the cost model will batch the cases this
+        // paragraph never anticipated.
+        "CALL ECONOMICS — every call costs a fixed multi-second round trip, while the work inside it " +
+        "takes about 10ms. Call COUNT is what makes vault work slow; call SIZE is nearly free. Prefer " +
+        "vault_batch_read over repeated vault_read, and vault_batch over a run of separate mutations: " +
+        "because every write needs a fresh read first, N separate edits cost 2N round trips, while one " +
+        "vault_batch_read followed by one vault_batch does the same work in 2. Issue independent calls " +
+        "together in one message rather than one at a time. Before spending a second call, widen the " +
+        "first — contextBefore/contextAfter, counts or files mode, a larger maxResults, more paths in " +
+        "one batch.\n\n" +
         "COMPLETENESS — list/search responses carry truncated/nextCursor/totalMatches and a vault " +
         "generation span. truncated=false means the scope was exhaustively searched; when " +
         "truncated=true, pass nextCursor back to continue. changedDuringQuery=true means the vault " +
