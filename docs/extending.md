@@ -374,6 +374,13 @@ Directory.Build.props <Version>          the one carrier
   finer-grained evidence than tool names + audit + metrics give.
 - **`vault_search` context in files/counts modes** is intentionally absent;
   matches mode covers the need.
+- **Vault lint** (`vault_lint` + `knapper lint`) — read-only consistency
+  checks over the vault: broken wikilinks/anchors, structural integrity,
+  and an opt-in user-supplied stale-value tier, reported against a git
+  baseline so only newly-introduced findings surface. Full design, including
+  why it is an MCP tool and not CLI-only and what it deliberately will not
+  do, in [proposals/vault-lint.md](proposals/vault-lint.md). Note it
+  half-builds the link graph the next entry needs.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
 - **Data Protection's three startup warnings** (observed CT 106,
