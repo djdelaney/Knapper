@@ -52,31 +52,40 @@ often someone happened to run verify.
 
 ## Observed — 2026-08-24, 7-day window
 
-Taken **before** the CALL ECONOMICS instructions were deployed; CT 106 was
-running `knapper 0.5.3+g9a7c6fd`. Figures are probe-adjusted (six `verify`
-runs = 24 calls removed); the timing rows below come from the ad-hoc command
-that preceded the script and still include the probe, which moves them by
-well under a percent.
+Produced by `ops/call-economics.sh 7` on CT 106 immediately after deploying
+`knapper 0.5.5`. It still measures **pre-change** behaviour: server
+instructions reach a client at `initialize`, so no session in this window had
+seen the CALL ECONOMICS text. Running it right after the restart — rather than
+before, from a hand-copied script — is what makes this baseline and its
+follow-up the output of the same tool.
 
 | Metric | Baseline |
 |---|---|
-| Calls (human client) | 793 of 817 |
+| Calls (human client) | 809 of 837 (28 verify-probe calls excluded) |
 | Server mean / max | 12.2ms / 999ms |
-| Batched-read share | **9.2%** (23 `vault_batch_read` vs 226 `vault_read`) |
-| Batched-mutation share | **13.4%** (23 `vault_batch` vs 149 single edit/append/create) |
-| Reads per mutation | **1.45** |
-| Concurrent (<1s apart) | 13% (106 calls) |
-| Sequential hops (1–20s) | 48% (390 calls), mean **7.2s** apart |
-| Relay wait in window | **~47 min** |
-| Server work in window | ~10s — **0.36%** of the wait |
+| Batched-read share | **9.9%** (25 `vault_batch_read` vs 228 `vault_read`) |
+| Batched-mutation share | **13.3%** (23 `vault_batch` vs 150 single edit/append/create) |
+| Reads per mutation | **1.46** |
+| Concurrent (<1s apart) | 11.6% (94 calls) |
+| Sequential hops (1–20s) | 49.1% (397 calls), mean **7.3s** apart |
+| Relay wait in window | **48.4 min** |
+| Server work in window | 9.9s — **0.34%** of the wait |
 
-Tool mix: `vault_search` 285, `vault_read` 226, `vault_edit` 143, `vault_stat`
-46, `vault_files` 32, `vault_batch` 23, `vault_batch_read` 23, `vault_create`
+Tool mix: `vault_search` 295, `vault_read` 228, `vault_edit` 144, `vault_stat`
+46, `vault_files` 33, `vault_batch_read` 25, `vault_batch` 23, `vault_create`
 6, `vault_move` 5, `vault_delete` 2, `vault_mkdir` 2.
 
-Outcomes were healthy: 795 `ok`, 16 `NotFound`, 2 `AnchorMismatch` (~1.3% of
-149 edits, consistent with the 0.3% the §8b transcript mining predicted), 2
-`GuardViolation`, 1 `InvalidArgument`, 1 `MutationBlocked`.
+Outcomes were healthy: 792 `ok`, 11 `NotFound`, 2 `AnchorMismatch` (~1.4% of
+144 edits, in the same range as the 0.3% the §8b transcript mining predicted),
+2 `GuardViolation`, 1 `InvalidArgument`, 1 `MutationBlocked`.
+
+**Cross-checked against an independent derivation.** Before this script
+existed the same window was computed by hand from an ad-hoc `journalctl | jq |
+awk` pipeline: 9.2% batched-read, 13.4% batched-mutation, 1.45 reads per
+mutation, 48% sequential hops at 7.2s, ~47 min of relay wait. Two independent
+derivations agreeing to within a percent is the evidence that neither carries
+an arithmetic bug — worth repeating if the script is ever substantially
+rewritten.
 
 **What the baseline says the intervention should move.** ~90% of reads and
 ~87% of mutations were still one-per-call. Because every write needs a fresh
@@ -89,4 +98,7 @@ drop toward 1.00 means batching, not skipped reads.
 ⚠️ **Do not compare a window that straddles the deploy.** Server instructions
 are delivered at `initialize`, so sessions already open keep the old text until
 they reconnect. Start the "after" window from the first reconnect after the
-restart, not from the restart.
+restart, not from the restart. With 0.5.5 deployed 2026-08-24, the first
+`ops/call-economics.sh 7` whose window carries no pre-change traffic is on or
+after **2026-08-31**; running it earlier averages the two states together and
+understates whatever the change did.
