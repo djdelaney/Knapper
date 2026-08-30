@@ -374,13 +374,16 @@ Directory.Build.props <Version>          the one carrier
   finer-grained evidence than tool names + audit + metrics give.
 - **`vault_search` context in files/counts modes** is intentionally absent;
   matches mode covers the need.
-- **Vault lint** (`vault_lint` + `knapper lint`) — read-only consistency
-  checks over the vault: broken wikilinks/anchors, structural integrity,
-  and an opt-in user-supplied stale-value tier, reported against a git
-  baseline so only newly-introduced findings surface. Full design, including
-  why it is an MCP tool and not CLI-only and what it deliberately will not
-  do, in [proposals/vault-lint.md](proposals/vault-lint.md). Note it
-  half-builds the link graph the next entry needs.
+- **Vault lint, the remaining slices.** `vault_lint` SHIPPED in 0.6.0 with
+  the four link-graph checks (`VaultLintService` + `WikiLink`); what is still
+  unbuilt is the rest of
+  [proposals/vault-lint.md](proposals/vault-lint.md): a `paths` argument (the
+  agent case is "lint the three notes I just wrote", which a directory prefix
+  cannot express), the §5 git BASELINE so findings mean "what changed under
+  you" rather than the standing backlog, `knapper lint` + the monitor timer
+  (which the baseline gates — a monitor that fires on a backlog forever is
+  dead while still running), and the opt-in heuristic and assertion tiers.
+  The link graph the next entry wants now exists, internal to lint.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
 - **Data Protection's three startup warnings** (observed CT 106,

@@ -27,7 +27,7 @@ Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + m
 | Project | Kind | Purpose |
 |---|---|---|
 | `Knapper.Core` | library | Everything that touches vault bytes: path containment, hashing, atomic commits, locks, query services, mutation service, gates, audit, git job. No ASP.NET, no MCP types. |
-| `Knapper.Mcp` | web app | The MCP host: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. |
+| `Knapper.Mcp` | web app | The MCP host: 14 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. |
 | `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`. Shares Core, so the commit job uses the *same* lock implementation as mutations. |
 | `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
 | `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |

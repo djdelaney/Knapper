@@ -38,7 +38,7 @@ public sealed class VerifyCommandTests : IDisposable
         // passed the line above, exit 0, no skips, against a manifest Claude
         // Code rejected outright. The count rides on the ok line so an
         // operator can see the check actually inspected thirteen schemas.
-        output.ShouldContain("ok    every published tool schema is one a client can load (13 schemas)");
+        output.ShouldContain("ok    every published tool schema is one a client can load (14 schemas)");
         output.ShouldContain("ok    a no-match search still reports exhaustive scan evidence");
         output.ShouldContain("ok    the mutation surface is wired and answers with typed codes");
         // Loopback is the Access exemption's own target: the ingress checks

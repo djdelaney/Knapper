@@ -458,7 +458,7 @@ absence of red means the checks ran.
 `knapper verify` is READ-ONLY by design and stays that way: at this point
 `/vault` is already Helios via Sync, so a write test would land real notes on
 Dan's devices. From loopback it checks the contract the wire carries — the
-13 locked tool names exactly (a partially-registered surface answers
+14 locked tool names exactly (a partially-registered surface answers
 `tools/list` without complaint), the routing instruction, a no-match search
 that still reports `scannedFiles > 0` (the live ripgrep-15 evidence check),
 a well-formed completeness envelope, whole-file SHAs on reads, and a typed
@@ -617,7 +617,7 @@ and still without a write.
   `vault_delete` on a conflict file is refused by the very gate under test —
   agents never resolve Sync conflicts, a human does — so the fixture needs
   `rm`. The scratch subtree needs `rmdir` for a different reason: there is no
-  `vault_rmdir` in the 13-tool surface and there is not meant to be. Folder
+  `vault_rmdir` in the 14-tool surface and there is not meant to be. Folder
   CREATION is a deliberate act with a tool behind it; folder REMOVAL has no
   tool at all, because a recursive delete is the one operation whose blast
   radius an anchored, hash-conditioned contract cannot bound. The asymmetry is
@@ -1427,7 +1427,7 @@ A failure here means the service is not the build just installed. Do not
 "restart again and see" — go to §10.4.
 
 The `tools/list` line reports the count it saw (`ok tools/list is EXACTLY the
-locked surface (13 tools)`), so the acceptance checklist's "13 tool names" is
+locked surface (14 tools)`), so the acceptance checklist's "14 tool names" is
 answered by this run rather than by a second `tools/list` call by hand.
 
 **Read the header and the tally, not only the verdict.** The first line names

@@ -37,7 +37,7 @@ public sealed class WireMutationContractTests : IAsyncLifetime
         var names = (await _client.ListToolsAsync()).Select(t => t.Name).OrderBy(n => n).ToList();
         names.ShouldBe([
             "vault_append", "vault_batch", "vault_batch_read", "vault_create", "vault_delete",
-            "vault_edit", "vault_files", "vault_mkdir", "vault_move", "vault_read",
+            "vault_edit", "vault_files", "vault_lint", "vault_mkdir", "vault_move", "vault_read",
             "vault_search", "vault_search_frontmatter", "vault_stat",
         ]);
     }

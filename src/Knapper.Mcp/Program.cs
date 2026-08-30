@@ -95,6 +95,7 @@ builder.Services.AddSingleton<VaultFileLister>();
 builder.Services.AddSingleton<VaultSearchService>();
 builder.Services.AddSingleton<VaultReadService>();
 builder.Services.AddSingleton<FrontmatterSearchService>();
+builder.Services.AddSingleton<VaultLintService>();
 builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<VaultPathResolver>(),
     sp.GetRequiredService<VaultLockManager>(),

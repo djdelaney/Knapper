@@ -20,6 +20,7 @@ public static class ToolNames
         "vault_files",
         "vault_search",
         "vault_search_frontmatter",
+        "vault_lint",
         "vault_read",
         "vault_batch_read",
         "vault_stat",

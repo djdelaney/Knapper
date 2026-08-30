@@ -168,3 +168,43 @@ public sealed class VaultFrontmatterTool(FrontmatterSearchService frontmatter, T
             Cursor = cursor,
         }, ct));
 }
+
+[McpServerToolType]
+public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
+{
+    [McpServerTool(Name = "vault_lint", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
+    [Description(
+        "Read-only consistency checks over the vault's link graph. Checks: 'unresolved_link' (a [[link]] matching " +
+        "no vault file), 'ambiguous_link' (a bare basename matching two or more notes where neither exact case nor " +
+        "proximity settles it — Obsidian silently picks one), 'broken_anchor' (a #heading or #^block that does not " +
+        "exist in the resolved target), 'table_pipe' (an unescaped '|' inside a wikilink inside a table row, which " +
+        "opens a column the author did not intend). " +
+        "FINDINGS ARE OBSERVATIONS FOR THE USER, NOT A WORK LIST: fixing them is not implied by finding them, and a " +
+        "cluster of related findings usually means ONE decision about intent rather than a series of edits. An " +
+        "unresolved [[Some Brand Name]] is usually plain text that was accidentally bracketed, where the fix is to " +
+        "remove the brackets rather than create a note; a stale #heading is often one renamed heading with many " +
+        "inbound links. Report what you find and ask — never bulk-fix, and never treat a finding as authority to " +
+        "write. " +
+        "Scope: pathPrefix limits which files are REPORTED on, while the link index is always whole-vault, because " +
+        "a link inside the scope can point anywhere. Embeds (![[...]]) are not checked at all. " +
+        "Responses wear the completeness envelope — truncated=false means the scope was exhaustively checked — plus " +
+        "unexaminedFiles: notes that could not be read. Those are still valid link TARGETS, but their headings are " +
+        "unknown, so anchor findings against them are suppressed rather than guessed, and 'no findings' is only " +
+        "exhaustive once that list is empty. " +
+        "line/column locate a finding but are not its identity: inserting a paragraph moves both without changing " +
+        "anything. Findings have no baseline yet, so a whole-vault run reports the standing backlog, not what " +
+        "changed recently.")]
+    public LintResult Lint(
+        [Description("Directory whose files are reported on (vault-relative); omit for the whole vault")] string? pathPrefix = null,
+        [Description("Checks to run, e.g. [\"broken_anchor\"]; omit to run them all")] string[]? checks = null,
+        [Description("Page size (server-capped)")] int? maxResults = null,
+        [Description("Continuation cursor from a previous truncated response")] string? cursor = null,
+        CancellationToken ct = default) =>
+        support.Run("vault_lint", () => lint.Lint(new LintQuery
+        {
+            PathPrefix = pathPrefix,
+            Checks = checks,
+            MaxResults = maxResults,
+            Cursor = cursor,
+        }, ct));
+}

@@ -20,6 +20,7 @@ internal static class ToolSurface
             ["vault_files"] = typeof(VaultFilesTool),
             ["vault_search"] = typeof(VaultSearchTool),
             ["vault_search_frontmatter"] = typeof(VaultFrontmatterTool),
+            ["vault_lint"] = typeof(VaultLintTool),
             ["vault_read"] = typeof(VaultReadTool),
             ["vault_batch_read"] = typeof(VaultBatchReadTool),
             ["vault_stat"] = typeof(VaultStatTool),

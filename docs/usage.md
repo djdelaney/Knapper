@@ -113,6 +113,7 @@ manifest.
 | `vault_files` | `pathPrefix`, `glob`, `extensions`, `kind`, `mtimeAfter/Before`, `minSize/maxSize`, `includeSha`, paging. |
 | `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. Every mode returns the same item shape — `path` always, plus `line`/`column`/`text` (+`contextBefore`/`contextAfter`) in matches mode and `count` in counts mode; fields a mode does not fill are omitted. |
 | `vault_search_frontmatter` | `field`, `op` exists/equals/contains, `value`, `pathPrefix`. Response lists `unparseableFiles` — check it before trusting "no match". |
+| `vault_lint` | `pathPrefix`, `checks` (`unresolved_link`, `ambiguous_link`, `broken_anchor`, `table_pipe`), paging. Read-only link-graph checks. `pathPrefix` scopes what is REPORTED; the index is always whole-vault, since a link inside the scope can point anywhere. Embeds are not checked. Response lists `unexaminedFiles` — unreadable notes are valid link targets but their headings are unknown, so anchor findings against them are suppressed. Findings are observations, not a work list; there is no git baseline yet, so a whole-vault run reports the standing backlog rather than what changed. |
 
 ### Mutations (all conditional; no unconditional write exists)
 
@@ -232,7 +233,7 @@ Tool errors are structured MCP errors whose message leads with the code:
   complaint), the routing instruction, scan evidence on a no-match search
   (the live ripgrep-15 check), the completeness envelope, whole-file SHAs,
   and a typed `[NotFound]` from the mutation surface. The tool line reports
-  the count it saw (`ok tools/list is EXACTLY the locked surface (13 tools)`)
+  the count it saw (`ok tools/list is EXACTLY the locked surface (14 tools)`)
   — the set comparison is the stronger check, but a deployment checklist that
   asks for a number should not have to go get it from a second call. Through a tunnel it
   also checks the ingress contract: unauthenticated callers refused,

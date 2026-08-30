@@ -28,6 +28,10 @@ public class ToolResponseConformanceTests
         factory.Seed("conformance/move-me.md", "movable\n");
         factory.Seed("conformance/delete-me.md", "deletable\n");
         factory.Seed("conformance/batch-me.md", "batch base\n");
+        // Two findings of two different kinds, so vault_lint's item shape is
+        // actually exercised rather than conforming vacuously.
+        factory.Seed("conformance/links.md",
+            "Broken: [[No Such Target]] and [[Notes/Daily#No Such Heading]].\n");
 
         var session = await RawMcp.OpenAsync(factory.CreateClient());
         var schemas = (await session.ListToolsAsync()).ToDictionary(
@@ -66,6 +70,7 @@ public class ToolResponseConformanceTests
             },
         });
         await Call("vault_search_frontmatter", new { field = "status" });
+        await Call("vault_lint", new { pathPrefix = "conformance" });
         foreach (var mode in new[] { "matches", "files", "counts" })
             await Call("vault_search", new { pattern = "needle", mode });
         // Context arrays are the only optional item fields that ever appear;

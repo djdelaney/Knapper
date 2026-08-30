@@ -37,7 +37,7 @@ Developer docs (read on demand; this file stays invariants-only):
 - [`docs/architecture.md`](docs/architecture.md) — project/library structure,
   the two layers, the locking model, gates, security model.
 - [`docs/usage.md`](docs/usage.md) — running it, the full configuration
-  reference, the 13-tool surface with the agent write loop, error-code table,
+  reference, the 14-tool surface with the agent write loop, error-code table,
   health/monitoring.
 - [`docs/extending.md`](docs/extending.md) — how to add a tool / query
   capability / mutation / error code / config knob without breaking the

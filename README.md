@@ -38,7 +38,7 @@ contract):
 | Path | What |
 |---|---|
 | `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch — with conflict/sync gates, a write-ahead JSONL audit log, and a durable metrics snapshot for the external monitor) |
-| `src/Knapper.Mcp` | ASP.NET Core MCP server: 13 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
+| `src/Knapper.Mcp` | ASP.NET Core MCP server: 14 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only) |
 | `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan + monitor freshness stamp) / `status` / `doctor` / `audit-tail` / `verify --url` (read-only checks against a DEPLOYED server, including the ingress contract through the tunnel) |
 | `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), the Proxmox-host monitor kit (`ops/monitor/`: silent-on-success alerting over `/up` + commit-stamp age + metrics deltas), self-verifying publish script, CT 106 deployment runbook |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |
@@ -79,7 +79,7 @@ intentionally stays vague enough not to rot — trust those, not this.
 | Doc | What |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Project structure, the query + transaction layers, locking model, gates, security model |
-| [docs/usage.md](docs/usage.md) | Running/configuring, connecting clients, the 13-tool reference, error codes, monitoring |
+| [docs/usage.md](docs/usage.md) | Running/configuring, connecting clients, the 14-tool reference, error codes, monitoring |
 | [docs/extending.md](docs/extending.md) | Adding tools/queries/mutations without breaking the contracts; test + build conventions |
 | [docs/call-economics.md](docs/call-economics.md) | Why vault work feels slow when the server answers in ~12ms, why call COUNT is the only lever an agent has, and the dated baseline to measure against (`ops/call-economics.sh`) |
 | [ops/ct106-runbook.md](ops/ct106-runbook.md) | Production deployment on the Proxmox LXC |
