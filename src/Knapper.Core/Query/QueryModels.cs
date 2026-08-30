@@ -300,3 +300,84 @@ public sealed record FrontmatterSearchResult(
     : QueryEnvelope<FrontmatterMatch>(
         Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
         GenerationStart, GenerationEnd, ChangedDuringQuery);
+
+/// <summary>
+/// The lint check names, as clients see them. These are wire strings, not a
+/// C# enum, for the same reason tool names live in <c>ToolNames</c>: the
+/// baseline design (proposal §5) keys a finding on
+/// <c>(check, path, subject)</c> and compares that key across two vault
+/// trees, so a check name is a durable identifier a later release must not
+/// silently respell. Adding a check is additive; renaming one is a version
+/// bump.
+/// </summary>
+public static class LintChecks
+{
+    /// <summary>A [[link]] whose target matches no vault file.</summary>
+    public const string UnresolvedLink = "unresolved_link";
+    /// <summary>A basename-form [[link]] matching two or more files. Obsidian silently picks one.</summary>
+    public const string AmbiguousLink = "ambiguous_link";
+    /// <summary>A resolved link whose #heading or #^block does not exist in the target.</summary>
+    public const string BrokenAnchor = "broken_anchor";
+    /// <summary>An unescaped '|' inside a wikilink inside a table row — it opens a phantom column.</summary>
+    public const string TablePipe = "table_pipe";
+
+    public static readonly IReadOnlyList<string> All =
+        [UnresolvedLink, AmbiguousLink, BrokenAnchor, TablePipe];
+}
+
+public sealed record LintQuery
+{
+    /// <summary>
+    /// Vault-relative directory whose files are REPORTED on. The link index
+    /// is always whole-vault regardless — a link inside the scope can point
+    /// anywhere, so a scoped index would manufacture unresolved findings.
+    /// </summary>
+    public string? PathPrefix { get; init; }
+    /// <summary>Check names to run; null or empty runs them all.</summary>
+    public IReadOnlyList<string>? Checks { get; init; }
+    public int? MaxResults { get; init; }
+    public string? Cursor { get; init; }
+}
+
+/// <summary>
+/// One observation. Not a work item: proposal §7 is explicit that a cluster
+/// of related findings usually means a decision about intent rather than an
+/// edit, and this vault is the worked example — accidentally bracketed
+/// plain-text names ([[La-Z-Boy]]) are correctly unresolved and are fixed by
+/// UNbracketing, not by creating a note.
+///
+/// <c>Subject</c> is the stable identity: the normalized link target with its
+/// fragment, or the raw link text for a table finding. <c>Line</c> and
+/// <c>Column</c> are INFORMATIONAL — a paragraph inserted above a finding
+/// moves both, and §5's baseline is keyed on (check, path, subject) precisely
+/// so that edit does not read as a flood of new findings.
+/// </summary>
+public sealed record LintFinding(
+    string Check,
+    string Path,
+    string Subject,
+    int Line,
+    int Column,
+    string Message);
+
+/// <summary>
+/// The completeness envelope, FLAT, plus the notes this lint could not read.
+/// The extra field is not decoration: an unreadable note is still a valid
+/// LINK TARGET (the file exists), but its headings are unknown, so anchor
+/// findings against it are suppressed rather than guessed. "No findings"
+/// is only exhaustive once this list is empty.
+/// </summary>
+public sealed record LintResult(
+    IReadOnlyList<LintFinding> Items,
+    bool Truncated,
+    string? NextCursor,
+    int? ScannedFiles,
+    int ReturnedItems,
+    long? TotalMatches,
+    long GenerationStart,
+    long GenerationEnd,
+    bool ChangedDuringQuery,
+    IReadOnlyList<string> UnexaminedFiles)
+    : QueryEnvelope<LintFinding>(
+        Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
+        GenerationStart, GenerationEnd, ChangedDuringQuery);

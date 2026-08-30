@@ -61,6 +61,82 @@ which this posture cannot distinguish from a real finding. And since the §9
 cutover it is unrunnable by agents at all: it is a filesystem walker over a
 vault that agents no longer reach.
 
+### What the vault contains now, measured 2026-08-30
+
+Two independent passes over Helios on 2026-08-30, and they agree on the part
+that matters. One ran through Knapper's own query layer (ripgrep counts over
+242 `.md` files); the other was a review-only filesystem read of every note,
+no edits, by an agent working from the local Obsidian Sync replica.
+
+**The per-file structural family is empty.** Zero unclosed fenced blocks
+(696 fence markers across 42 files, every per-file count even), zero
+unparseable frontmatter, zero malformed callouts — both passes, separately.
+This is not the residue of a cleanup: the second pass made no edits, and the
+first is a count.
+
+**Every finding is in the link family.** Sixty-eight of them:
+
+| Finding | Count |
+|---|---|
+| unresolved wikilinks | 27 |
+| stale or broken heading fragments | 18 |
+| table rows broken by an unescaped `\|` inside a wikilink | 22 |
+| link ambiguous between two notes sharing a basename | 1 |
+
+Consequences for the §4 tiering, all load-bearing:
+
+- **The tier-1 checks needing no cross-file index find nothing here.** A
+  first slice built from fence balance, empty-file and frontmatter parsing
+  would ship and report zero. That is a statement about this vault rather
+  than about the checks — but this vault is the one the tool runs on.
+- **The link graph is not one check among several; it is the substrate for
+  67 of the 68.** Heading anchors are 22% of all links (488 of 2,229
+  `[[…]]` tokens), so a resolver stopping at filenames leaves the
+  second-largest class unexaminable rather than clean, and the envelope has
+  no honest way to say so.
+- **The 22 "malformed table" findings are a link defect in a table
+  costume** — an unescaped `|` inside a wikilink inside a table row opens a
+  column Obsidian never intended. This is §8's escaped-pipe class inverted:
+  the same character, one failure mode when escaped (a target of `Note\`),
+  another when not. One parser sees both; a table checker written separately
+  sees the symptom and misdiagnoses the cause.
+- **Link targets are not only notes.** The pass treated `pg-dump-backup.sh`
+  and `ev44-build-sql.py` as valid targets, correctly — resolution is
+  against every vault file, not the `.md` subset.
+- **A single renamed heading broke five inbound links.** "Measured
+  throughput — 2026-08-11" in `Windows Utility VM` gained "(historical —
+  single Crucial P3 Plus)", and five references went stale at once. That is
+  §1's opening scenario, dated, in this vault, produced by ordinary editing.
+
+**How these were settled: a probe note, and it is the method to reuse.** The
+link/anchor rules above are not documented anywhere authoritative, and three
+of the five were guessed wrong here before being measured. What settled them
+in one pass was a disposable note holding every ambiguous spelling side by
+side — escaped and unescaped pipes inside and outside a table, a heading with
+emphasis, one with a code span, one containing a wikilink, a setext heading,
+a nested path — read back two ways: what each link DISPLAYS in reading view,
+and what Obsidian's own `[[#` suggester calls each heading. The suggester is
+the authority, because it prints Obsidian's anchor text directly. Running the
+checker over that same note afterwards is the end-to-end test: its verdict on
+all ten cases matched Obsidian's, including the four it must NOT report.
+Delete the note afterwards — every broken spelling in it is a real finding.
+
+**The arrival rate, inferred and caveated.** The prototype cleared its
+dangling-link backlog to 14 around 2026-07-30 (above); one month later the
+unresolved count is 27. If the two count comparable things — they may not,
+since the newer pass also flags plain-text names accidentally bracketed
+(`La-Z-Boy`, `Betty Crocker Kitchens`) — that is roughly **+13 unresolved
+links per month**. It is the first evidence of how fast the backlog rebuilds,
+and it is what decides whether the §5 baseline is a nicety or the thing
+keeping a monitor alive.
+
+**One discrepancy, unexplained.** Knapper counts 242 `.md` files; the
+filesystem pass reported reviewing 241 notes. The likely cause is the second
+pass excluding a root file such as `CLAUDE.md` or `Templates/Main Note.md`
+from what it calls a note. Worth confirming rather than assuming — but note
+the direction is wrong for §11's blind spot, which would leave CT 106 with
+FEWER files than Helios, not more.
+
 **`ops/runbook-lint.sh`** is the second piece of prior art, and it is this
 repo's own. It exists because six review rounds of careful human reading
 still missed "a fact corrected in one of the two places it lived". Its
@@ -104,6 +180,13 @@ The tier boundary is precision, not subject matter.
 | **1 · Structural** | on | broken wikilinks; broken heading anchors and block refs; unbalanced code fences; empty file; file ending blank (possible truncation); unparseable frontmatter | none |
 | **2 · Heuristic** | off | checkbox versus prose disagreement; `updated:` frontmatter freshness | vocabulary overridable |
 | **3 · Assertions** | off | user-supplied stale-value patterns | a vault-side file |
+
+⚠️ **Tier 1 does not split into a cheap half and an expensive half.**
+Measured 2026-08-30 (§2): the checks needing no cross-file index — fences,
+empty file, blank ending, unparseable frontmatter — find nothing on this
+vault, while the link and anchor checks find 67. The expensive half IS the
+tier, so a "start small" slice carved out of tier 1 is a slice that reports
+nothing.
 
 **Tier 1 is a product feature, not a homelab one.** "Which links do not
 resolve?" is what Obsidian's own unresolved-links pane answers; every vault
@@ -322,6 +405,40 @@ land:
   schedule that merely became past when the clock rolled over.
 - **A struck line is a deliberate historical statement**, not drift.
 
+Four more, all found by running the built checker over Helios on 2026-08-30
+rather than by reasoning about it — which is the section's own point. The
+first run produced 11 findings and 10 were junk:
+
+- **A heading anchor is the RAW heading text — all of it.** This one was
+  guessed wrong twice before it was measured, in both directions, and it is
+  the reason the section below exists. Obsidian's heading suggester offers
+  `Target **bold** heading`, ``Target `curl` heading`` and
+  `Target link — [[Some Missing Note]]` verbatim: emphasis, code spans and
+  link syntax are all part of the anchor. The seductive reading — "anchor by
+  the display text" — was adopted here on the strength of six inbound links
+  in Helios spelling `#Remote access — Tailscale Remote Access` against a
+  heading `## Remote access — [[Tailscale Remote Access]]`, and it is
+  exactly backwards: that heading's anchor contains `[[`, so NO link can
+  address it (a link would terminate at the inner `]]`), the heading is
+  unreachable, and all six of those links are broken. Stripping made a real
+  six-link defect invisible.
+- **Setext headings get anchors too.** `Title` over a rule of `=` or `-` is a
+  heading to Obsidian (it appears in the suggester as H1), so a parser that
+  only recognizes `#` reports every link to one as broken. Helios has none
+  today, which is precisely why nothing would have caught this.
+- **Case-insensitive lookup manufactures ambiguity.** Obsidian resolves
+  links case-insensitively, so `[[CLAUDE]]` matches both `CLAUDE.md` and
+  `Tech/Claude.md` — but an exact-case match settles it and nothing is
+  actually ambiguous.
+- **A shared basename is resolved by proximity.** Two `Cabinets.md` exist,
+  and a link from a note sitting in one of their folders is not arbitrary:
+  Obsidian takes the nearest. `ambiguous_link` is only worth having while it
+  means "Obsidian's choice here is a coin flip".
+- **A path can be relative to the LINKING note's folder**, not just the vault
+  root: `[[Proxmox/Homelab Monthly Maintenance]]` from `Tech/Homelab/`.
+  Root-only matching calls it broken. It still must not match an arbitrary
+  path SUFFIX, which would bless a path naming the wrong parent.
+
 ## 9. Configuration
 
 Split by what changes and who owns it:
@@ -382,7 +499,16 @@ Not free, and worth stating so the decision is priced:
 
 - **Tier 1 default-on, or off until measured?** Recommendation: on, with the
   baseline. The precision case is strong and the baseline removes the
-  first-run flood. Dan's call.
+  first-run flood. Dan's call. Measured 2026-08-30 (§2): 68 findings
+  vault-wide, all link-family, so the first-run flood is real and the
+  baseline is what removes it.
+- **What ships first?** The measurement rules out a cheap structural-only
+  first slice — it would find zero. The live question is whether slice one is
+  `vault_lint` alone (MCP tool, explicit path scope, no baseline, no CLI, no
+  timer) with the baseline plus `knapper lint` plus the timer following as
+  slice two, or whether the baseline lands with the first ship. Deferring it
+  is defensible only while there is no timer to keep alive, and at ~13 new
+  unresolved links a month that deferral has a shelf life. Dan's call.
 - **Expose the link graph as a query capability** (`vault_backlinks` or
   similar) or keep it internal to lint? Building lint answers the
   "do agents demonstrably need it?" question that entry is gated on, so decide
@@ -392,6 +518,20 @@ Not free, and worth stating so the decision is priced:
 - **Assertions file format** — YAML file versus a structured note with the
   rules in frontmatter. The note is more Obsidian-native and editable in the
   app; YAML is simpler to validate and harder to break by accident.
+- ~~What does `\|` mean inside a wikilink?~~ **CLOSED, measured in Obsidian
+  2026-08-30.** It is always the alias separator: a probe note rendered the
+  unescaped form, the escaped form, and the escaped form inside a table row,
+  and all three displayed the alias. There is no table-context rule. The
+  consequence is that a link to a heading genuinely containing a pipe is
+  broken in Obsidian however it is spelled — so the one finding a whole-vault
+  run reports (`InfluxDB Migration Runbook.md:361`) is a TRUE positive and
+  the note needs fixing.
+- ~~Should heading anchors strip emphasis and code markup?~~ **CLOSED, same
+  session.** No: Obsidian's heading suggester offers `Target **bold**
+  heading` and ``Target `curl` heading`` verbatim, so the markup IS the
+  anchor. Helios has 12 links that correctly spell it out; stripping would
+  have accepted links Obsidian does not resolve. Only link syntax is
+  stripped, and only because `[[` cannot survive inside a `[[…#…]]` link.
 - **Budget knob now or later** — see §6.
 
 ## 14. Vault-side follow-ups (not this repo)
