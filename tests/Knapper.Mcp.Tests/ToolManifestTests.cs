@@ -141,6 +141,27 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
             $"the request-scoped server leaked into the input schema of: {string.Join(", ", advertised)}");
     }
 
+    [Fact]
+    public async Task Server_discover_carries_the_instructions_not_just_initialize()
+    {
+        // The CALL ECONOMICS paragraph is an intervention, and an
+        // intervention that is never delivered cannot be measured. On CT 106
+        // the claude.ai relay sent 613 server/discover and ONE initialize in
+        // 14 days — dated 2026-08-17, a week BEFORE the release that shipped
+        // that paragraph — so if discover ever stopped carrying instructions,
+        // the majority surface would silently run on whatever it cached, and
+        // every before/after window would measure a change that never
+        // reached it. Nothing else here would notice: tools still list,
+        // tools still call, health stays green.
+        var discover = await (await RawMcp.OpenAsync(_factory.CreateClient())).DiscoverAsync();
+
+        discover.TryGetProperty("instructions", out var instructions).ShouldBeTrue(
+            "server/discover published no instructions — the relay's only channel for them");
+        var text = instructions.GetString().ShouldNotBeNull();
+        foreach (var landmark in new[] { "CALL ECONOMICS", "MUTATION PROTOCOL", "TRUST MODEL" })
+            text.ShouldContain(landmark);
+    }
+
     private async Task<IReadOnlyList<JsonElement>> ListToolsAsync() =>
         await (await RawMcp.OpenAsync(_factory.CreateClient())).ListToolsAsync();
 

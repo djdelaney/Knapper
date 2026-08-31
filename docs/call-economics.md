@@ -166,9 +166,10 @@ from the journal, prints the unaudited remainder as its own line, and refuses
 to ratio at all if the audit somehow saw MORE calls than the journal — which
 would mean the two are describing different windows.
 
-⚠️ **Do not compare a window that straddles the deploy.** Server instructions
-are delivered at `initialize`, so sessions already open keep the old text until
-they reconnect. Start the "after" window from the first reconnect after the
+⚠️ **Do not compare a window that straddles the deploy** — but the reason is
+narrower than it looks, and it does not apply to the surface carrying most of
+the traffic. Server instructions are delivered at `initialize`, so sessions
+already open keep the old text until they reconnect. Start the "after" window from the first reconnect after the
 restart, not from the restart. With 0.5.5 deployed 2026-08-24, the first
 `ops/call-economics.sh 7` whose window carries no pre-change traffic is on or
 after **2026-08-31**; running it earlier averages the two states together and
@@ -312,3 +313,48 @@ shape "before spending a second call, widen the first" was written against.
 That is where an instruction change should aim, and the run counts are the
 before-measurement for it. Remember what the number is: a **ceiling**. A
 search that genuinely needed the previous answer is inside it.
+
+## How the relay actually talks to this server — 2026-08-31
+
+Measured after 0.6.3 split the client-attribution states. Every JSON-RPC
+method over 14 days, by the client the SDK's own logger names:
+
+| client | initialize | server/discover | tools/list | tools/call |
+|---|---|---|---|---|
+| `Anthropic/ClaudeAI` | **1** | 613 | 68 | 539 |
+| *(no client identity)* | — | — | 75 | **1143** |
+| `claude-code` | **64** | 23 | 21 | 18 |
+| `knapper` / `knapper-verify` (probe) | 11 | 11 | 11 | 44 |
+
+**The claude.ai relay does not use `initialize`.** It sent one, on
+2026-08-17 — a week *before* the release that shipped the CALL ECONOMICS
+paragraph — and never again, across ~1,680 tool calls and 11 service
+restarts. Claude Code, which connects directly, initialises per session (64
+times).
+
+That looked briefly like the intervention had never been delivered to the
+surface generating most of the traffic, which would have been an alternative
+explanation for every null result above. It is not: the 2026-07-28 revision's
+`server/discover` carries `instructions` in its result, the relay issues one
+roughly per tool call, and Knapper answers it with the full text.
+`ToolManifestTests.Server_discover_carries_the_instructions_not_just_initialize`
+pins that, because it is now the ONLY channel the instructions reach the
+majority surface through — and if it ever stopped carrying them, tools would
+still list, tools would still call, health would stay green, and every
+before/after window would be measuring a change that never arrived.
+
+**Consequences for the deploy caveat above.** For the relay, instruction
+propagation is prompt: it re-discovers continuously, so it picks up new text
+within about one tool call of a restart. The "wait for sessions to reconnect"
+rule applies to `initialize`-based clients — Claude Code — not to claude.ai.
+The 08-24 → 08-31 window was therefore a cleaner "after" than it was given
+credit for, which strengthens rather than weakens the null result.
+
+**Consequences for client attribution.** Under 2026-07-28 `clientInfo` is
+carried per-REQUEST in `_meta` rather than fixed at `initialize` — which is
+why `ToolSupport` reads it per call and must never cache it. The relay
+supplies it inconsistently: ~32% of its tool calls arrive identified and
+~68% with no client identity at all. So the surface axis is partial, not
+absent, and the split states (`no-session` vs `no-client-info`) are what will
+quantify it in the next window. Do not build a surface-mix comparison on it
+until that share is known.

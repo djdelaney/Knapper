@@ -37,6 +37,52 @@ internal sealed class RawMcp
         return session;
     }
 
+    /// <summary>
+    /// A raw <c>server/discover</c> result. Not a curiosity: this is how the
+    /// claude.ai relay learns what this server is. Measured on CT 106 over 14
+    /// days, that client sent 613 server/discover requests and exactly ONE
+    /// initialize — seven days before the release whose instructions were
+    /// being measured — so for the surface carrying most of the traffic,
+    /// discover is the ONLY channel the instructions travel down.
+    /// </summary>
+    /// <remarks>
+    /// The per-request <c>_meta</c> protocol version is REQUIRED here — the
+    /// server refuses server/discover without it (-32602). That is the whole
+    /// point of the method: it is the 2026-07-28 revision's stateless probe,
+    /// which is why it carries its own version rather than relying on one
+    /// negotiated at initialize.
+    /// </remarks>
+    internal async Task<JsonElement> DiscoverAsync()
+    {
+        // The 2026-07-28 revision demands three things in agreement, each
+        // refused separately: the body's _meta protocol version, an
+        // MCP-Protocol-Version header matching it, and an Mcp-Method header
+        // naming the method. They are set per-REQUEST rather than on the
+        // session defaults — a stray MCP-Protocol-Version left on this client
+        // would change how every later request in the same test is validated.
+        // Under 2026-07-28 the per-request _meta carries what initialize used
+        // to: the protocol version, the client's capabilities, and its
+        // identity. clientInfo living HERE rather than in a session is why
+        // ToolSupport must read it per request and never cache it.
+        const string Body = """
+            {"jsonrpc":"2.0","id":9,"method":"server/discover","params":{"_meta":{
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities":{},
+            "io.modelcontextprotocol/clientInfo":{"name":"knapper-raw-probe","version":"1.0"}}}}
+            """;
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/")
+        {
+            Content = new StringContent(Body, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("MCP-Protocol-Version", "2026-07-28");
+        request.Headers.Add("Mcp-Method", "server/discover");
+        using var response = await _http.SendAsync(request);
+        using var document = JsonDocument.Parse(Payload(await response.Content.ReadAsStringAsync()));
+        if (document.RootElement.TryGetProperty("error", out var error))
+            throw new InvalidOperationException($"JSON-RPC error: {error}");
+        return document.RootElement.GetProperty("result").Clone();
+    }
+
     /// <summary>The tool objects from a real tools/list response, in wire order.</summary>
     internal async Task<IReadOnlyList<JsonElement>> ListToolsAsync()
     {
