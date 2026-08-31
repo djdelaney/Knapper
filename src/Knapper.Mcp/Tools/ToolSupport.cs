@@ -122,7 +122,11 @@ public sealed class ToolSupport(
     /// "unknown" on every line — which is indistinguishable from a fleet of
     /// clients that decline to identify themselves.
     /// </summary>
-    private static string CallingApp() => CallingClient.Name ?? "unknown";
+    private static string CallingApp() =>
+        // A FOURTH state, distinct from the three ClientApp can report: the
+        // filter never ran at all, so it was never registered. Folded in with
+        // the others it would look like a client problem.
+        CallingClient.Name ?? "unfiltered";
 
     /// <summary>
     /// The client APPLICATION's self-reported name, for the call-economics
@@ -142,18 +146,33 @@ public sealed class ToolSupport(
     /// a cached read reports whichever client happened to open the session
     /// first, for every client after it, in the green.
     /// </summary>
-    internal static string ClientApp(McpServer? server) => ClientApp(server?.ClientInfo);
+    internal static string ClientApp(McpServer? server)
+    {
+        if (server is null)
+            return "no-server";
+        if (ClientApp(server.ClientInfo) is { } named)
+            return named;
+        // No name — and WHY is the whole question. ClientCapabilities is
+        // populated by the initialize handshake and is null in stateless
+        // transport mode, so it separates "this client established a session
+        // and chose not to name itself" from "no completed initialize ever
+        // reached this server instance". Collapsed into one bucket (as this
+        // shipped in 0.6.1) the two are indistinguishable, and the second is
+        // the interesting one: it would mean per-call session setup, which is
+        // the same layer as the server/discover round trip that already
+        // doubles traversals per tool call (docs/call-economics.md).
+        return server.ClientCapabilities is null ? "no-session" : "no-client-info";
+    }
 
-    /// <inheritdoc cref="ClientApp(McpServer?)"/>
-    internal static string ClientApp(ModelContextProtocol.Protocol.Implementation? clientInfo)
+    /// <summary>
+    /// The sanitised client name, or null when the client supplied none —
+    /// null rather than a placeholder so the caller above can say WHY.
+    /// </summary>
+    internal static string? ClientApp(ModelContextProtocol.Protocol.Implementation? clientInfo)
     {
         var name = clientInfo?.Name;
         if (string.IsNullOrWhiteSpace(name))
-            // A real state, not a gap: stdio transport and pre-handshake
-            // calls have no client info. It has to be VISIBLE in the report
-            // rather than blank, or a surface that stops identifying itself
-            // reads as a surface that stopped calling.
-            return "unknown";
+            return null;
 
         // Client-CONTROLLED text on its way into an operator-facing report
         // that is written to be pasted. Bounded and stripped of everything

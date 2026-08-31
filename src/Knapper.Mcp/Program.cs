@@ -124,8 +124,14 @@ builder.Services
     // request-scoped and invisible to the published manifest.
     .WithRequestFilters(filters => filters.AddCallToolFilter(next => (context, ct) =>
     {
+        // ClientApp(McpServer?), NOT ClientApp(context.Server?.ClientInfo):
+        // the Implementation overload answers null for an unnamed client, so
+        // passing .ClientInfo here leaves CallingClient unset and every line
+        // reads "unfiltered" — blaming a filter that ran. Only the McpServer
+        // overload can see ClientCapabilities, which is what distinguishes
+        // no-session from no-client-info.
         Knapper.Mcp.Tools.CallingClient.Name =
-            Knapper.Mcp.Tools.ToolSupport.ClientApp(context.Server?.ClientInfo);
+            Knapper.Mcp.Tools.ToolSupport.ClientApp(context.Server);
         return next(context, ct);
     }));
 

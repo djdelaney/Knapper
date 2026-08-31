@@ -66,27 +66,50 @@ public class ClientAppLoggingTests
     [Theory]
     // Client-CONTROLLED text on its way into a report written to be pasted.
     [InlineData("claude-ai", "claude-ai")]
-    [InlineData(null, "unknown")]
-    [InlineData("", "unknown")]
-    [InlineData("   ", "unknown")]
+    // null, not a placeholder: the caller decides WHY there is no name, and
+    // the three reasons need to stay tellable apart in the report.
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
     // A tab or a newline would forge rows in a tab-separated report whose
     // columns are tool names and call counts.
     [InlineData("evil\tname\ncalls 999999", "evilnamecalls 999999")]
     // Non-ASCII is stripped rather than passed through: the report is read in
     // a terminal and pasted into issues.
     [InlineData("клиент", "unnamed")]
-    public void A_client_name_is_bounded_and_stripped_before_it_reaches_the_log(string? name, string expected) =>
+    public void A_client_name_is_bounded_and_stripped_before_it_reaches_the_log(string? name, string? expected) =>
         ToolSupport.ClientApp(Reporting(name)).ShouldBe(expected);
 
     [Fact]
     public void An_overlong_client_name_cannot_flood_the_log() =>
-        ToolSupport.ClientApp(Reporting(new string('x', 5000))).Length.ShouldBe(64);
+        ToolSupport.ClientApp(Reporting(new string('x', 5000)))!.Length.ShouldBe(64);
 
     [Fact]
-    public void A_server_with_no_client_info_reports_unknown_rather_than_blank() =>
-        // stdio transport and pre-handshake calls are genuinely in this
-        // state. Blank would read as a surface that stopped calling.
-        ToolSupport.ClientApp((McpServer?)null).ShouldBe("unknown");
+    public void A_missing_server_is_named_as_such_rather_than_blamed_on_the_client() =>
+        ToolSupport.ClientApp((McpServer?)null).ShouldBe("no-server");
+
+    [Fact]
+    public async Task A_caller_with_no_established_session_is_reported_as_no_session()
+    {
+        // RawMcp deliberately carries no Mcp-Session-Id, so every request is
+        // its own uninitialised session — no ClientInfo AND no
+        // ClientCapabilities. This is not a contrived state: it is exactly
+        // what CT 106 reports for every call arriving through the claude.ai
+        // relay, and this test is where that is reproducible locally.
+        var capture = new CapturingLoggerProvider();
+        using var factory = new KnapperMcpFactory(null);
+        using var configured = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddSingleton<ILoggerProvider>(capture)));
+
+        var session = await RawMcp.OpenAsync(configured.CreateClient());
+        await session.CallToolAsync("vault_read", new { path = "Notes/Daily.md" });
+
+        // NOT "unknown": that bucket could not tell this apart from a client
+        // that has a session and declines to name itself, which is the
+        // distinction the production diagnosis turns on.
+        capture.Entries.ShouldHaveSingleItem()["ClientApp"].ShouldBe("no-session");
+    }
 
     private static ModelContextProtocol.Protocol.Implementation? Reporting(string? name) =>
         name is null ? null : new ModelContextProtocol.Protocol.Implementation { Name = name, Version = "1" };

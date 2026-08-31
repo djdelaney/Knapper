@@ -60,7 +60,11 @@ the right way and none of them cleared significance).
 
 The **client application** breakdown (`claude-ai`, `claude-code`, …) comes
 from `clientInfo`, captured per call by the tools/call filter in
-`Program.cs`. It is the axis
+`Program.cs`. Five values are not names: `unrecorded` (logged before the
+field existed), `unfiltered` (the filter did not run — a Knapper bug, not a
+client one), `no-server`, `no-client-info` (a session exists, the client sent
+no name), and `no-session` (no completed `initialize` reached this server
+instance). It is the axis
 Access identity cannot supply: that identity is per-USER, so every surface
 collapses into one email, while the round-trip cost this report measures is a
 property of the SURFACE — a locally-configured client measured ~120ms against
@@ -181,9 +185,15 @@ The first window carrying no pre-change traffic, run per the warning above.
 | batched-mutation share | 13.3% | 17.9% | |
 | batch calls / files (audit) | 26 / 53 | 39 / 81 | |
 | single calls / files (audit) | 147 / 147 | 189 / 189 | |
-| **mean batch size** | **2.04** | **2.08** | +1.9% |
-| batched share by FILE | 26.5% | 30.0% | +3.5pp |
-| **files per mutation call** | **1.156** | **1.186** | **+2.6%** |
+| **mean batch size** | **2.04** | **2.00** | flat |
+| batched share by FILE | 26.5% | 30.1% | +3.6pp |
+| **files per mutation call** | **1.156** | **1.177** | **+1.8%** |
+
+⚠️ The baseline column was derived by hand, before the denominator was
+corrected and with windows matched by date rather than by instant. It is
+NOT strictly comparable to the post column, which the script now produces on
+the corrected definition. Treat this table as indicative and the 14-day
+daily series below — one pipeline, one window definition — as the evidence.
 | server work share | 0.34% | 0.28% | thesis reconfirmed |
 
 **The call shares moved ~35% relative; the work per round trip moved ~2%.**
