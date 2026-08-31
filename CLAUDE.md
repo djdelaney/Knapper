@@ -261,6 +261,29 @@ format by default.
   `ToolManifestTests` and `knapper verify` for the same reason `ToolNames`
   is shared: a build gate and a deployment gate that disagree about what a
   loadable manifest is are worse than one gate.
+- **Nothing may reach a tool method as a parameter that is not a tool
+  ARGUMENT.** The SDK documents `McpServer`, `RequestContext<T>` and
+  `IServiceProvider` parameters as bound from the request and excluded from
+  the generated schema — but the exclusion is CONDITIONAL (it consults
+  `IServiceProviderIsService`), and when it does not fire the exporter walks
+  the parameter's whole object graph and publishes it as required input.
+  Measured here on SDK 2.1.0 with an `McpServer` parameter added for client
+  attribution: `inputSchema.properties.server` appeared carrying the
+  permissive `true` at four nested points, which is the 0.3.2 outage exactly
+  — a manifest a strict client rejects WHOLE, taking all fourteen tools down
+  over a parameter nobody meant to publish, while every test that merely
+  CALLS a tool stays green. Request-scoped data reaches a tool body through a
+  FILTER instead (`Program.cs`'s `AddCallToolFilter` → `CallingClient`), which
+  is the only seam that is both per-request and invisible to the manifest.
+  Two nearby traps: `HttpContext.RequestServices` does NOT resolve
+  `McpServer` (it yields "unknown" on every line, indistinguishable from
+  clients that decline to name themselves), and the value must never be
+  cached on `ToolSupport` — that is a singleton shared by every concurrent
+  session, and from protocol revision 2026-07-28 clientInfo is per-REQUEST,
+  so a cached read misattributes every call after the first with no signal
+  that it is wrong. Pinned by
+  `ToolManifestTests.No_tool_advertises_the_request_scoped_server_as_an_argument`
+  and `ClientAppLoggingTests`.
 - **A response must carry every property its own schema marks `required`.**
   The SDK's serializer omits nulls while the schema exporter marks every
   member without a C# default `required` — opposite defaults, so a null

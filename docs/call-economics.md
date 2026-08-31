@@ -37,6 +37,7 @@ can.
 
 ```sh
 pct exec 106 -- sh /opt/knapper/ops/call-economics.sh [DAYS] [--all-clients]
+                                                             [--daily] [--audit PATH]
 ```
 
 The journal is the **only** telemetry covering every client. Cowork, Desktop,
@@ -44,11 +45,28 @@ mobile and claude.ai leave nothing on the operator's disk, so client-side
 transcript mining sees Claude Code and nothing else. `Mcp:LogToolCalls`
 defaults to true and the production unit does not override it.
 
-Read the RATIOS block, not the counts: two windows never carry the same amount
-of work, so "fewer calls" measures how busy the week was. The script excludes
+Read **WORK PER ROUND TRIP** first — it counts files, not call shapes, and the
+two disagree badly (below). The RATIOS block beneath it is supporting detail,
+and the counts are context only: two windows never carry the same amount of
+work, so "fewer calls" measures how busy the week was. The script excludes
 `knapper verify --url` traffic by default — it spends a fixed 4 calls per run
 from a service-token identity, so leaving it in dilutes every ratio by however
 often someone happened to run verify.
+
+`--daily` adds a per-day series of files-per-mutation-call with its standard
+deviation — the variance a two-window comparison structurally cannot supply
+(see "What the follow-up actually showed" below, where every headline moved
+the right way and none of them cleared significance).
+
+The **client application** breakdown (`claude-ai`, `claude-code`, …) comes
+from `clientInfo`, captured per call by the tools/call filter in
+`Program.cs`. It is the axis
+Access identity cannot supply: that identity is per-USER, so every surface
+collapses into one email, while the round-trip cost this report measures is a
+property of the SURFACE — a locally-configured client measured ~120ms against
+the relay at ~3s. Without it, a window whose surface MIX moved is
+indistinguishable from one whose agents changed behaviour. Rows reading
+`unrecorded` predate the field.
 
 Client identities in the breakdown are **masked** (`8926bb31… (service
 token)`, `own…@… (user)`). This report is written to be pasted into an issue or
@@ -97,10 +115,40 @@ rewritten.
 **What the baseline says the intervention should move.** ~90% of reads and
 ~87% of mutations were still one-per-call. Because every write needs a fresh
 read first, each of those single edits costs two round trips; one
-`vault_batch_read` plus one `vault_batch` does N edits in two. The number to
-watch is batched-mutation share, with reads-per-mutation as the corroborating
-signal — it cannot fall below ~1.00 while the fresh-read rule stands, so a
-drop toward 1.00 means batching, not skipped reads.
+`vault_batch_read` plus one `vault_batch` does N edits in two.
+
+⚠️ **This paragraph originally nominated batched-mutation share as the number
+to watch, with reads-per-mutation corroborating it. Both nominations were
+wrong**, and the follow-up below is what showed it. They are corrected here
+rather than deleted, because the next person to design a metric for this will
+reach for the same two.
+
+- **Reads per mutation is not a batching signal, in either direction.** The
+  floor argument ("cannot fall below ~1.00 while the fresh-read rule stands")
+  is about FILES; the metric counts CALLS. Ten files edited fully unbatched is
+  10 reads + 10 edits = 1.00, and fully batched is 1 `vault_batch_read` + 1
+  `vault_batch` = 1.00. It is *invariant* to batching applied evenly, and
+  batch-reading alone drives it BELOW 1.00 with the rule intact. What it
+  actually measures is reading that is not driving a write. It also excludes
+  `vault_stat`, which returns a sha256 and is a perfectly good precondition
+  source — so an agent switching to `vault_stat` moves it with no behaviour
+  change at all.
+- **A share of calls is not a measure of work.** `vault_batch` of 2 items and
+  of 20 count the same. The share can rise purely because the window carried
+  more mutation work, which is what happened.
+
+**The metric that replaces both: files per mutation call.** The journal
+records one line per call and nothing about its contents, but the audit log
+already has it — one line per PATH, tagged with the RequestId of the call
+(`AuditLog.Entry`). Distinct `(RequestId, Path)` pairs are the files, distinct
+RequestIds are the calls. It subsumes both levers (batch more often, batch
+bigger), it is immune to the invariance above, and it cannot be moved by call
+shape alone. `ops/call-economics.sh` computes it and prints it first.
+
+⚠️ Count PAIRS, not lines. Every applied item writes two audit records —
+`attempt` before the write, outcome after — so a line count reports every
+batch at twice its size. That is exactly how mean batch size was first
+mis-reported as 2.2 against a true 2.08.
 
 ⚠️ **Do not compare a window that straddles the deploy.** Server instructions
 are delivered at `initialize`, so sessions already open keep the old text until
@@ -109,3 +157,84 @@ restart, not from the restart. With 0.5.5 deployed 2026-08-24, the first
 `ops/call-economics.sh 7` whose window carries no pre-change traffic is on or
 after **2026-08-31**; running it earlier averages the two states together and
 understates whatever the change did.
+
+## What the follow-up actually showed — 2026-08-31, 7-day window
+
+The first window carrying no pre-change traffic, run per the warning above.
+
+| Metric | 08-17→24 | 08-24→31 | |
+|---|---|---|---|
+| Calls (human client) | 809 | 859 | |
+| batched-read share | 9.9% | 15.1% | |
+| batched-mutation share | 13.3% | 17.9% | |
+| batch calls / files (audit) | 26 / 53 | 39 / 81 | |
+| single calls / files (audit) | 147 / 147 | 189 / 189 | |
+| **mean batch size** | **2.04** | **2.08** | +1.9% |
+| batched share by FILE | 26.5% | 30.0% | +3.5pp |
+| **files per mutation call** | **1.156** | **1.184** | **+2.4%** |
+| server work share | 0.34% | 0.28% | thesis reconfirmed |
+
+**The call shares moved ~35% relative; the work per round trip moved ~2%.**
+The shares rose because the window carried 35% more mutation work (200 → 270
+files) and batch calls grew slightly faster than singles — composition, not
+discipline.
+
+**And nothing clears significance.** Two-proportion z-tests across the two
+windows: batched-read share z=1.76 (p≈0.08), batched-mutation share z=1.24
+(p≈0.22), batched share by file z=0.83 (p≈0.41). These are
+*anti-conservative* — calls cluster within sessions and tasks, so the
+effective n is well below the call count and the true p-values are larger.
+
+⚠️ The honest verdict is **no detectable effect**, which is not the same as
+no effect: this design cannot resolve anything smaller than roughly ±10pp on
+a share. Underpowered ≠ null. But nothing here licenses the conclusion that
+the instructions worked. `--daily` exists so the next comparison has a
+variance estimate to be judged against.
+
+### Two counter-signals that are not counter-signals
+
+Sequential hops rose 49.1% → 52.6% and concurrent dispatch fell 11.6% →
+7.8%. Both are **mechanical shadows of batching**, in the direction that
+reads as a regression. Batching destroys concurrent gaps by construction:
+five `vault_read` calls dispatched in one message produce four sub-second
+gaps, and the `vault_batch_read` that replaces them produces none. Sequential
+share rises because it shares that denominator. Idle share held flat at ~39%,
+which is what you would expect if session structure did not change.
+
+The mean gap widening 7.3s → 7.7s is confounded the same way: that interval
+is mostly model inference, and batched reads return more content to generate
+against, so a wider gap is a plausible *consequence* of batching. It is not
+evidence about client discipline and this telemetry cannot make it so.
+
+### The batching lever is close to exhausted
+
+**Mean batch size is 2.04 before and 2.08 after** — pinned across the
+intervention. The instructions' pitch ("N separate edits cost 2N round trips,
+one `vault_batch_read` plus one `vault_batch` does it in 2") is compelling at
+N=10 and nearly pointless at N=2, where it saves two round trips. Batch size
+did not respond to the instruction in either window, which suggests it is set
+by the shape of the work rather than by anything an agent can be told. The
+37:39 `vault_batch_read`:`vault_batch` ratio says agents ARE following the
+pattern literally; there is just not more to put in each batch.
+
+What batching did buy, in round trips: 81 files in 39 batches cost 78 round
+trips against 162 unbatched — **84 saved, ~15.6% of the mutation side, ≈11
+minutes of relay wait in the window**. The realistic ceiling for the whole
+remaining lever, every one of the 270 files batched at the natural size of
+~2, is ~186 round trips out of 859.
+
+### Where the remaining round trips are
+
+`vault_search` is 324 of 859 calls (37.7%, flat against the baseline's
+36.5%). It has no batch form, so no batching discipline reaches it, and
+"before spending a second call, widen the first" is the only instruction that
+applies. Whether that sentence is landing is now measurable: the
+CONSECUTIVE RUNS block counts calls that a single wider call could have
+replaced, straight from the journal's tool names and timestamps. Its number
+is a **ceiling, not a saving** — a search that genuinely needed the previous
+answer is counted in it too.
+
+⛔ Do not iterate the instruction text on the evidence above. It would react
+to a 2.4% move indistinguishable from a busier week, and it would spend the
+clean before/after boundary the baseline paid for. Measure the run lengths
+first.

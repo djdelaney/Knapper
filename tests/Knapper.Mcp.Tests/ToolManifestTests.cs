@@ -116,6 +116,31 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
             .GetProperty("properties").TryGetProperty("unparseableFiles", out _).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task No_tool_advertises_the_request_scoped_server_as_an_argument()
+    {
+        // Every tool method takes an McpServer parameter so the call log can
+        // name the calling client application (ClientAppLoggingTests). The
+        // SDK binds it from the request context and documents it as excluded
+        // from the schema — but "documented as excluded" and "excluded" are
+        // different claims, and if it ever leaked it would publish a required
+        // argument no client can construct. That is the 0.3.2 shape: a
+        // manifest defect takes the WHOLE tool list down, while every test
+        // that merely CALLS a tool stays green.
+        var advertised = (await ListToolsAsync())
+            .Select(t => (Name: t.GetProperty("name").GetString()!, Schema: Schema(t, "inputSchema")))
+            .Where(t => t.Schema is { } s
+                && s.TryGetProperty("properties", out var properties)
+                && properties.EnumerateObject().Any(p =>
+                    p.Value.TryGetProperty("$ref", out _)
+                    || p.Name.Contains("server", StringComparison.OrdinalIgnoreCase)))
+            .Select(t => t.Name)
+            .ToList();
+
+        advertised.ShouldBeEmpty(
+            $"the request-scoped server leaked into the input schema of: {string.Join(", ", advertised)}");
+    }
+
     private async Task<IReadOnlyList<JsonElement>> ListToolsAsync() =>
         await (await RawMcp.OpenAsync(_factory.CreateClient())).ListToolsAsync();
 

@@ -114,7 +114,20 @@ builder.Services
     .WithTools(
         ToolSurface.Resolve(
             builder.Configuration.GetSection($"{McpOptions.SectionName}:{nameof(McpOptions.DisabledTools)}").Get<string[]>()),
-        ToolSerialization.Options);
+        ToolSerialization.Options)
+    // The ONE place the calling client APPLICATION is captured. It is read
+    // from the filter's request-scoped server and parked for the tool body,
+    // rather than taken as a tool-method parameter (which the SDK documents
+    // for this, and which LEAKS INTO inputSchema — see ToolSupport) or
+    // cached on a singleton (clientInfo is per-REQUEST from protocol
+    // revision 2026-07-28 on). A filter is the only seam that is both
+    // request-scoped and invisible to the published manifest.
+    .WithRequestFilters(filters => filters.AddCallToolFilter(next => (context, ct) =>
+    {
+        Knapper.Mcp.Tools.CallingClient.Name =
+            Knapper.Mcp.Tools.ToolSupport.ClientApp(context.Server?.ClientInfo);
+        return next(context, ct);
+    }));
 
 // Registered unconditionally and inertly; everything reads resolved options
 // at request time. See AccessAuth.

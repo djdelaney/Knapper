@@ -5,6 +5,7 @@ using Knapper.Core.Options;
 using Knapper.Core.Query;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
+using ModelContextProtocol.Server;
 
 namespace Knapper.Mcp.Tools;
 
@@ -97,8 +98,73 @@ public sealed class ToolSupport(
     {
         if (!mcpOptions.Value.LogToolCalls)
             return;
-        logger.LogInformation("tool {Tool} → {Outcome} in {ElapsedMs}ms (client {Client})",
+        logger.LogInformation("tool {Tool} → {Outcome} in {ElapsedMs}ms (client {Client} app {ClientApp})",
             tool, outcome, Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds.ToString("F0"),
-            Caller().Client);
+            Caller().Client, CallingApp());
     }
+
+    /// <summary>
+    /// The calling client application, parked by the tools/call filter that
+    /// is the only request-scoped seam with access to it.
+    ///
+    /// ⛔ Do NOT "simplify" this into an <see cref="McpServer"/> parameter on
+    /// the tool methods, which is how the SDK documents this access. That
+    /// parameter LEAKS INTO THE PUBLISHED inputSchema: the exclusion is
+    /// conditional on <c>IServiceProviderIsService</c> agreeing, and when it
+    /// does not, the generator walks McpServer's whole object graph and emits
+    /// the permissive `true` for every loosely typed member inside it. A
+    /// strict client rejects that manifest WHOLE — all fourteen tools go dark
+    /// over a parameter nobody meant to publish, which is the 0.3.2 outage
+    /// exactly. Measured here on SDK 2.1.0; pinned from the other side by
+    /// ToolManifestTests.No_tool_advertises_the_request_scoped_server_as_an_argument.
+    /// The other tempting shortcut, resolving McpServer from
+    /// <c>HttpContext.RequestServices</c>, is not registered there and yields
+    /// "unknown" on every line — which is indistinguishable from a fleet of
+    /// clients that decline to identify themselves.
+    /// </summary>
+    private static string CallingApp() => CallingClient.Name ?? "unknown";
+
+    /// <summary>
+    /// The client APPLICATION's self-reported name, for the call-economics
+    /// report (<c>ops/call-economics.sh</c>). It answers a question
+    /// <see cref="Caller"/> structurally cannot: Access identity is per-USER,
+    /// so Cowork, Desktop, mobile, claude.ai and Claude Code all collapse into
+    /// one email — while the round-trip cost that report measures is a
+    /// property of the SURFACE, not the person (a directly-configured client
+    /// measured ~120ms against the relay's ~3s). Without this, a window whose
+    /// surface mix shifted is indistinguishable from one whose agents changed
+    /// behaviour, which is the confound the whole report exists to avoid.
+    ///
+    /// Read from the REQUEST-SCOPED server the SDK binds to a tool method's
+    /// <see cref="McpServer"/> parameter — never from a captured or singleton
+    /// one. On protocol revision 2026-07-28 and later clientInfo is carried
+    /// per-request in <c>_meta</c> rather than fixed at <c>initialize</c>, so
+    /// a cached read reports whichever client happened to open the session
+    /// first, for every client after it, in the green.
+    /// </summary>
+    internal static string ClientApp(McpServer? server) => ClientApp(server?.ClientInfo);
+
+    /// <inheritdoc cref="ClientApp(McpServer?)"/>
+    internal static string ClientApp(ModelContextProtocol.Protocol.Implementation? clientInfo)
+    {
+        var name = clientInfo?.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            // A real state, not a gap: stdio transport and pre-handshake
+            // calls have no client info. It has to be VISIBLE in the report
+            // rather than blank, or a surface that stops identifying itself
+            // reads as a surface that stopped calling.
+            return "unknown";
+
+        // Client-CONTROLLED text on its way into an operator-facing report
+        // that is written to be pasted. Bounded and stripped of everything
+        // but printable ASCII: a name carrying a newline or a tab would
+        // otherwise forge rows in a tab-separated report whose columns are
+        // tool names and call counts.
+        var clean = new string([.. name
+            .Where(c => c is >= ' ' and <= '~')
+            .Take(MaxClientAppLength)]);
+        return clean.Length == 0 ? "unnamed" : clean;
+    }
+
+    private const int MaxClientAppLength = 64;
 }
