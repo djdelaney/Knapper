@@ -194,18 +194,41 @@ END {
     # THE headline. Files, not call shapes — see the banner comment. Printed
     # first because the shares below have twice been read as evidence of a
     # change this number says did not happen.
-    if (abcalls + asfiles > 0) {
-        mcalls = abcalls + asfiles   # single mutations are one path per call
-        mfiles = abfiles + asfiles
+    #
+    # ⛔ The denominator is the JOURNAL call count, not the number of calls the
+    # audit saw. A mutation refused before the audited region — a gate, a path
+    # that never resolves, a batch rejected at validate — writes no per-item
+    # record but still spends a round trip. Dividing by audited calls omits
+    # exactly those, which gives the metric a perverse property: it IMPROVES
+    # as more mutations fail. Measured on the 2026-08-31 window, 4 of 220
+    # calls (1.8%) bought no files, reading 1.208 instead of 1.186 and
+    # inflating mean batch size 2.08 -> 2.25.
+    mcalls = muts + batches
+    mfiles = abfiles + asfiles
+    if (mfiles > 0 && mcalls > 0) {
         print  ""
-        print  "-- WORK PER ROUND TRIP (audit log; the number to compare) --"
+        print  "-- WORK PER ROUND TRIP (files: audit log · calls: journal) --"
         printf "  files per mutation call %5.3f    (%d files in %d calls)\n", \
                mfiles/mcalls, mfiles, mcalls
-        if (abcalls > 0)
+        if (batches > 0)
             printf "  mean batch size         %5.2f    (%d files in %d batches)\n", \
-                   abfiles/abcalls, abfiles, abcalls
+                   abfiles/batches, abfiles, batches
         printf "  batched share BY FILE   %5.1f%%   (%d of %d files)\n", \
                100*abfiles/mfiles, abfiles, mfiles
+        # The failure cost, made visible rather than divided away.
+        unaudited = mcalls - (abcalls + asfiles)
+        if (unaudited > 0)
+            printf "  bought no files         %5d    (refused before the audited region)\n", \
+                   unaudited
+        # The two sources must describe the SAME window. They are derived from
+        # one instant (SINCE / --since), so audited calls can only fall short,
+        # never exceed. If they exceed, the audit log is wider than the journal
+        # — a rotated journal, or --audit pointed at another deployment — and
+        # every figure above is then a ratio across two different windows.
+        if (unaudited < 0)
+            printf "  ⛔ audit saw %d MORE mutation calls than the journal: the two are not\n" \
+                   "     describing the same window, and the figures above are not comparable.\n", \
+                   -unaudited
     }
 
     print  ""
@@ -290,31 +313,62 @@ if [ "$DAILY" = 1 ]; then
         exit 0
     fi
     echo ""
-    echo "-- DAILY files per mutation call (audit log) --"
-    jq -r --arg since "$SINCE" '
-        select(.At > $since)
-        | select(.Op | test("^(batch-)?(edit|append|create)$"))
-        | [(.At[0:10]), .RequestId, .Path] | @tsv' "$AUDIT" 2>/dev/null \
-    | sort -u \
-    | awk -F'\t' '
-        { files[$1]++; if (!seen[$1 SUBSEP $2]++) calls[$1]++ }
+    echo "-- DAILY files per mutation call --"
+    # Same definition as the headline — files from the audit, CALLS from the
+    # journal. Two definitions of one metric in one report is the trap this
+    # whole file exists to avoid, and the per-day figure is what a reader will
+    # hold up against the window figure above.
+    {
+        journalctl -u knapper --since "${DAYS} days ago" -o json \
+        | jq -r '(.MESSAGE|fromjson?) as $m
+            | select($m.Category=="Knapper.Mcp.Tools.ToolSupport" and $m.State.Outcome!=null)
+            | select($m.State.Tool | test("^vault_(edit|append|create|batch)$"))
+            | ["J", (.__REALTIME_TIMESTAMP|tonumber/1000000|floor|todate)[0:10],
+               $m.State.Client] | @tsv'
+        jq -r --arg since "$SINCE" '
+            select(.At > $since)
+            | select(.Op | test("^(batch-)?(edit|append|create)$"))
+            | ["A", (.At[0:10]), .RequestId, .Path] | @tsv' "$AUDIT" 2>/dev/null \
+        | sort -u
+    } | awk -F'\t' -v days="$DAYS" -v allc="$ALL_CLIENTS" '
+        # journalctl stamps UTC via todate and the audit log is UTC by
+        # construction (DateTimeOffset.UtcNow), so the two agree on which day
+        # a call belongs to. A local-time bucket on either side would smear
+        # every day boundary by the box timezone.
+        $1 == "J" { if (($3 !~ /@/) && !allc) next; calls[$2]++ }
+        $1 == "A" { files[$2]++ }
         END {
-            for (d in calls) { ratio[d] = files[d]/calls[d]; n++; sum += ratio[d] }
+            for (d in calls) {
+                if (calls[d] == 0) continue
+                ratio[d] = files[d] / calls[d]; n++; sum += ratio[d]
+            }
             if (n == 0) { print "  no mutations in window"; exit }
             mean = sum/n
             for (d in ratio) { v = ratio[d] - mean; ss += v*v }
-            sd = (n > 1) ? sqrt(ss/n) : 0
+            sd = (n > 1) ? sqrt(ss/(n-1)) : 0
             m = 0
-            for (d in calls) days[m++] = d
+            for (d in ratio) day[m++] = d
             # Chronological: dates are ISO, so a string sort is a date sort.
             for (i = 1; i < m; i++)
-                for (j = i; j > 0 && days[j-1] > days[j]; j--) { t = days[j]; days[j] = days[j-1]; days[j-1] = t }
+                for (j = i; j > 0 && day[j-1] > day[j]; j--) { t = day[j]; day[j] = day[j-1]; day[j-1] = t }
             for (i = 0; i < m; i++) {
-                d = days[i]
-                printf "  %s  %4d calls  %4d files  %5.3f\n", d, calls[d], files[d], ratio[d]
+                d = day[i]
+                printf "  %s  %4d calls  %4d files  %5.3f\n", d, calls[d], files[d]+0, ratio[d]
             }
-            printf "  mean %.3f   sd %.3f over %d days\n", mean, sd, n
-            printf "  ⛔ a step between two windows smaller than ~%.3f (2 sd) is not\n", 2*sd
-            print  "     distinguishable from day-to-day work mix."
+            printf "  mean %.3f   sd %.3f over %d active days\n", mean, sd, n
+            # ⛔ This mean is UNWEIGHTED and will NOT equal the window figure
+            # above, which is a ratio of sums: a 4-call day counts as much
+            # here as a 66-call day. Both are correct answers to different
+            # questions; comparing them to each other is the mistake.
+            print  "  (unweighted — does not equal the window figure above, which"
+            print  "   is a ratio of sums; a 4-call day weighs as much as a 66-call one)"
+            # ⛔ The threshold is for comparing two WINDOWS, not two days. The
+            # per-day sd is ~sqrt(n) times too large for that, and a reader
+            # will apply whatever number is printed to a window-vs-window
+            # step: 2*sd over the 2026-08-31 series said 0.717 when the
+            # honest figure for two 7-day windows was 0.215.
+            printf "  ⛔ a step between two %d-day windows smaller than ~%.3f (2 sd)\n", \
+                   days, 2*sd*sqrt(2/n)
+            print  "     is not distinguishable from day-to-day work mix."
         }'
 fi

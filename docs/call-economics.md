@@ -150,6 +150,18 @@ shape alone. `ops/call-economics.sh` computes it and prints it first.
 batch at twice its size. That is exactly how mean batch size was first
 mis-reported as 2.2 against a true 2.08.
 
+⚠️ And divide by the JOURNAL's call count, not by the RequestIds the audit
+saw. A mutation refused before the audited region — a gate, a path that never
+resolves, a batch rejected at validate — writes no per-item record but still
+spends a round trip. Dividing by audited calls omits exactly those, which
+gives the metric a perverse property: **it improves as more mutations fail.**
+Shipped that way once; on the 2026-08-31 window 4 of 220 calls (1.8%) bought
+no files, reading 1.208 against a true 1.186 and inflating mean batch size to
+2.25 against a true 2.08. The script now takes files from the audit, calls
+from the journal, prints the unaudited remainder as its own line, and refuses
+to ratio at all if the audit somehow saw MORE calls than the journal — which
+would mean the two are describing different windows.
+
 ⚠️ **Do not compare a window that straddles the deploy.** Server instructions
 are delivered at `initialize`, so sessions already open keep the old text until
 they reconnect. Start the "after" window from the first reconnect after the
@@ -171,7 +183,7 @@ The first window carrying no pre-change traffic, run per the warning above.
 | single calls / files (audit) | 147 / 147 | 189 / 189 | |
 | **mean batch size** | **2.04** | **2.08** | +1.9% |
 | batched share by FILE | 26.5% | 30.0% | +3.5pp |
-| **files per mutation call** | **1.156** | **1.184** | **+2.4%** |
+| **files per mutation call** | **1.156** | **1.186** | **+2.6%** |
 | server work share | 0.34% | 0.28% | thesis reconfirmed |
 
 **The call shares moved ~35% relative; the work per round trip moved ~2%.**
@@ -238,3 +250,55 @@ answer is counted in it too.
 to a 2.4% move indistinguishable from a busier week, and it would spend the
 clean before/after boundary the baseline paid for. Measure the run lengths
 first.
+
+## What settled it — 2026-08-31, 14-day daily series
+
+One pipeline, one window definition, spanning both sides of the deploy.
+Strictly better evidence than two separately-windowed runs, and it is what
+`--daily` exists for.
+
+| | pre (08-17→23) | post (08-25→31) |
+|---|---|---|
+| files per mutation call (aggregate) | 1.130 | 1.177 |
+| daily mean | 1.127 | 1.304 |
+| daily sd | 0.135 | **0.262** |
+
+Welch's t on the daily ratios: **t=1.59, df=9, p≈0.15.** Not significant.
+The aggregate step is 0.047 against a 2σ threshold of 0.215 for two 7-day
+windows — **4.6× inside the noise floor**.
+
+**What actually moved is dispersion, not level.** The post-period sd is
+nearly double the pre-period's. And the relationship between volume and ratio
+is *negative*: 08-27 ran 66 mutation calls at exactly 1.000 — 30% of the
+window's mutation work, entirely one file per call — while the 7- and
+10-call days sit at 1.57 and 1.70. A weekly aggregate is dominated by
+whichever large single-edit day it happens to contain, which is the whole
+reason two adjacent weeks could never have answered this.
+
+⛔ **The verdict on the CALL ECONOMICS instructions is: no detectable effect.**
+Not "a pass with caveats". The instructions may still be doing something
+below the resolution of this design, but nothing in three separate analyses
+licenses the claim that they worked.
+
+### Where the round trips actually are
+
+Over the same 14 days, the CONSECUTIVE RUNS block counts **349 excess calls —
+20.7% of all traffic, ≈44 of the 106 minutes of relay wait.**
+
+| tool | calls | excess | longest run |
+|---|---|---|---|
+| `vault_search` | 628 | **198** | 9 |
+| `vault_read` | 439 | 73 | 5 |
+| `vault_edit` | 318 | 38 | 6 |
+| `vault_files` | 60 | 15 | 4 |
+| `vault_stat` | 89 | 13 | 3 |
+| everything else | — | 12 | 5 |
+
+`vault_search` is **57% of the entire addressable ceiling**, and more than
+twice `vault_edit`'s — while batching, which does not reach search at all,
+has bought ~84 round trips total. Runs of 9 consecutive searches are the
+shape "before spending a second call, widen the first" was written against.
+
+That is where an instruction change should aim, and the run counts are the
+before-measurement for it. Remember what the number is: a **ceiling**. A
+search that genuinely needed the previous answer is inside it.

@@ -75,11 +75,14 @@ export PATH
 # The audit fixture. Timestamps must be inside the window, which is relative
 # to now — so the instant is generated and everything else is static.
 #
-# Three mutation calls over two paths each... no: ONE batch of 2 paths
-# (req-b), and 2 single edits (req-s1, req-s2). Every applied item writes TWO
-# lines (attempt + outcome, AuditLog/VaultMutationService), which is the
-# double-count this fixture exists to catch: 8 lines, 4 files, 3 calls.
-# batch-validate is a fourth op that must NOT be counted as a file.
+# It must AGREE with the journal fixture about the window, because the
+# headline now takes files from here and CALLS from there: the journal has
+# 1 vault_edit + 1 vault_batch, so this has req-s1 (1 file) and req-b
+# (2 files). Every applied item writes TWO lines — attempt + outcome
+# (AuditLog / VaultMutationService) — which is the double-count this fixture
+# exists to catch: 6 lines, 3 files, 2 calls. batch-validate is a third op
+# that must NOT be counted as a file, and the year-2000 row must fall
+# outside the window.
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S 2>/dev/null)
 cat > "$TMPROOT/audit.jsonl" <<EOF
 {"At":"$NOW.1000000+00:00","Op":"batch-edit","Path":"a.md","Outcome":"attempt","RequestId":"req-b"}
@@ -88,8 +91,6 @@ cat > "$TMPROOT/audit.jsonl" <<EOF
 {"At":"$NOW.4000000+00:00","Op":"batch-edit","Path":"b.md","Outcome":"ok","RequestId":"req-b"}
 {"At":"$NOW.5000000+00:00","Op":"edit","Path":"c.md","Outcome":"attempt","RequestId":"req-s1"}
 {"At":"$NOW.6000000+00:00","Op":"edit","Path":"c.md","Outcome":"ok","RequestId":"req-s1"}
-{"At":"$NOW.7000000+00:00","Op":"create","Path":"d.md","Outcome":"attempt","RequestId":"req-s2"}
-{"At":"$NOW.8000000+00:00","Op":"create","Path":"d.md","Outcome":"ok","RequestId":"req-s2"}
 {"At":"$NOW.9000000+00:00","Op":"batch-validate","Path":"e.md","Outcome":"AnchorMismatch","RequestId":"req-b"}
 {"At":"2000-01-01T00:00:00.0000000+00:00","Op":"edit","Path":"old.md","Outcome":"ok","RequestId":"req-old"}
 EOF
@@ -117,15 +118,41 @@ printf '%s' "$OUT" | grep -q 'reads per mutation.*1\.50' \
     || fail "reads per mutation wrong: $(printf '%s' "$OUT" | grep 'reads per' || echo missing)"
 
 # ---- 3b. the headline counts FILES, not audit lines -------------------
-# 4 files (a,b,c,d) in 3 calls = 1.333. Counting lines would say 8/3 = 2.667;
-# counting batch-validate as a file would say 5/3; letting the stale 2000
-# entry in would say 5/4.
-printf '%s' "$OUT" | grep -q 'files per mutation call.*1\.333.*(4 files in 3 calls)' \
+# 3 files (a,b,c) in 2 journal mutation calls = 1.500. Counting lines would
+# say 6/2 = 3.000; counting batch-validate as a file would say 4/2; letting
+# the stale year-2000 entry in would say 4/2 as well.
+printf '%s' "$OUT" | grep -q 'files per mutation call.*1\.500.*(3 files in 2 calls)' \
     || fail "files per mutation call wrong: $(printf '%s' "$OUT" | grep 'files per mutation' || echo missing)"
 printf '%s' "$OUT" | grep -q 'mean batch size.*2\.00.*(2 files in 1 batches)' \
     || fail "mean batch size wrong: $(printf '%s' "$OUT" | grep 'mean batch size' || echo missing)"
-printf '%s' "$OUT" | grep -q 'batched share BY FILE.*50\.0%' \
+printf '%s' "$OUT" | grep -q 'batched share BY FILE.*66\.7%' \
     || fail "batched share by file wrong: $(printf '%s' "$OUT" | grep 'BY FILE' || echo missing)"
+
+# ---- 3b-i. a call that bought no files is COUNTED, and named -----------
+# The defect this replaced divided by audited calls, so a mutation refused
+# before the audited region vanished from the denominator — making the metric
+# improve as more mutations FAIL. Here the audit knows only req-b, so the
+# journal's lone vault_edit bought nothing: 2 files in 2 calls = 1.000, not
+# 2 files in 1 call = 2.000.
+grep -v 'req-s1' "$TMPROOT/audit.jsonl" > "$TMPROOT/audit-failed.jsonl"
+FAILED=$(sh "$SCRIPT" 7 --audit "$TMPROOT/audit-failed.jsonl" 2>&1)
+printf '%s' "$FAILED" | grep -q 'files per mutation call.*1\.000.*(2 files in 2 calls)' \
+    || fail "an unaudited call was divided away: $(printf '%s' "$FAILED" | grep 'files per mutation' || echo missing)"
+printf '%s' "$FAILED" | grep -q 'bought no files.*1' \
+    || fail "the unaudited call was not reported: $(printf '%s' "$FAILED" | grep 'bought no' || echo missing)"
+
+# ---- 3b-ii. mismatched windows are refused, not silently ratioed -------
+# An audit log WIDER than the journal means the two are describing different
+# windows, and every figure above is then a ratio across both. Simulated by
+# adding mutation calls the journal never saw.
+cp "$TMPROOT/audit.jsonl" "$TMPROOT/audit-wide.jsonl"
+for r in x1 x2 x3; do
+    printf '{"At":"%s.100+00:00","Op":"edit","Path":"%s.md","Outcome":"ok","RequestId":"%s"}\n' \
+        "$NOW" "$r" "$r" >> "$TMPROOT/audit-wide.jsonl"
+done
+WIDE=$(sh "$SCRIPT" 7 --audit "$TMPROOT/audit-wide.jsonl" 2>&1)
+printf '%s' "$WIDE" | grep -q 'MORE mutation calls than the journal' \
+    || fail "a wider audit window was ratioed silently: $(printf '%s' "$WIDE" | grep -A 1 'BY FILE' || echo missing)"
 
 # ---- 3c. an unreadable audit log drops the block, never invents it -----
 NOAUDIT=$(sh "$SCRIPT" 7 --audit "$TMPROOT/does-not-exist.jsonl" 2>&1)
@@ -143,11 +170,20 @@ printf '%s' "$OUT" | grep -q 'vault_batch_read.*excess' \
     && fail "a tool that never repeated was listed as having a run"
 
 # ---- 3e. --daily reports the spread the two-window comparison lacks ----
+# The journal fixture's timestamps are epoch-relative (1970-01-12), while the
+# audit fixture is stamped now — so the two land on different days and the
+# daily join reports the journal day with zero files. That is the honest
+# answer for a day whose mutations all failed, and it exercises the join.
 DAILY=$(sh "$SCRIPT" 7 --daily --audit "$TMPROOT/audit.jsonl" 2>&1)
-printf '%s' "$DAILY" | grep -q '3 calls.*4 files.*1\.333' \
-    || fail "daily row wrong: $(printf '%s' "$DAILY" | grep -A 3 'DAILY files' || echo missing)"
-printf '%s' "$DAILY" | grep -q 'mean 1\.333   sd 0\.000 over 1 days' \
-    || fail "daily summary wrong: $(printf '%s' "$DAILY" | grep 'mean ' || echo missing)"
+printf '%s' "$DAILY" | grep -q 'DAILY files per mutation call' \
+    || fail "the daily block did not print: $DAILY"
+printf '%s' "$DAILY" | grep -q '2 calls' \
+    || fail "daily used audited calls, not journal calls: $(printf '%s' "$DAILY" | grep -A 3 'DAILY files' || echo missing)"
+# ⛔ The threshold must be scaled to a WINDOW, not a day: 2*sd*sqrt(2/n).
+printf '%s' "$DAILY" | grep -q 'a step between two 7-day windows smaller than' \
+    || fail "the threshold is not window-scaled: $(printf '%s' "$DAILY" | grep 'step between' || echo missing)"
+printf '%s' "$DAILY" | grep -q 'unweighted' \
+    || fail "the daily mean is not marked unweighted, inviting comparison with the window figure"
 
 # ---- 4. gap classification ----------------------------------------------
 # 4 inter-call gaps: 1 burst, 2 sequential (mean 5.25s), 1 idle.
