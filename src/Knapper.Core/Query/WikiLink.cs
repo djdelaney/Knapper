@@ -6,13 +6,25 @@ namespace Knapper.Core.Query;
 /// The ONE wikilink parser, and the ONE place a note's link-relevant shape
 /// (links, headings, block ids, table rows) is derived from its text.
 ///
-/// It exists as a single pass because the four lint checks are not four
+/// It exists as a single pass because the five lint checks are not five
 /// independent problems: the 22 "malformed table" findings measured on
 /// Helios on 2026-08-30 are an unescaped <c>|</c> INSIDE a wikilink inside a
 /// table row — a link defect wearing a table costume. A table checker written
 /// beside a link checker sees the symptom and misdiagnoses the cause, and two
 /// parsers would have to agree about fenced code, inline code and escaping to
-/// stay consistent. One parser, four readings of its output.
+/// stay consistent. One parser, five readings of its output.
+///
+/// The fifth reading is the table's own shape rather than a link's, and it
+/// lands in the same scan one line earlier: a header row sitting directly
+/// under a paragraph line is not a table at all. Obsidian absorbs it into
+/// that paragraph and renders the pipes as literal text (measured in Helios
+/// 2026-09-01 — 'Home/Mayapple/Projects/Screened Porch Project.md' renders
+/// its Setbacks table as a wall of '|'). So the scan decides whether a
+/// candidate block IS a table before marking its rows, which is also what
+/// keeps the two table checks from double-reporting one defect: rows that do
+/// not render as a table cannot be opening a phantom column, so table_pipe
+/// stays silent inside an absorbed block and speaks up once the blank line
+/// makes it a table.
 ///
 /// What it deliberately does NOT do: resolve anything. Resolution needs the
 /// whole-vault index and lives in <see cref="VaultLintService"/>; this class
@@ -56,7 +68,18 @@ internal static class WikiLink
         IReadOnlyList<Ref> Links,
         /// <summary>Normalized (see <see cref="NormalizeHeading"/>) heading texts, in document order.</summary>
         IReadOnlyList<string> Headings,
-        IReadOnlyList<string> BlockIds);
+        IReadOnlyList<string> BlockIds,
+        /// <summary>Table blocks the paragraph above swallowed, in document order.</summary>
+        IReadOnlyList<AbsorbedTable> AbsorbedTables);
+
+    /// <summary>
+    /// A table Obsidian does not render as one, because no blank line
+    /// separates its header row from the paragraph above it.
+    /// <see cref="Line"/> is the header row (1-based) — the blank line
+    /// belongs above THAT line, which is why the finding is reported there
+    /// rather than on the paragraph.
+    /// </summary>
+    internal sealed record AbsorbedTable(int Line, int Column, string Header);
 
     internal static NoteShape Parse(string content)
     {
@@ -65,17 +88,18 @@ internal static class WikiLink
         var headings = new List<string>();
         var blockIds = new List<string>();
 
-        // Fence state, CommonMark-ish: a fence opens with 3+ backticks or
-        // tildes and closes only on the SAME character with a run at least as
-        // long. A ``` inside a ~~~ block closes nothing — which is why the
-        // opening char and length are both carried rather than a bool.
-        var fenceChar = '\0';
-        var fenceLen = 0;
-        // Precomputed in ONE forward pass. Deciding per line by walking back
-        // to the block's first row is O(n²) over a long table, on a request
-        // path that carries a wall-clock budget — and these notes run to
-        // 200KB.
-        var tableRows = MarkTableRows(lines);
+        // Both masks are built in ONE forward pass each. Deciding per line by
+        // walking back to the block's first row is O(n²) over a long table, on
+        // a request path that carries a wall-clock budget — and these notes
+        // run to 200KB.
+        //
+        // The fence mask is also the ONE fence definition. The table scan has
+        // to know about fences as well (a ```md sample containing a table is
+        // not a table, and reporting a missing blank line inside one would be
+        // a finding about an example), and a second state machine beside this
+        // loop's own would be free to drift from it.
+        var fenced = MarkFenced(lines);
+        var tables = MarkTableRows(lines, fenced);
         // The candidate for a setext underline on the NEXT line.
         string? previousParagraph = null;
         // The leading '---' block is YAML, not content: a '# comment' in a
@@ -95,24 +119,10 @@ internal static class WikiLink
                 continue;
             }
 
-            if (TryFence(raw, out var ch, out var len))
-            {
-                if (fenceChar == '\0')
-                {
-                    (fenceChar, fenceLen) = (ch, len);
-                    previousParagraph = null;
-                    continue;
-                }
-                if (ch == fenceChar && len >= fenceLen && RestIsBlank(raw, ch))
-                {
-                    (fenceChar, fenceLen) = ('\0', 0);
-                    continue;
-                }
-            }
-            if (fenceChar != '\0')
+            if (fenced[i])
             {
                 previousParagraph = null;
-                continue; // inside a fence: no links, no headings, no block ids
+                continue; // a fence delimiter or its interior: no links, no headings, no block ids
             }
 
             if (!inFrontmatter)
@@ -144,12 +154,12 @@ internal static class WikiLink
             // Inline code is masked, not removed, so byte columns stay true
             // to the file: `[[ -t 1 ]]` written inline is not a link.
             var scannable = MaskInlineCode(raw);
-            var inTable = tableRows[i];
+            var inTable = tables.Rows[i];
             foreach (var link in ScanLinks(scannable, raw, lineNo, inTable))
                 links.Add(link);
         }
 
-        return new NoteShape(links, headings, blockIds);
+        return new NoteShape(links, headings, blockIds, tables.Absorbed);
     }
 
     /// <summary>
@@ -334,30 +344,223 @@ internal static class WikiLink
         return -1;
     }
 
+    /// <summary>Which lines render as table rows, and which candidate blocks do not render at all.</summary>
+    internal sealed record TableScan(bool[] Rows, IReadOnlyList<AbsorbedTable> Absorbed);
+
     /// <summary>
     /// Mark every GFM table row: a header line whose NEXT line is a delimiter
     /// row, and the rows that follow until the block ends. Recognizing rows
     /// by "contains a pipe" alone would sweep in every shell pipeline in
     /// these notes, which is most of them.
+    ///
+    /// A candidate block whose header row is absorbed by the paragraph above
+    /// it (<see cref="AbsorbsTheNextLine"/>) is NOT marked: it is reported as
+    /// an <see cref="AbsorbedTable"/> instead, and its lines stay ordinary
+    /// paragraph text — which is exactly what Obsidian renders. Marking them
+    /// anyway would let table_pipe report a phantom column inside a block
+    /// that has no columns.
     /// </summary>
-    private static bool[] MarkTableRows(IReadOnlyList<string> lines)
+    private static TableScan MarkTableRows(IReadOnlyList<string> lines, bool[] fenced)
     {
         var rows = new bool[lines.Count];
+        var absorbed = new List<AbsorbedTable>();
         for (var i = 0; i + 1 < lines.Count; i++)
         {
-            if (!HasPipe(lines[i]) || !IsDelimiterRow(lines[i + 1]))
+            if (fenced[i] || fenced[i + 1] || !HasPipe(lines[i]) || !IsDelimiterRow(lines[i + 1]))
                 continue;
-            rows[i] = true;
-            rows[i + 1] = true;
-            var j = i + 2;
-            while (j < lines.Count && HasPipe(lines[j]))
+            var end = i + 2;
+            while (end < lines.Count && !fenced[end] && HasPipe(lines[end]))
+                end++;
+
+            if (i > 0 && !fenced[i - 1] && !IsIndentedCode(lines, i) && AbsorbsTheNextLine(lines[i - 1]))
+                absorbed.Add(new AbsorbedTable(i + 1, 1, Trim(lines[i])));
+            else
             {
-                rows[j] = true;
-                j++;
+                for (var k = i; k < end; k++)
+                    rows[k] = true;
             }
-            i = j - 1;
+            // The block is consumed either way, so its own rows can never be
+            // read as the header of a second table.
+            i = end - 1;
         }
-        return rows;
+        return new TableScan(rows, absorbed);
+    }
+
+    /// <summary>
+    /// Would a table header row on the NEXT line be swallowed by this one?
+    ///
+    /// A LIST ITEM absorbs it exactly as a paragraph does, and indent has
+    /// nothing to do with it — measured in Obsidian 2026-09-01, after this
+    /// check first shipped abstaining on the shape: both tables nested inside
+    /// bullets in 'Tech/Homelab/Homelab Roadmap.md' render as walls of '|'.
+    /// The bullet's text is an open paragraph and the header row is lazy
+    /// continuation of it, so the fix is the same one blank line, kept at the
+    /// list's indent.
+    ///
+    /// What is still left out is left out for precision (proposal §2 — the
+    /// acceptance bar is a monitor nobody learns to ignore), and each for its
+    /// own reason: a heading and a thematic break close the paragraph, so
+    /// nine of Helios's twelve non-blank-preceded tables sit under one and
+    /// render correctly; a table row belongs to the block already being
+    /// scanned; '#' with no space after it is a paragraph to CommonMark but
+    /// too close to a heading to report on; an HTML line is unmeasured. A
+    /// blockquote line is unmeasured AND close to unreachable — a table whose
+    /// own rows are quoted ('> |---|') is not recognized as a table here at
+    /// all, so only an unquoted table directly under a quoted line would
+    /// qualify.
+    /// </summary>
+    private static bool AbsorbsTheNextLine(string line)
+    {
+        var trimmed = Trim(line);
+        if (trimmed.Length == 0)
+            return false; // a blank line is the separator this check is about
+        if (IsSetextUnderline(trimmed) || IsThematicBreak(trimmed))
+            return false;
+        // heading, blockquote or callout, table row, HTML block
+        return trimmed[0] is not ('#' or '>' or '|' or '<');
+    }
+
+    /// <summary>
+    /// Is an INDENTED candidate list content, or an indented code block?
+    ///
+    /// The distinction only arises once indent stopped disqualifying a
+    /// candidate: inside an indented code block the pipes are code, and the
+    /// line above them is code too rather than a paragraph that could absorb
+    /// anything. Walk back over the indented run to the line that OPENED it —
+    /// a list marker means list content (report), anything else means code
+    /// (stay silent). Blank lines close neither shape, so they are stepped
+    /// over.
+    ///
+    /// The walk also counts fence markers inside the run, because
+    /// <see cref="TryFence"/> caps a fence opener at three columns of indent
+    /// (CommonMark measures that against the CONTAINING block, which this
+    /// parser does not track) — so a ```json block nested under a bullet, of
+    /// which this vault has many, is not in the fence mask at all. An odd
+    /// count above the candidate means it sits inside one, and a table
+    /// written as an EXAMPLE is not a table.
+    ///
+    /// Bounded by the run, not by the file, and only ever entered for an
+    /// indented candidate: Helios has two, both list content.
+    /// </summary>
+    private static bool IsIndentedCode(IReadOnlyList<string> lines, int header)
+    {
+        var indent = IndentOf(lines[header]);
+        if (indent < 4)
+            return false;
+        var fences = 0;
+        for (var i = header - 1; i >= 0; i--)
+        {
+            if (Trim(lines[i]).Length == 0)
+                continue;
+            if (IndentOf(lines[i]) >= indent)
+            {
+                if (IsFenceMarker(lines[i]))
+                    fences++;
+                continue; // still inside the run
+            }
+            return fences % 2 == 1 || !IsListMarker(Trim(lines[i]));
+        }
+        return true; // indented from the top of the file, with no opener at all
+    }
+
+    /// <summary>A ``` or ~~~ run at ANY indent — see <see cref="IsIndentedCode"/> for why the indent is ignored.</summary>
+    private static bool IsFenceMarker(string line)
+    {
+        var trimmed = Trim(line);
+        return trimmed.Length >= 3
+            && trimmed[0] is '`' or '~'
+            && trimmed[1] == trimmed[0]
+            && trimmed[2] == trimmed[0];
+    }
+
+    /// <summary>Indent in COLUMNS, a tab counting as four — Obsidian indents list content with tabs.</summary>
+    private static int IndentOf(string line)
+    {
+        var columns = 0;
+        foreach (var c in line)
+        {
+            if (c == ' ')
+                columns++;
+            else if (c == '\t')
+                columns += 4;
+            else
+                break;
+        }
+        return columns;
+    }
+
+    /// <summary>'***', '---' or '___' (3+ of one char, spaces allowed): a block boundary.</summary>
+    private static bool IsThematicBreak(string trimmed)
+    {
+        var ch = '\0';
+        var count = 0;
+        foreach (var c in trimmed)
+        {
+            if (c is ' ' or '\t')
+                continue;
+            if (c is not ('*' or '-' or '_'))
+                return false;
+            if (ch == '\0')
+                ch = c;
+            else if (c != ch)
+                return false;
+            count++;
+        }
+        return count >= 3;
+    }
+
+    /// <summary>
+    /// '- ', '* ', '+ ', '1. ' or '1) '. The space is required, so a
+    /// paragraph opening with '**Bold**' is a paragraph, not a bullet —
+    /// which matters for <see cref="IsIndentedCode"/>, the one caller left
+    /// once a list item was found to absorb a table like any other paragraph.
+    /// </summary>
+    private static bool IsListMarker(string trimmed)
+    {
+        if (trimmed.Length >= 2 && trimmed[0] is '-' or '*' or '+' && trimmed[1] is ' ' or '\t')
+            return true;
+        var i = 0;
+        while (i < trimmed.Length && char.IsAsciiDigit(trimmed[i]))
+            i++;
+        return i > 0
+            && i + 1 < trimmed.Length
+            && trimmed[i] is '.' or ')'
+            && trimmed[i + 1] is ' ' or '\t';
+    }
+
+    /// <summary>
+    /// Every line a fence opens, closes or encloses. CommonMark-ish: a fence
+    /// opens with 3+ backticks or tildes and closes only on the SAME
+    /// character with a run at least as long, so a ``` inside a ~~~ block
+    /// closes nothing — which is why the opening char and length are both
+    /// carried rather than a bool.
+    /// </summary>
+    private static bool[] MarkFenced(IReadOnlyList<string> lines)
+    {
+        var fenced = new bool[lines.Count];
+        var fenceChar = '\0';
+        var fenceLen = 0;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var raw = lines[i].TrimEnd('\r');
+            if (TryFence(raw, out var ch, out var len))
+            {
+                if (fenceChar == '\0')
+                {
+                    (fenceChar, fenceLen) = (ch, len);
+                    fenced[i] = true;
+                    continue;
+                }
+                if (ch == fenceChar && len >= fenceLen && RestIsBlank(raw, ch))
+                {
+                    (fenceChar, fenceLen) = ('\0', 0);
+                    fenced[i] = true;
+                    continue;
+                }
+            }
+            fenced[i] = fenceChar != '\0';
+        }
+        return fenced;
     }
 
     private static bool HasPipe(string line) =>

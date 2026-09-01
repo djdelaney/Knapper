@@ -87,6 +87,58 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     }
 
     [Fact]
+    public void A_table_the_paragraph_above_it_absorbs_is_reported_and_nothing_else_is()
+    {
+        // The live cases, measured in Helios 2026-09-01: 'Screened Porch
+        // Project.md' renders its whole Setbacks table as literal pipes
+        // because the paragraph above it has no blank line under it, and both
+        // tables nested inside bullets in 'Tech/Homelab/Homelab Roadmap.md'
+        // do the same — a bullet's text is an open paragraph like any other,
+        // whatever the indent.
+        //
+        // The set is exact on purpose, because everything ELSE in
+        // Tables/Absorbed.md is a shape that must stay silent: a header row
+        // under an ATX heading (9 of the 12 non-blank-preceded tables in that
+        // sweep, all rendering correctly), one with its blank line already
+        // present, one inside an indented code block, where the pipes are
+        // code, and one inside a ```md fence, which is an example.
+        Findings(LintChecks.TableNeedsBlankLine, "Tables")
+            .Select(f => (f.Path, f.Line, f.Subject))
+            .ShouldBe(
+            [
+                ("Tables/Absorbed.md", 3, "| Yard | Minimum |"),
+                ("Tables/Absorbed.md", 17, "| Tag | Nodes |"),
+                ("Tables/Absorbed.md", 21, "| Tag | Nodes |"),
+                ("Tables/Pipe.md", 2, "| note | why |"),
+            ]);
+    }
+
+    [Fact]
+    public void An_absorbed_block_is_not_a_table_row_so_table_pipe_stays_silent_inside_it()
+    {
+        // One defect, one finding. The pipe in [[Mailvec Stack|MS]] opens no
+        // column while the block renders as prose; it becomes a table_pipe
+        // finding once the blank line above turns the block into a table.
+        Findings(LintChecks.TablePipe, "Tables").ShouldBeEmpty();
+        // And the link is still a link: it resolves, absorbed or not.
+        Findings(LintChecks.UnresolvedLink, "Tables").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Findings_about_one_file_are_ordered_by_position_whatever_produced_them()
+    {
+        // Links are emitted in document order and tables in their own, so
+        // appending rather than merging would put a finding behind one the
+        // page cursor had already passed — and the next page would skip it.
+        var all = _vault.Lint.Lint(new LintQuery()).Items;
+        foreach (var group in all.GroupBy(f => f.Path))
+        {
+            group.Select(f => (f.Line, f.Column))
+                .ShouldBe(group.Select(f => (f.Line, f.Column)).OrderBy(p => p.Line).ThenBy(p => p.Column));
+        }
+    }
+
+    [Fact]
     public void The_index_is_whole_vault_even_when_reporting_is_scoped()
     {
         // Notes/Hub.md links into Tech/ and scripts/; a scoped INDEX would
@@ -147,6 +199,35 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
         // Tech/Homelab/Relative Path.md -> [[Proxmox/Monthly Maintenance]].
         // Root-only matching calls this broken; Obsidian follows it.
         Findings(LintChecks.UnresolvedLink, "Tech/Homelab").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Two_findings_at_one_position_survive_a_page_boundary_between_them()
+    {
+        // (path, line, column) is not unique for lint: one wikilink can be
+        // both an unescaped pipe in a table row and an unresolved target. A
+        // cursor keyed on position alone says "everything at that position is
+        // done" after emitting the FIRST of them, so the second vanishes —
+        // silently, on a final page still claiming truncated=false. The check
+        // name is the tiebreaker that makes the order total.
+        var whole = _vault.Lint.Lint(new LintQuery { PathPrefix = "Collision" }).Items;
+        whole.Select(f => f.Check).ShouldBe([LintChecks.TablePipe, LintChecks.UnresolvedLink], ignoreOrder: true);
+        whole.Select(f => (f.Line, f.Column)).Distinct().Count().ShouldBe(1);
+
+        var paged = new List<LintFinding>();
+        string? cursor = null;
+        do
+        {
+            var page = _vault.Lint.Lint(new LintQuery
+            {
+                PathPrefix = "Collision", MaxResults = 1, Cursor = cursor,
+            });
+            paged.AddRange(page.Items);
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
+
+        paged.ShouldBe(whole);
     }
 
     [Fact]

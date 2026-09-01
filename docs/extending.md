@@ -75,6 +75,12 @@ field, thread it through the service, and:
   old cursor silently replays against different filters);
 - keep result ordering deterministic (path-ordinal; rg's `--sort=path` on
   the search side, the global ordinal sort on the lister side);
+- make sure the cursor position is UNIQUE per record. If the surface can
+  emit two records at one `(path, line, column)` — as lint does, where one
+  wikilink is both a table pipe and an unresolved target — pass a
+  tiebreaking key to `QueryCursor.Encode`/`DecodeKeyed` and sort by the same
+  key. Without it the second record is dropped whenever a page boundary
+  falls between them, silently, under `truncated: false`;
 - if the field affects which files are VISIBLE, update both the lister and
   the search args, and extend the `Agrees_with_ripgrep` differential test —
   the two surfaces must never disagree about what exists.

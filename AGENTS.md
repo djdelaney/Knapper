@@ -716,6 +716,21 @@ format by default.
   Honoring a cursor against different filters would omit or duplicate
   records across pages — that's why the mismatch is a typed `InvalidCursor`,
   not a best-effort resume.
+- **A cursor POSITION must be a TOTAL order over the records it
+  paginates.** The resume filter is "strictly after this position", so two
+  records sharing one position means the second is dropped the instant a
+  page boundary falls between them — a silent omission, on a final page
+  still claiming `truncated: false`. `(path, line, column)` is total for
+  search (rg emits one record per submatch, and submatches on a line have
+  distinct columns) and was ASSUMED total for lint, where it is not: one
+  wikilink can be both an unescaped `|` in a table row and an unresolved
+  target, which is two findings at one position. `QueryCursor` therefore
+  carries an optional fourth KEY component — lint passes the check name —
+  and the emitting service must SORT by the same key it compares, in the
+  same direction: a comparison the emission order disagrees with
+  reintroduces the omission the key was added to remove. A new surface
+  emitting more than one record per position needs the key too. Pinned by
+  `Two_findings_at_one_position_survive_a_page_boundary_between_them`.
 - **UTF-8 byte order is THE path order, and that includes the ORDER THE
   PREFIXES ARE HANDED TO rg.** `QueryCursor.ComparePathUtf8` is the one
   comparer; `StringComparer.Ordinal` is UTF-16 code units and the two

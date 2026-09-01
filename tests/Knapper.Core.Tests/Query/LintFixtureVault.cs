@@ -97,6 +97,76 @@ public sealed class LintFixtureVault : IDisposable
         // its headings are unknown, so anchors into it must not be judged.
         File.WriteAllBytes(Dir.File("legacy.md"), [.. "caf"u8, 0xE9, .. " legacy\n"u8]);
 
+        // The table-blank-line corpus, from the 2026-09-01 sweep of Helios:
+        // one real finding (a paragraph directly above the header row, as in
+        // 'Screened Porch Project.md'), and beside it every neighbouring
+        // shape that must stay silent.
+        Dir.File("Tables/Absorbed.md", string.Join('\n',
+        [
+            "# Tables",                                     // 1
+            "Intro paragraph with nothing between it and the table.",
+            "| Yard | Minimum |",                           // 3 — a paragraph absorbs it
+            "|---|---|",
+            "| Rear | 50 ft |",
+            "",
+            "## Under a heading",                           // 7 — a heading closes the block
+            "| Item | Value |",
+            "|---|---|",
+            "",
+            "A paragraph, properly separated.",             // 11
+            "",
+            "| Spaced | Header |",                          // 13 — the blank line is there
+            "|---|---|",
+            "",
+            "- A list item, with a space-indented table under it",
+            "    | Tag | Nodes |",                          // 17 — a bullet absorbs it too
+            "    |---|---|",
+            "",
+            "- A list item, with a tab-indented table under it",
+            "\t| Tag | Nodes |",                            // 21 — Obsidian's own indent
+            "\t|---|---|",
+            "",
+            "An indented code block, which is code rather than a table:",
+            "",
+            "    sqlite3 db 'select 1'",
+            "    | a | b |",                                // 27 — code: the pipes are literal
+            "    |---|---|",
+            "",
+            "```md",
+            "An example in a fence:",
+            "| a | b |",                                    // 32 — an example, not a table
+            "|---|---|",
+            "```",
+            "",
+            "- A bullet whose example is in an INDENTED fence",
+            "    ```md",
+            "    | a | b |",                                // 38 — still an example
+            "    |---|---|",
+            "    ```",
+            "",
+        ]));
+        // An absorbed block is not a table, so the pipe inside this wikilink
+        // opens no column and table_pipe must not report it.
+        Dir.File("Tables/Pipe.md", string.Join('\n',
+        [
+            "Paragraph with nothing between it and the table.",
+            "| note | why |",                               // 2 — the finding
+            "|---|---|",
+            "| [[Mailvec Stack|MS]] | unescaped, and harmless while this is prose |",
+            "",
+        ]));
+
+        // One wikilink, two findings, ONE position: the pipe opens a phantom
+        // column and the target resolves to nothing. The header row starts
+        // the file, so the block really is a table.
+        Dir.File("Collision/Both.md", string.Join('\n',
+        [
+            "| note | why |",
+            "|---|---|",
+            "| [[No Such Table Note|Alias]] | table_pipe and unresolved_link, same line and column |",
+            "",
+        ]));
+
         var resolver = new VaultPathResolver(Dir.Path);
         var options = new VaultOptions { RootPath = resolver.Root };
         var lister = new VaultFileLister(resolver, Generation, options);

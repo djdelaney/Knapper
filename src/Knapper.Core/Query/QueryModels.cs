@@ -320,9 +320,11 @@ public static class LintChecks
     public const string BrokenAnchor = "broken_anchor";
     /// <summary>An unescaped '|' inside a wikilink inside a table row — it opens a phantom column.</summary>
     public const string TablePipe = "table_pipe";
+    /// <summary>A table with no blank line above it: Obsidian renders it as paragraph text, pipes and all.</summary>
+    public const string TableNeedsBlankLine = "table_needs_blank_line";
 
     public static readonly IReadOnlyList<string> All =
-        [UnresolvedLink, AmbiguousLink, BrokenAnchor, TablePipe];
+        [UnresolvedLink, AmbiguousLink, BrokenAnchor, TablePipe, TableNeedsBlankLine];
 }
 
 public sealed record LintQuery
@@ -347,7 +349,8 @@ public sealed record LintQuery
 /// UNbracketing, not by creating a note.
 ///
 /// <c>Subject</c> is the stable identity: the normalized link target with its
-/// fragment, or the raw link text for a table finding. <c>Line</c> and
+/// fragment, the raw link text for a table_pipe finding, or the header row
+/// for a table_needs_blank_line one. <c>Line</c> and
 /// <c>Column</c> are INFORMATIONAL — a paragraph inserted above a finding
 /// moves both, and §5's baseline is keyed on (check, path, subject) precisely
 /// so that edit does not read as a flood of new findings.

@@ -14,6 +14,21 @@ namespace Knapper.Core.Query;
 /// proposal also tiers as "structural" (fence balance, frontmatter, empty
 /// file) found nothing on that vault and are deliberately absent.
 ///
+/// <c>table_needs_blank_line</c> (added 2026-09-01) is the first structural
+/// check, and it earned its place the same way: measured, not reasoned about.
+/// A table whose header row has no blank line above it is absorbed into the
+/// paragraph above and renders as literal pipes — the whole Setbacks table of
+/// 'Home/Mayapple/Projects/Screened Porch Project.md', which is what put this
+/// check here. A whole-vault sweep on that date found 12 tables preceded by a
+/// non-blank line, and all 12 were then looked at in Obsidian: 9 sit under a
+/// heading and render correctly, and 3 do not render at all — that one, plus
+/// two nested inside bullets in 'Tech/Homelab/Homelab Roadmap.md', which is
+/// what widened the rule from "a paragraph absorbs a table" to "so does a
+/// bullet, at any indent". It stays in the link
+/// service, and in the link parser, because it is a verdict about the SAME
+/// table scan table_pipe reads — split across two parsers, one would report a
+/// phantom column inside a block the other knows is not a table.
+///
 /// Deliberately NOT here, and both are the proposal's own decisions:
 /// findings are OBSERVATIONS (§7) — nothing in this service can write, and a
 /// cluster of related findings usually means a decision about intent rather
@@ -37,7 +52,9 @@ public sealed class VaultLintService(
         var generationStart = generation.Current;
         var fingerprint = QueryCursor.Fingerprint(
             "lint", query.PathPrefix, string.Join(',', checks.Order(StringComparer.Ordinal)));
-        var cursor = query.Cursor is null ? null : ((string, int, int)?)QueryCursor.Decode(query.Cursor, fingerprint);
+        var cursor = query.Cursor is null
+            ? null
+            : ((string, int, int, string)?)QueryCursor.DecodeKeyed(query.Cursor, fingerprint);
         var pageSize = Math.Clamp(query.MaxResults ?? options.MaxResultsPerPage, 1, options.MaxResultsPerPage);
         var deadline = Environment.TickCount64 + options.QueryTimeoutMs;
 
@@ -48,13 +65,40 @@ public sealed class VaultLintService(
         var index = BuildIndex(ct, deadline);
 
         var findings = new List<LintFinding>();
+        var perFile = new List<LintFinding>();
         foreach (var (relative, _) in scoped)
         {
             ct.ThrowIfCancellationRequested();
             if (!index.Shapes.TryGetValue(relative, out var shape))
                 continue; // unreadable: already reported in UnexaminedFiles
+            perFile.Clear();
             foreach (var link in shape.Links)
-                Check(index, relative, link, checks, findings);
+                Check(index, relative, link, checks, perFile);
+            if (checks.Contains(LintChecks.TableNeedsBlankLine))
+            {
+                foreach (var table in shape.AbsorbedTables)
+                {
+                    perFile.Add(new LintFinding(
+                        LintChecks.TableNeedsBlankLine, relative, table.Header, table.Line, table.Column,
+                        "no blank line above this table, so Obsidian absorbs it into the paragraph above and " +
+                        "renders every row as literal text; insert a blank line before the header row"));
+                }
+            }
+            // Links come out in document order and tables in their own, so
+            // the two have to be merged rather than appended: the page cursor
+            // is a POSITION, and a finding sitting behind an earlier one it
+            // was emitted after would be skipped on the next page.
+            //
+            // The check name is part of the sort for a sharper reason: one
+            // wikilink can be BOTH an unescaped pipe in a table row and an
+            // unresolved target, so a position is not unique here and the
+            // cursor carries the name to break the tie. Sort and cursor read
+            // the same key, in the same order, or the tie-break omits instead
+            // of fixing.
+            findings.AddRange(perFile
+                .OrderBy(f => f.Line)
+                .ThenBy(f => f.Column)
+                .ThenBy(f => f.Check, StringComparer.Ordinal));
         }
 
         // Truncation is decided against what REMAINS after the cursor, not
@@ -65,14 +109,16 @@ public sealed class VaultLintService(
         var remaining = cursor is null
             ? findings
             : [.. findings.Where(f =>
-                QueryCursor.ComparePosition((f.Path, f.Line, f.Column), cursor.Value) > 0)];
+                QueryCursor.ComparePosition((f.Path, f.Line, f.Column, f.Check), cursor.Value) > 0)];
         var truncated = remaining.Count > pageSize;
         var page = truncated ? remaining[..pageSize] : remaining;
         var generationEnd = generation.Current;
         return new LintResult(
             page,
             truncated,
-            truncated ? QueryCursor.Encode(fingerprint, page[^1].Path, page[^1].Line, page[^1].Column) : null,
+            truncated
+                ? QueryCursor.Encode(fingerprint, page[^1].Path, page[^1].Line, page[^1].Column, page[^1].Check)
+                : null,
             index.ScannedFiles,
             page.Count,
             // The whole graph is built before any finding is emitted, so the

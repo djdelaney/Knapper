@@ -178,7 +178,11 @@ public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
         "no vault file), 'ambiguous_link' (a bare basename matching two or more notes where neither exact case nor " +
         "proximity settles it — Obsidian silently picks one), 'broken_anchor' (a #heading or #^block that does not " +
         "exist in the resolved target), 'table_pipe' (an unescaped '|' inside a wikilink inside a table row, which " +
-        "opens a column the author did not intend). " +
+        "opens a column the author did not intend), 'table_needs_blank_line' (a table whose header row has no blank " +
+        "line above it — Obsidian absorbs the whole block into the paragraph above and renders every row as literal " +
+        "text, pipes included; a bullet's text absorbs one the same way, at any indent, so the fix is one blank " +
+        "line kept at the table's own indent. A table under a HEADING is fine and is not reported, nor is one " +
+        "inside a code fence or an indented code block). " +
         "FINDINGS ARE OBSERVATIONS FOR THE USER, NOT A WORK LIST: fixing them is not implied by finding them, and a " +
         "cluster of related findings usually means ONE decision about intent rather than a series of edits. An " +
         "unresolved [[Some Brand Name]] is usually plain text that was accidentally bracketed, where the fix is to " +
