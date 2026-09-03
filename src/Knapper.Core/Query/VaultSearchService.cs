@@ -215,6 +215,29 @@ public sealed class VaultSearchService(
         // case-sensitive: those are raw rg semantics).
         foreach (var ext in NormalizeExtensions(query.Extensions))
             args.Add("--iglob=*." + ext);
+        // The hidden guard. An include glob — or the extension sugar above —
+        // WHITELISTS a path in rg's override set, and a whitelist overrides
+        // rg's OWN hidden-file filter: measured on rg 15.2.0, `--glob=*.md`
+        // returns `.hidden.md`. So every search carrying a glob or an
+        // extension surfaced dot-FILES that `vault_files` never lists,
+        // breaking "hidden means invisible on BOTH surfaces" in the green —
+        // on the one pair of surfaces a differential was supposed to hold
+        // together, which never looked because it passed no glob. Hidden
+        // DIRECTORIES were never reachable this way (rg prunes them before
+        // the override applies), which is why .git/.obsidian/.trash stayed
+        // invisible throughout. Found 2026-09-03 by the glob differential.
+        //
+        // TWO measured details decide the spelling, and both are silent if
+        // got wrong — the guard simply stops working and every test that
+        // does not compare the two surfaces still passes:
+        //   1. It goes LAST. rg resolves overrides by LAST match, so the
+        //      same line placed before the includes does nothing.
+        //   2. It is --iglob, NOT --glob. The two flags are SEPARATE
+        //      override sets: `--iglob=*.md --glob=!.*` still returns the
+        //      dot-file, while `--iglob=!.*` suppresses a whitelist from
+        //      EITHER flag. Case-insensitivity is irrelevant to a leading
+        //      '.', so the iglob spelling costs nothing and covers both.
+        args.Add("--iglob=!.*");
         args.Add("-e");
         args.Add(query.Pattern);
         args.Add("--");
@@ -348,10 +371,7 @@ public sealed class VaultSearchService(
     private static void ValidateGlobs(IReadOnlyList<string>? globs)
     {
         foreach (var glob in globs ?? [])
-        {
-            if (string.IsNullOrWhiteSpace(glob) || glob.Contains('\0'))
-                throw new KnapperException(VaultErrorCode.InvalidArgument, "glob is empty or contains NUL");
-        }
+            Globbing.Validate(glob);
     }
 
     private static IReadOnlyList<string> NormalizeExtensions(IReadOnlyList<string>? extensions)

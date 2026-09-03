@@ -39,6 +39,30 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
         _vault.Search.SearchMatches(Q("TODO")).Items.Count.ShouldBe(2);
     }
 
+    [Theory]
+    [InlineData("include glob")]
+    [InlineData("extension sugar")]
+    public void An_include_filter_does_not_re_expose_hidden_files(string via)
+    {
+        // rg resolves --glob overrides by LAST match, and a WHITELIST match
+        // overrides its own hidden-file filter — so before 2026-09-03 every
+        // search carrying a glob or an extension returned `.hidden.md`,
+        // which vault_files never lists. Both spellings reach the same
+        // override set, so both need the guard; the extension sugar is
+        // --iglob and was the easier one to miss.
+        var query = via == "include glob"
+            ? new VaultSearchQuery { Pattern = "needle", IncludeGlobs = ["*.md"] }
+            : new VaultSearchQuery { Pattern = "needle", Extensions = ["md"] };
+
+        var paths = _vault.Search.SearchMatches(query).Items.Select(i => i.Path).ToArray();
+
+        paths.ShouldNotContain(".hidden.md");
+        paths.ShouldNotContain("Notes/.hiddendir/x.md");
+        paths.ShouldAllBe(p => !p.Split('/').Any(seg => seg.StartsWith('.')));
+        // ...and the filter still does its job.
+        paths.ShouldContain("Notes/Sub/Deep.md");
+    }
+
     [Fact]
     public void Whole_word_excludes_substring_hits()
     {

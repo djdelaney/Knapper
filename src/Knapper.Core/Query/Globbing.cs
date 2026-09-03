@@ -9,7 +9,9 @@ namespace Knapper.Core.Query;
 /// equivalence suite holds the two implementations together):
 /// a pattern without '/' matches basenames at any depth; with '/' it is
 /// anchored to the full relative path. '*' and '?' never cross '/',
-/// '**' does, '[...]' classes ('!' negation), '{a,b}' alternation.
+/// '**' does, '[...]' classes ('!' negation INSIDE a class), '{a,b}'
+/// alternation. A leading '!' on the whole pattern is REFUSED, not honored
+/// — see <see cref="Validate"/>.
 /// </summary>
 internal static class Globbing
 {
@@ -17,10 +19,43 @@ internal static class Globbing
     private const int MaxGlobLength = 256;
     private const int MaxWildcards = 32;
 
+    /// <summary>
+    /// The ONE precondition every agent-supplied glob passes, on BOTH
+    /// surfaces — the native lister via <see cref="Translate"/> and
+    /// <c>vault_search</c>'s include/exclude lists, which never reach
+    /// <see cref="Translate"/> because rg does its own matching. Two
+    /// validators would be free to drift, and a glob that means different
+    /// things on the two surfaces is the exact defect this closes.
+    ///
+    /// A LEADING '!' is refused rather than honored. rg's own --glob spells
+    /// exclusion that way, and both tool descriptions say "rg-style glob",
+    /// so agents write it — but the two surfaces disagreed about what it
+    /// meant. `vault_search` handed it to rg, which excluded (measured, rg
+    /// 15.2.0); the lister translated it as a literal '!' and matched
+    /// nothing, answering with an exhaustive-looking `totalMatches: 0` — a
+    /// confidently empty result to a question the caller never asked. And
+    /// `excludeGlobs: ["!x"]` became `--glob=!!x`, which excludes only names
+    /// literally starting with '!'. Exclusion is expressed STRUCTURALLY here
+    /// (`excludeGlobs`), so a leading '!' is redundant where it worked and
+    /// silently wrong everywhere else; refusing it is the only answer that
+    /// makes both surfaces agree.
+    /// </summary>
+    internal static void Validate(string glob)
+    {
+        if (string.IsNullOrWhiteSpace(glob) || glob.Contains('\0'))
+            throw new KnapperException(VaultErrorCode.InvalidArgument, "glob is empty or contains NUL");
+        if (glob[0] == '!')
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"a leading '!' is not negation here: {glob} — vault_search spells exclusion with " +
+                "exclude_globs (pass the pattern WITHOUT the '!'), and vault_files has no exclusion " +
+                "filter, so narrow it positively with glob, extensions or path_prefix");
+        }
+    }
+
     internal static Regex Translate(string glob)
     {
-        if (string.IsNullOrEmpty(glob))
-            throw new KnapperException(VaultErrorCode.InvalidArgument, "glob is empty");
+        Validate(glob);
         // This is .NET regex, not rg's linear-time engine: stacked '**' and
         // '{...}' alternations translate to nested unbounded quantifiers,
         // and a backtracking match against a long failing path goes

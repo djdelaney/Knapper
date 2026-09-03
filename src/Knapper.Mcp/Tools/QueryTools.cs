@@ -18,7 +18,9 @@ public sealed class VaultFilesTool(VaultFileLister lister, ToolSupport support)
         "Hidden entries and control dirs (.git/.obsidian/.trash) are never visible.")]
     public QueryEnvelope<VaultFileEntry> Files(
         [Description("Directory to list under (vault-relative); omit for the whole vault")] string? pathPrefix = null,
-        [Description("rg-style glob; without '/' it matches basenames at any depth (e.g. '*.md')")] string? glob = null,
+        [Description("rg-style glob; without '/' it matches basenames at any depth (e.g. '*.md'). " +
+            "Include-only: a leading '!' is REFUSED, not exclusion — narrow positively, or use " +
+            "vault_search's exclude_globs.")] string? glob = null,
         [Description("File extensions to include, e.g. [\"md\",\"sh\"]")] string[]? extensions = null,
         [Description("'all' (default), 'file', or 'directory'")] string? kind = null,
         [Description("Only entries modified strictly after this ISO-8601 instant")] DateTimeOffset? mtimeAfter = null,
@@ -78,8 +80,10 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
         [Description("Match whole words only")] bool wholeWord = false,
         [Description("Allow the pattern to span lines")] bool multiline = false,
         [Description("Vault-relative directory prefixes to scope the search (must not overlap)")] string[]? pathPrefixes = null,
-        [Description("rg-style include globs (any may match)")] string[]? includeGlobs = null,
-        [Description("rg-style exclude globs (exclusion wins)")] string[]? excludeGlobs = null,
+        [Description("rg-style include globs (any may match). A leading '!' is REFUSED — exclusion " +
+            "goes in exclude_globs, without the '!'.")] string[]? includeGlobs = null,
+        [Description("rg-style exclude globs (exclusion wins). Pass the pattern WITHOUT a leading " +
+            "'!' — the exclusion is this parameter; a '!' here is REFUSED.")] string[]? excludeGlobs = null,
         [Description("File extensions to include, e.g. [\"md\"]")] string[]? extensions = null,
         [Description("Context lines before each match (matches mode, max 50)")] int contextBefore = 0,
         [Description("Context lines after each match (matches mode, max 50)")] int contextAfter = 0,

@@ -676,12 +676,40 @@ format by default.
   `--sort=path` (deterministic page order; single-threaded is the point, the
   vault is small by design). Structured `ArgumentList` only — never a shell,
   never string-concatenated commands.
-- **Hidden means invisible on BOTH surfaces.** The native lister skips
-  dot-entries at every depth; rg's default does the same during searches.
-  `VaultFileListerTests.Agrees_with_ripgrep_about_what_exists` is the
-  differential test holding the two implementations together — adding
-  `--hidden` to one side or relaxing the lister's filter breaks the
-  equivalence silently.
+- **Hidden means invisible on BOTH surfaces — and rg's default is NOT
+  enough to get it.** The native lister skips dot-entries at every depth;
+  rg skips them too, right up until a search carries an include glob or an
+  extension. Those become a WHITELIST in rg's override set, and a whitelist
+  overrides rg's own hidden-file filter: `--glob=*.md` returns `.hidden.md`
+  (measured, rg 15.2.0). So `vault_search` answered with dot-FILES that
+  `vault_files` never lists, for any caller that passed a filter — the two
+  surfaces disagreeing about what EXISTS, silently, in the green. The
+  `--iglob=!.*` guard in `AddCommonArgs` closes it, and BOTH details of its
+  spelling are load-bearing and silent when wrong (the guard just stops
+  working): it goes **LAST**, because rg resolves overrides by last match;
+  and it is **`--iglob`, not `--glob`**, because the two flags are separate
+  override sets — `--iglob=*.md --glob=!.*` still returns the dot-file,
+  while an `--iglob` guard suppresses a whitelist from either flag. Hidden
+  DIRECTORIES were never reachable this way (rg prunes them before the
+  override applies), which is the only reason `.git`/`.obsidian`/`.trash`
+  stayed invisible throughout.
+
+  The differential that was supposed to hold the two implementations
+  together, `Agrees_with_ripgrep_about_what_exists`, passed NO glob — so it
+  compared the one case that already agreed and never looked at
+  translation. `Agrees_with_ripgrep_about_what_a_glob_MEANS` is the one
+  that covers every construct `Globbing` translates, and it found this on
+  its first run. A new glob construct gets a case there, or it is
+  unverified across the two surfaces no matter how many tests call it.
+- **A leading `!` on a glob is REFUSED, never honored** (`Globbing.Validate`,
+  the ONE validator both surfaces call). rg's `--glob` spells exclusion that
+  way and both tool descriptions say "rg-style glob", so agents write it —
+  but `vault_search` handed it to rg, which EXCLUDED, while the lister
+  translated a literal `!` and matched nothing, answering with an
+  exhaustive-looking `totalMatches: 0`. Same string, opposite meanings, both
+  surfaces confident. Exclusion is structural here (`exclude_globs`), so the
+  `!` is redundant where it worked; `exclude_globs: ["!x"]` also built
+  `--glob=!!x`, which excludes only names literally starting with `!`.
 - **The completeness envelope never guesses.** `truncated: false` claims the
   scope was exhaustively searched; `total_matches` is null when not computed
   (rg's `begin` events fire only for files WITH matches — the honest
