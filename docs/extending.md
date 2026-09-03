@@ -392,6 +392,38 @@ Directory.Build.props <Version>          the one carrier
   The link graph the next entry wants now exists, internal to lint.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
+- **Bulk ingest of large files** — deliberately NOT built;
+  [proposals/bulk-ingest.md](proposals/bulk-ingest.md) records why the
+  obvious tool is the wrong first move. Knapper has no upload-from-path, so
+  content not already in the vault enters only through model output tokens.
+  Chunked `vault_append` costs `B·(N−1)/2` re-sent tokens (quadratic in
+  chunk count — smaller chunks are WORSE) and, the argument that survives a
+  free budget, `Verified: true` covers sent→disk but NOT source→sent: a
+  transcribed CSV can lose rows and still produce a perfect receipt. The
+  answer depends on where the bytes ARE, which is the whole proposal:
+  - **On Dan's Mac** — no code needed. Drop it in via Obsidian Sync (the
+    sanctioned human channel) and let an agent `vault_move` it into place.
+    A `vault_ingest` tool would only RELOCATE the manual step here (scp
+    instead of Finder), which is why nothing is built yet.
+  - **Fetched by an agent** (a product photo for a research note) — §3b, and
+    the strongest argument for eventually building `vault_ingest`: the asset
+    lands on disk byte-exact at zero token cost, so every step but the last
+    hop already works, and unlike the case above the agent can do that hop
+    itself — removing the human rather than relocating them.
+  - **Never** by having the SERVER fetch a URL (§6). CT 106 is a trusted
+    host on the homelab LAN, so an agent-supplied URL there is an SSRF
+    primitive aimed at Proxmox/Synology/HA, driven by an agent reading
+    attacker-influenceable pages. Ingest stays a FILESYSTEM operation.
+
+  If it is ever built: three invariants a naive version misses (staging dir
+  outside the vault forced at boot, symlink confinement on the SOURCE chain,
+  non-regular refusal), and it SHOULD move binary without inspecting
+  encoding — the invariant that seems to forbid that, "everything in the
+  vault is readable through the tool surface", is already false (Helios holds
+  two JPEGs that arrived via Sync), and `vault_stat`'s sha256 keeps the
+  mutation loop closed for files `vault_read` refuses. Note that for a
+  graphic Claude AUTHORS the answer is not a tool at all: emit SVG or a
+  mermaid fence, which is text, renders in Obsidian, and diffs in git.
 - **Data Protection's three startup warnings** (observed CT 106,
   2026-08-13): ASP.NET Core finds nowhere to persist a key ring under
   `ProtectHome=true` with no user profile, and logs in-memory repository /
