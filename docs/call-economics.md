@@ -343,6 +343,19 @@ majority surface through — and if it ever stopped carrying them, tools would
 still list, tools would still call, health would stay green, and every
 before/after window would be measuring a change that never arrived.
 
+**And the text is truncated in transit — but not this paragraph, in this
+window.** Claude Code delivers only the first 2048 characters of any
+string it renders — `ServerInstructions` and tool descriptions alike —
+silently (measured 2026-09-05; see the CLAUDE.md invariant). At the 2449-character length shipped through 0.7.0 the cut fell
+inside TRUST MODEL, the *last* section — CALL ECONOMICS ended at character
+1454 and arrived whole, so truncation is **not** an alternative explanation
+for the null result above either. What the cut cost was the trust rules, which
+is why the sections are now ordered by what must survive one — and the
+paragraph itself is now trimmed to the arithmetic, on the strength of the null
+result above. Whether the
+relay truncates too is unmeasured; the delivered-copy measurement was taken on
+Claude Code.
+
 **Consequences for the deploy caveat above.** For the relay, instruction
 propagation is prompt: it re-discovers continuously, so it picks up new text
 within about one tool call of a restart. The "wait for sessions to reconnect"

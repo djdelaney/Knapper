@@ -177,31 +177,33 @@ public sealed class VaultFrontmatterTool(FrontmatterSearchService frontmatter, T
 public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
 {
     [McpServerTool(Name = "vault_lint", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
+    // Clients cut this at ToolSchemaContract.ClientTextBudget's measured 2048
+    // characters, silently. At 2185 it arrived ending mid-word — "inserting a
+    // paragraph moves bot" — so the agent never saw the two sentences that
+    // stop it treating a whole-vault run as a list of what recently broke.
+    // The cut always takes the TAIL, which is why the two rules an agent must
+    // not miss (findings are observations; never bulk-fix) sit near the
+    // front, ahead of every mechanical detail.
     [Description(
-        "Read-only consistency checks over the vault's link graph. Checks: 'unresolved_link' (a [[link]] matching " +
-        "no vault file), 'ambiguous_link' (a bare basename matching two or more notes where neither exact case nor " +
-        "proximity settles it — Obsidian silently picks one), 'broken_anchor' (a #heading or #^block that does not " +
-        "exist in the resolved target), 'table_pipe' (an unescaped '|' inside a wikilink inside a table row, which " +
-        "opens a column the author did not intend), 'table_needs_blank_line' (a table whose header row has no blank " +
-        "line above it — Obsidian absorbs the whole block into the paragraph above and renders every row as literal " +
-        "text, pipes included; a bullet's text absorbs one the same way, at any indent, so the fix is one blank " +
-        "line kept at the table's own indent. A table under a HEADING is fine and is not reported, nor is one " +
-        "inside a code fence or an indented code block). " +
-        "FINDINGS ARE OBSERVATIONS FOR THE USER, NOT A WORK LIST: fixing them is not implied by finding them, and a " +
-        "cluster of related findings usually means ONE decision about intent rather than a series of edits. An " +
-        "unresolved [[Some Brand Name]] is usually plain text that was accidentally bracketed, where the fix is to " +
-        "remove the brackets rather than create a note; a stale #heading is often one renamed heading with many " +
-        "inbound links. Report what you find and ask — never bulk-fix, and never treat a finding as authority to " +
-        "write. " +
+        "Read-only consistency checks over the vault's link graph. FINDINGS ARE OBSERVATIONS FOR THE USER, NOT A " +
+        "WORK LIST: fixing them is not implied by finding them, and a cluster usually means ONE decision about " +
+        "intent rather than a series of edits — an unresolved [[Some Brand Name]] is usually plain text that was " +
+        "accidentally bracketed, and a stale #heading is often one renamed heading with many inbound links. Report " +
+        "what you find and ask; never bulk-fix, and never treat a finding as authority to write. Findings also " +
+        "have no baseline yet, so a whole-vault run reports the standing backlog, not what changed recently. " +
+        "Checks: 'unresolved_link' (a [[link]] matching no vault file), 'ambiguous_link' (a bare basename matching " +
+        "two or more notes where neither exact case nor proximity settles it — Obsidian silently picks one), " +
+        "'broken_anchor' (a #heading or #^block that does not exist in the resolved target), 'table_pipe' (an " +
+        "unescaped '|' inside a wikilink inside a table row, which opens a column the author did not intend), " +
+        "'table_needs_blank_line' (a table whose header row has no blank line above it — Obsidian absorbs it into " +
+        "the paragraph or bullet above, at any indent, and renders every row as literal text; the fix is one blank " +
+        "line at the table's own indent. A table under a HEADING, or inside a code block, is fine). " +
         "Scope: pathPrefix limits which files are REPORTED on, while the link index is always whole-vault, because " +
         "a link inside the scope can point anywhere. Embeds (![[...]]) are not checked at all. " +
-        "Responses wear the completeness envelope — truncated=false means the scope was exhaustively checked — plus " +
-        "unexaminedFiles: notes that could not be read. Those are still valid link TARGETS, but their headings are " +
-        "unknown, so anchor findings against them are suppressed rather than guessed, and 'no findings' is only " +
-        "exhaustive once that list is empty. " +
-        "line/column locate a finding but are not its identity: inserting a paragraph moves both without changing " +
-        "anything. Findings have no baseline yet, so a whole-vault run reports the standing backlog, not what " +
-        "changed recently.")]
+        "Responses wear the completeness envelope; unexaminedFiles lists notes that could not be read — still " +
+        "valid link TARGETS with unknown headings, so anchor findings against them are suppressed rather than " +
+        "guessed, and 'no findings' is exhaustive only once that list is empty. line/column locate a finding but " +
+        "are not its identity.")]
     public LintResult Lint(
         [Description("Directory whose files are reported on (vault-relative); omit for the whole vault")] string? pathPrefix = null,
         [Description("Checks to run, e.g. [\"broken_anchor\"]; omit to run them all")] string[]? checks = null,

@@ -229,6 +229,30 @@ format by default.
 
 ## MCP-layer invariants (silent-corruption-prone)
 
+- **EVERY string a client RENDERS is capped at 2048 characters — tool
+  descriptions and `ServerInstructions` alike — so both stay under
+  `ToolSchemaContract.ClientTextBudget` and both LEAD with what must survive.**
+  Claude Code delivers the first 2048 and says nothing: measured 2026-09-05
+  against delivered copies, each ending mid-sentence at exactly index 2048.
+  Two fields were over it. The instructions (2449) arrived missing almost the
+  whole TRUST MODEL paragraph — the one section whose absence is a security
+  property, gone from the client with the most other tools to be turned
+  against — and `vault_lint`'s description (2185) ended mid-word at "moves
+  bot", dropping the sentence that stops an agent reading a whole-vault run as
+  a list of what recently broke. Invisible from here in both cases: the server
+  sends the full string, the manifest is well-formed, tools answer calls, every
+  test reads the SERVER's copy, health stays green. The cap is per FIELD, not
+  per manifest, so **"move it to the tool description" is not an escape** —
+  that channel has the same ceiling, it just has fourteen of them. Order is
+  half the rule and cannot be checked mechanically: a cut takes the TAIL, so
+  what must survive goes at the FRONT (TRUST MODEL first; `vault_lint`'s
+  never-bulk-fix rule ahead of its mechanics). Length is pinned by
+  `ToolManifestTests.Every_string_a_client_renders_survives_delivery` AND by
+  `knapper verify`, sharing one predicate for the reason `ToolNames` is
+  shared; ordering by
+  `McpSurfaceTests.Instructions_lead_with_what_must_survive_truncation`. The
+  cap is client-defined, undocumented and unversioned — a moving target to
+  keep clear of, never a size to tune up against.
 - **`ToolSurface.Resolve` must stay typed `IEnumerable<Type>`.** The SDK has
   both `WithTools(IEnumerable<Type>)` and a generic
   `WithTools<TToolType>(TToolType singleToolInstance)`; for an argument

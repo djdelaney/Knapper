@@ -536,6 +536,13 @@ internal static class Verify
                         throw new InvalidOperationException("server sent no instructions — connected agents get no ground rules");
                     if (!instructions.Contains("expect_sha256", StringComparison.Ordinal))
                         throw new InvalidOperationException("instructions do not state the mutation protocol");
+                    // A deployed build can carry every ground rule and still
+                    // deliver only part of them: the client cuts this field at
+                    // 2048 characters silently, and the section it takes is
+                    // the LAST one.
+                    var overBudget = ToolSchemaContract.FindOverBudgetText("server instructions", instructions);
+                    if (overBudget.Count > 0)
+                        throw new InvalidOperationException(overBudget[0]);
                 });
 
                 // The COUNT rides on the ok line even though the set comparison
@@ -583,6 +590,30 @@ internal static class Verify
                             (problems.Count > 3 ? $"; (+{problems.Count - 3} more)" : ""));
                     }
                     return $"{tools.Count} schemas";
+                }).ConfigureAwait(false);
+
+                // Length, not shape: a manifest every client can LOAD can
+                // still be one this client only half READS. Claude Code
+                // delivers the first 2048 characters of a description or of
+                // the instructions and says nothing, so an over-budget field
+                // reaches production as a string ending mid-sentence, with
+                // the server sending the whole thing and every surface here
+                // green. Same predicate as the build gate.
+                await CheckAsync("every tool description survives client delivery", async () =>
+                {
+                    var tools = await RawToolsListAsync().ConfigureAwait(false);
+                    var problems = tools
+                        .SelectMany(tool => ToolSchemaContract.FindOverBudgetText(
+                            (tool.TryGetProperty("name", out var name) ? name.GetString() ?? "?" : "?") + " description",
+                            tool.TryGetProperty("description", out var d) ? d.GetString() : null))
+                        .ToList();
+                    if (problems.Count > 0)
+                    {
+                        throw new InvalidOperationException(
+                            string.Join("; ", problems.Take(2)) +
+                            (problems.Count > 2 ? $"; (+{problems.Count - 2} more)" : ""));
+                    }
+                    return $"{tools.Count} descriptions within budget";
                 }).ConfigureAwait(false);
 
                 await CheckAsync("a no-match search still reports exhaustive scan evidence", async () =>

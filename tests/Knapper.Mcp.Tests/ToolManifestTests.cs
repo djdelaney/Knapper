@@ -40,6 +40,47 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
         problems.ShouldBeEmpty(string.Join("\n", problems));
     }
 
+    /// <summary>
+    /// Every string a client RENDERS is capped, not just the ones that are
+    /// obviously prose. Claude Code delivers the first 2048 characters of a
+    /// tool description and of the server instructions alike, silently and
+    /// with no error on either side — measured 2026-09-05 against delivered
+    /// copies of both, each ending mid-sentence at exactly index 2048.
+    ///
+    /// Nothing else here would ever notice. The server sends the full string,
+    /// the manifest is well-formed, the tools answer calls correctly, health
+    /// stays green, and every other test in this file reads the SERVER's
+    /// copy — while the agent acts on text missing its tail. Two fields were
+    /// over budget when this was written: the instructions had lost most of
+    /// TRUST MODEL, and vault_lint's description ended mid-word at "moves
+    /// bot", dropping the sentence that stops an agent reading a whole-vault
+    /// run as a list of what recently broke.
+    ///
+    /// The same predicate runs in `knapper verify --url` against a DEPLOYED
+    /// server, for the reason ToolNames and the schema contract are shared: a
+    /// build gate and a deployment gate that disagree about what survives
+    /// delivery are worse than one gate.
+    /// </summary>
+    [Fact]
+    public async Task Every_string_a_client_renders_survives_delivery()
+    {
+        var tools = await ListToolsAsync();
+        tools.Count.ShouldBe(ToolNames.All.Count); // a budget check over an empty list proves nothing
+
+        var problems = tools
+            .SelectMany(t => ToolSchemaContract.FindOverBudgetText(
+                $"{t.GetProperty("name").GetString()} description",
+                t.TryGetProperty("description", out var d) ? d.GetString() : null))
+            .ToList();
+
+        var discover = await (await RawMcp.OpenAsync(_factory.CreateClient())).DiscoverAsync();
+        problems.AddRange(ToolSchemaContract.FindOverBudgetText(
+            "server instructions",
+            discover.TryGetProperty("instructions", out var i) ? i.GetString() : null));
+
+        problems.ShouldBeEmpty(string.Join("\n", problems));
+    }
+
     [Fact]
     public async Task Every_tool_publishes_an_output_schema_that_describes_its_result()
     {

@@ -26,6 +26,53 @@ namespace Knapper.Core;
 public static class ToolSchemaContract
 {
     /// <summary>
+    /// The most characters of server-authored PROSE a client is known to
+    /// deliver. Claude Code cuts every such field at 2048 characters,
+    /// silently and with no error on either side — measured 2026-09-05
+    /// against delivered copies of both kinds of field, each of which ended
+    /// mid-sentence at exactly index 2048. This sits below that, because the
+    /// cap is client-defined, undocumented and unversioned: a moving target
+    /// to keep clear of, never a size to tune up against.
+    ///
+    /// The cap is per FIELD, not per manifest — fourteen descriptions plus
+    /// the instructions each get their own 2048 — so the fix for prose that
+    /// does not fit is never "move it to the other channel". Both channels
+    /// have the same ceiling. It is either cut, or moved to a field with
+    /// room.
+    /// </summary>
+    public const int ClientTextBudget = 1950;
+
+    /// <summary>
+    /// Whether a piece of server-authored prose survives delivery intact.
+    /// This is invisible from the server: the full string is sent, the
+    /// manifest is well-formed, the tool answers calls correctly, and every
+    /// test that reads the SERVER's copy passes — while the agent acts on
+    /// text missing its tail. Shipped here twice at once: the server
+    /// instructions lost most of TRUST MODEL (the section whose absence is a
+    /// security property), and <c>vault_lint</c> lost the sentence saying its
+    /// findings are a standing backlog rather than a list of what changed —
+    /// dropped mid-word, so the description ended in a fragment.
+    ///
+    /// A cut always takes the TAIL, so length is only half the rule: prose
+    /// that must survive belongs at the FRONT of its field. That half cannot
+    /// be checked mechanically and lives in the comment beside each string.
+    /// </summary>
+    public static IReadOnlyList<string> FindOverBudgetText(string what, string? text)
+    {
+        var problems = new List<string>();
+        if (text is null || text.Length <= ClientTextBudget)
+            return problems;
+
+        problems.Add(
+            $"{what}: {text.Length} characters, over the {ClientTextBudget} budget — clients deliver only " +
+            $"the first 2048 and say nothing, so this arrives ending \u2026{Tail(text)}");
+        return problems;
+    }
+
+    private static string Tail(string text) =>
+        text.Length <= 2048 ? text[^40..] : text[(2048 - 40)..2048];
+
+    /// <summary>
     /// Returns one human-readable problem per violation — empty means the
     /// manifest entry is loadable. Schemas arrive as raw JSON because that is
     /// what both callers have: the deployed server's wire bytes.

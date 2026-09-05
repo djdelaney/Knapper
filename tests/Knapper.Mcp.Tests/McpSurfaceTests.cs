@@ -62,6 +62,32 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
         client.ServerInstructions.ShouldContain("TRUST MODEL");
     }
 
+    /// <summary>
+    /// A cut always takes the TAIL, so the order of the sections is what
+    /// decides which of them survives one. TRUST MODEL leads — its absence is
+    /// a security property, and it is what a 2048-character delivery actually
+    /// dropped from 0.7.0 — and CALL ECONOMICS, the only paragraph whose loss
+    /// costs speed rather than correctness, goes last.
+    ///
+    /// The LENGTH half of the same rule is checked over the published
+    /// manifest, against the budget both gates share:
+    /// ToolManifestTests.Every_string_a_client_renders_survives_delivery.
+    /// </summary>
+    [Fact]
+    public async Task Instructions_lead_with_what_must_survive_truncation()
+    {
+        await using var client = await ConnectAsync(_factory);
+        var text = client.ServerInstructions.ShouldNotBeNull();
+
+        var order = new[] { "TRUST MODEL", "MUTATION PROTOCOL", "COMPLETENESS", "CALL ECONOMICS" }
+            .Select(section => (section, at: text.IndexOf(section, StringComparison.Ordinal)))
+            .ToList();
+        foreach (var (section, at) in order)
+            at.ShouldBeGreaterThanOrEqualTo(0, $"{section} is missing from the instructions");
+        order.Select(x => x.at).ShouldBe(
+            order.Select(x => x.at).Order(), "sections are ordered by what must survive a cut");
+    }
+
     [Fact]
     public async Task Read_round_trip_returns_content_and_precondition_sha()
     {

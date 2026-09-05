@@ -115,4 +115,25 @@ public class ToolSchemaContractTests
         ToolSchemaContract.FindMissingRequired("vault_stat", Json("""{"type":"object"}"""), null)
             .ShouldHaveSingleItem().ShouldContain("no structured content");
     }
+
+    /// <summary>
+    /// The gate has to BITE, and its message has to show the operator where
+    /// the client stopped reading — the whole failure mode is that a full
+    /// string was sent and a partial one arrived, so "too long" alone repeats
+    /// what is already invisible.
+    /// </summary>
+    [Fact]
+    public void Text_over_the_budget_is_reported_with_the_words_the_client_stops_at()
+    {
+        ToolSchemaContract.FindOverBudgetText("vault_x description", new string('a', 1950)).ShouldBeEmpty();
+        ToolSchemaContract.FindOverBudgetText("vault_x description", null).ShouldBeEmpty();
+
+        var text = new string('a', 2038) + "STOPS HERE" + new string('b', 400);
+        var problems = ToolSchemaContract.FindOverBudgetText("vault_x description", text);
+
+        var problem = problems.ShouldHaveSingleItem();
+        problem.ShouldContain("vault_x description");
+        problem.ShouldContain("STOPS HERE");
+        problem.ShouldNotContain("bbbb");
+    }
 }
