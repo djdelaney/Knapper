@@ -42,7 +42,8 @@ public sealed class VaultLintService(
     VaultFileLister lister,
     VaultReadService reader,
     VaultGenerationCounter generation,
-    VaultOptions options)
+    VaultOptions options,
+    ArchivedPrefixes archived)
 {
     private static readonly IDeserializer Yaml = new DeserializerBuilder().Build();
 
@@ -61,7 +62,15 @@ public sealed class VaultLintService(
         // The scoped walk runs first because it is what validates PathPrefix
         // (VaultFileLister owns that check; a second spelling of it here is
         // how two path gates drift apart).
-        var scoped = lister.CollectFilesSorted(query.PathPrefix, IsMarkdown, ct);
+        // Archived notes drop out of REPORTING only. The index below stays
+        // whole-vault, exactly as it does for PathPrefix and for the same
+        // reason: a link inside the scope can point anywhere, and an archived
+        // note is a perfectly valid link TARGET. Excluding them from the index
+        // too would turn every link into the archive into a false
+        // unresolved_link — the check reporting damage that is not there.
+        var excluded = archived.ExcludedFor(query.PathPrefix);
+        var scoped = lister.CollectFilesSorted(
+            query.PathPrefix, rel => IsMarkdown(rel) && !excluded.Covers(rel), ct);
         var index = BuildIndex(ct, deadline);
 
         var findings = new List<LintFinding>();
@@ -127,7 +136,8 @@ public sealed class VaultLintService(
             generationStart,
             generationEnd,
             generationEnd != generationStart,
-            index.Unexamined);
+            index.Unexamined,
+            excluded.Prefixes);
     }
 
     private static void Check(

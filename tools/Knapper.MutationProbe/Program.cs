@@ -58,7 +58,8 @@ var service = new VaultMutationService(
     new ConflictDetector(resolver),
     StaticSyncGate.Open,
     options,
-    new SyncOptions());
+    new SyncOptions(),
+    ArchivedPrefixes.None);
 
 if (command == "crash-replace-raced")
 {

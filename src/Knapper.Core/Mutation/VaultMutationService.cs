@@ -26,9 +26,36 @@ public sealed class VaultMutationService(
     ISyncGate syncGate,
     VaultOptions options,
     SyncOptions syncOptions,
+    ArchivedPrefixes archived,
     AuditLog? audit = null)
 {
     private TimeSpan LockTimeout => TimeSpan.FromMilliseconds(options.LockTimeoutMs);
+
+    /// <summary>
+    /// Refuse an operation that would CHANGE something already inside an
+    /// archived subtree (<c>Vault:ArchivedPrefixes</c>).
+    ///
+    /// <para>Applied to edit, append, delete, and a move's SOURCE — never to
+    /// create, mkdir, or a move's DESTINATION. That asymmetry is the whole
+    /// design: an archive is FILLED by writing into it (a note is trimmed
+    /// down and its superseded version filed), so a blanket ban under the
+    /// prefix would ban the workflow the setting exists to serve. What is
+    /// protected is what is already there.</para>
+    ///
+    /// <para>Called INSIDE the audited region of each operation, so a refusal
+    /// lands in the trail like any other rejection — there is a real vault
+    /// object here, unlike the resolver-gate refusals that deliberately
+    /// precede auditing.</para>
+    /// </summary>
+    private void RequireNotArchived(VaultPath vp, string what)
+    {
+        if (!archived.Covers(vp.Relative))
+            return;
+        throw new KnapperException(VaultErrorCode.PathArchived,
+            $"'{vp.Relative}' is in an archived subtree and holds a superseded copy: {what} is refused. " +
+            "Creating and moving files INTO an archived prefix is allowed; changing what is already " +
+            "there is a human action, in Obsidian.");
+    }
 
     /// <summary>
     /// Refuse a write Obsidian Sync would silently strand. Measured against
@@ -246,6 +273,9 @@ public sealed class VaultMutationService(
         {
             if (source.Relative == destination.Relative)
                 throw new KnapperException(VaultErrorCode.InvalidArgument, "source and destination are the same path");
+            // SOURCE only. Moving a note INTO an archived prefix is the act of
+            // archiving it; moving one OUT changes what the archive holds.
+            RequireNotArchived(source, "move");
             AssertGates([source, destination]);
 
             using (locks.AcquirePathLocks([source, destination], LockTimeout))
@@ -302,6 +332,7 @@ public sealed class VaultMutationService(
         var vp = resolver.Resolve(path);
         try
         {
+            RequireNotArchived(vp, "delete");
             AssertGates([vp]);
 
             using (locks.AcquirePathLock(vp, LockTimeout))
@@ -395,6 +426,14 @@ public sealed class VaultMutationService(
                 var vp = resolved[i];
                 try
                 {
+                    // In VALIDATE, like every other refusal here: one
+                    // archived item fails the whole batch untouched rather
+                    // than aborting it halfway. Create is exempt for the same
+                    // reason it is exempt on the single-item surface — a batch
+                    // is how a trim-and-archive is done in one round trip.
+                    if (item.Kind is not BatchItemKind.Create)
+                        RequireNotArchived(vp, "batch " + item.Kind.ToString().ToLowerInvariant());
+
                     var plan = item.Kind switch
                     {
                         BatchItemKind.Edit => PlanEdit(vp, item),
@@ -528,6 +567,7 @@ public sealed class VaultMutationService(
         var vp = resolver.Resolve(path);
         try
         {
+            RequireNotArchived(vp, op);
             AssertGates([vp]);
 
             using (locks.AcquirePathLock(vp, LockTimeout))

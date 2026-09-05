@@ -20,7 +20,7 @@ public sealed class VaultEditTool(VaultMutationService mutations, ToolSupport su
         "checked before and after, and the write verified by reopening and byte-comparing. On " +
         "[PreconditionFailed] the file changed since your read: re-read and rebuild the edit against current " +
         "content — NEVER retry with the old base. Edits apply sequentially (later anchors see earlier " +
-        "results)." + VaultConventions.Writing)]
+        "results)." + VaultConventions.Writing + VaultConventions.ArchivedWrites)]
     public MutationResult Edit(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256,
@@ -39,7 +39,7 @@ public sealed class VaultAppendTool(VaultMutationService mutations, ToolSupport 
     [Description(
         "Append text to an existing file under the same lock + hash discipline as vault_edit (never an unlocked " +
         "read-then-rewrite). Include a leading newline yourself if you need one." +
-        VaultConventions.Writing)]
+        VaultConventions.Writing + VaultConventions.ArchivedWrites)]
     public MutationResult Append(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256,

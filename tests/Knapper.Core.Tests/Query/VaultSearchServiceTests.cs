@@ -314,7 +314,8 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
 
         const int Budget = 400;
         var search = new VaultSearchService(resolver, gen,
-            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = Budget });
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = Budget },
+            Knapper.Core.Vault.ArchivedPrefixes.None);
         var query = new VaultSearchQuery { Pattern = "nëëdlë", MaxResults = 200 };
 
         var all = new List<SearchMatch>();
@@ -355,7 +356,7 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
         dir.File(" pua.md", "needle in pua file\n");
         var search = new VaultSearchService(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions());
+            new Knapper.Core.Options.VaultOptions(), Knapper.Core.Vault.ArchivedPrefixes.None);
         var query = new VaultSearchQuery { Pattern = "needle", MaxResults = 1 };
 
         var first = search.SearchMatches(query);
@@ -369,7 +370,8 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
         // The lister paginates the same names in the same order.
         var lister = new VaultFileLister(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions { RootPath = dir.Path });
+            new Knapper.Core.Options.VaultOptions { RootPath = dir.Path },
+            Knapper.Core.Vault.ArchivedPrefixes.None);
         var page1 = lister.List(new VaultFilesQuery { MaxResults = 1 });
         page1.Items.ShouldHaveSingleItem().Path.ShouldBe(" pua.md");
         var page2 = lister.List(new VaultFilesQuery { MaxResults = 1, Cursor = page1.NextCursor });
@@ -397,7 +399,7 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
         dir.File("pua/a.md", "needle two\n");
         var search = new VaultSearchService(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions());
+            new Knapper.Core.Options.VaultOptions(), Knapper.Core.Vault.ArchivedPrefixes.None);
         var query = new VaultSearchQuery
         {
             Pattern = "needle",
@@ -440,7 +442,7 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
         dir.File("Notes-old/b.md", "needle\n");
         var search = new VaultSearchService(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions());
+            new Knapper.Core.Options.VaultOptions(), Knapper.Core.Vault.ArchivedPrefixes.None);
 
         var e = Should.Throw<Knapper.Core.KnapperException>(() => search.SearchMatches(new VaultSearchQuery
         {
@@ -464,7 +466,8 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
 
         var search = new VaultSearchService(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 });
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 },
+            Knapper.Core.Vault.ArchivedPrefixes.None);
         var page = search.SearchMatches(new VaultSearchQuery { Pattern = "needle", ContextAfter = 3 });
 
         page.Truncated.ShouldBeFalse();
@@ -486,7 +489,8 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
 
         var search = new VaultSearchService(
             new Knapper.Core.Vault.VaultPathResolver(dir.Path), gen,
-            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 });
+            new Knapper.Core.Options.VaultOptions { MaxOutputBytes = 200 },
+            Knapper.Core.Vault.ArchivedPrefixes.None);
         var query = new VaultSearchQuery { Pattern = "needle", ContextAfter = 3 };
 
         var first = search.SearchMatches(query);
@@ -514,7 +518,8 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     public void Missing_ripgrep_binary_is_a_typed_error_with_a_hint()
     {
         var broken = new VaultSearchService(_vault.Resolver, _vault.Generation,
-            new Knapper.Core.Options.VaultOptions { RipgrepPath = "/nonexistent/rg" });
+            new Knapper.Core.Options.VaultOptions { RipgrepPath = "/nonexistent/rg" },
+            Knapper.Core.Vault.ArchivedPrefixes.None);
         var ex = Should.Throw<KnapperException>(() => broken.SearchMatches(Q("x")));
         ex.Code.ShouldBe(VaultErrorCode.IoError);
         ex.Message.ShouldContain("is ripgrep installed");
@@ -523,7 +528,7 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     [Fact]
     public void A_mutation_during_the_query_is_reported()
     {
-        var service = new VaultSearchService(_vault.Resolver, _vault.Generation, _vault.Options)
+        var service = new VaultSearchService(_vault.Resolver, _vault.Generation, _vault.Options, _vault.Archived)
         {
             OnQueryStarted = () => _vault.Generation.Increment(),
         };

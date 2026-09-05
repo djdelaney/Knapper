@@ -55,6 +55,14 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton(sp =>
     VaultGenerationCounter.StartWatching(sp.GetRequiredService<VaultPathResolver>().Root));
+// Fail-closed at BOOT like every other vault fact: a malformed archived
+// prefix must refuse startup, not surface on the first query. Silently
+// normalizing a bad entry would protect a subtree nobody named, and silently
+// dropping one would leave an archive the operator believes is protected
+// wide open — the second is the failure that matters, and neither announces
+// itself at request time.
+builder.Services.AddSingleton(sp =>
+    new ArchivedPrefixes(sp.GetRequiredService<IOptions<VaultOptions>>().Value.ArchivedPrefixes));
 builder.Services.AddSingleton(sp => new ConflictDetector(sp.GetRequiredService<VaultPathResolver>()));
 builder.Services.AddSingleton(sp =>
 {
@@ -104,6 +112,7 @@ builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<ISyncGate>(),
     sp.GetRequiredService<VaultOptions>(),
     sp.GetRequiredService<IOptions<SyncOptions>>().Value,
+    sp.GetRequiredService<ArchivedPrefixes>(),
     sp.GetRequiredService<AuditLog>()));
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();

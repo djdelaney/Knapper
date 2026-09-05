@@ -15,7 +15,8 @@ public sealed class VaultFilesTool(VaultFileLister lister, ToolSupport support)
         "count of matching entries across ALL pages, known on every page — this listing walks the whole scope " +
         "before paginating), and the " +
         "vault generation span (changedDuringQuery=true means the vault moved while listing). " +
-        "Hidden entries and control dirs (.git/.obsidian/.trash) are never visible.")]
+        "Hidden entries and control dirs (.git/.obsidian/.trash) are never visible." +
+        VaultConventions.ArchivedScope)]
     public QueryEnvelope<VaultFileEntry> Files(
         [Description("Directory to list under (vault-relative); omit for the whole vault")] string? pathPrefix = null,
         [Description("rg-style glob; without '/' it matches basenames at any depth (e.g. '*.md'). " +
@@ -72,7 +73,7 @@ public sealed class VaultSearchTool(VaultSearchService search, ToolSupport suppo
         "A null is never a zero. " +
         "Column is a 1-based byte offset. Hidden files and control dirs are never searched. Every mode returns " +
         "the same item shape: 'path' always, plus line/column/text (+context) in matches mode and 'count' in " +
-        "counts mode; fields the mode does not fill are omitted.")]
+        "counts mode; fields the mode does not fill are omitted." + VaultConventions.ArchivedScope)]
     public QueryEnvelope<SearchResultItem> Search(
         [Description("The pattern (Rust regex syntax unless literal=true)")] string pattern,
         [Description("Treat pattern as a literal string, not a regex")] bool literal = false,
@@ -146,7 +147,8 @@ public sealed class VaultFrontmatterTool(FrontmatterSearchService frontmatter, T
     [Description(
         "Query YAML frontmatter across .md notes: field existence, equality, or substring (both case-insensitive; " +
         "list fields match on any element). unparseableFiles lists notes whose frontmatter could not be examined " +
-        "(broken YAML, non-UTF-8) — check it before trusting 'no match'.")]
+        "(broken YAML, non-UTF-8) — check it before trusting 'no match'." +
+        VaultConventions.ArchivedScope)]
     public FrontmatterSearchResult SearchFrontmatter(
         [Description("Top-level frontmatter field name")] string field,
         [Description("'exists' (default), 'equals', or 'contains'")] string? op = null,
@@ -189,8 +191,8 @@ public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
         "WORK LIST: fixing them is not implied by finding them, and a cluster usually means ONE decision about " +
         "intent rather than a series of edits — an unresolved [[Some Brand Name]] is usually plain text that was " +
         "accidentally bracketed, and a stale #heading is often one renamed heading with many inbound links. Report " +
-        "what you find and ask; never bulk-fix, and never treat a finding as authority to write. Findings also " +
-        "have no baseline yet, so a whole-vault run reports the standing backlog, not what changed recently. " +
+        "what you find and ask; never bulk-fix. Findings have no baseline yet, so a whole-vault run reports " +
+        "the standing backlog, not what changed recently. " +
         "Checks: 'unresolved_link' (a [[link]] matching no vault file), 'ambiguous_link' (a bare basename matching " +
         "two or more notes where neither exact case nor proximity settles it — Obsidian silently picks one), " +
         "'broken_anchor' (a #heading or #^block that does not exist in the resolved target), 'table_pipe' (an " +
@@ -198,12 +200,12 @@ public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
         "'table_needs_blank_line' (a table whose header row has no blank line above it — Obsidian absorbs it into " +
         "the paragraph or bullet above, at any indent, and renders every row as literal text; the fix is one blank " +
         "line at the table's own indent. A table under a HEADING, or inside a code block, is fine). " +
-        "Scope: pathPrefix limits which files are REPORTED on, while the link index is always whole-vault, because " +
-        "a link inside the scope can point anywhere. Embeds (![[...]]) are not checked at all. " +
+        "Scope: pathPrefix limits which files are REPORTED on; the link index is always whole-vault, because a " +
+        "link inside the scope can point anywhere. Embeds (![[...]]) are not checked. " +
         "Responses wear the completeness envelope; unexaminedFiles lists notes that could not be read — still " +
         "valid link TARGETS with unknown headings, so anchor findings against them are suppressed rather than " +
         "guessed, and 'no findings' is exhaustive only once that list is empty. line/column locate a finding but " +
-        "are not its identity.")]
+        "are not its identity." + VaultConventions.ArchivedScope)]
     public LintResult Lint(
         [Description("Directory whose files are reported on (vault-relative); omit for the whole vault")] string? pathPrefix = null,
         [Description("Checks to run, e.g. [\"broken_anchor\"]; omit to run them all")] string[]? checks = null,

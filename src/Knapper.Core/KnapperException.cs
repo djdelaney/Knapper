@@ -21,6 +21,16 @@ public enum VaultErrorCode
     /// <summary>Path touches a control dir (.git, .obsidian, .trash) or a Knapper temp file.</summary>
     BannedPath,
 
+    /// <summary>
+    /// The path lies in a subtree the operator declared archived
+    /// (<c>Vault:ArchivedPrefixes</c>) and the operation would CHANGE
+    /// something already there. TERMINAL, like a banned path: retrying never
+    /// succeeds. Creating and moving INTO an archived prefix are not this
+    /// error — filing a superseded copy is the workflow the setting exists to
+    /// protect, and banning it would ban archiving.
+    /// </summary>
+    PathArchived,
+
     /// <summary>Target does not exist (file, or a parent directory for create).</summary>
     NotFound,
 

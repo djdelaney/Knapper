@@ -59,7 +59,7 @@ public sealed class BatchRejectionAuditTests : IDisposable
                 AuditLogPath = _v.Options.AuditLogPath,
                 LockTimeoutMs = 150,
             },
-            _v.SyncOptions, _v.Audit);
+            _v.SyncOptions, Knapper.Core.Vault.ArchivedPrefixes.None, _v.Audit);
 
         using (_v.Locks.AcquirePathLock(_v.Resolver.Resolve("a.md"), TimeSpan.FromSeconds(5)))
         {

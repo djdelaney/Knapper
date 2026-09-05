@@ -40,7 +40,27 @@ public record QueryEnvelope<T>(
     long? TotalMatches,
     long GenerationStart,
     long GenerationEnd,
-    bool ChangedDuringQuery) : IFreshnessSignals
+    bool ChangedDuringQuery,
+    /// <summary>
+    /// Archived subtrees (<c>Vault:ArchivedPrefixes</c>) this query did NOT
+    /// look in — empty list when it searched everything, never omitted.
+    ///
+    /// <para>This field is what keeps <c>Truncated == false</c> honest. That
+    /// flag means "the scope was searched exhaustively", and a server-side
+    /// exclusion narrows the scope; declaring which prefixes were skipped
+    /// makes the narrowing VISIBLE, so an agent that finds nothing can tell
+    /// "it does not exist" from "it may be in a subtree I did not look in,
+    /// and here is its name". An undeclared exclusion would be the same
+    /// defect as the >5MB files Sync never delivers, except firing on every
+    /// query instead of rarely: the difference between the two is that this
+    /// absence is KNOWN to the server, so there is no excuse for it to be
+    /// silent.</para>
+    ///
+    /// <para>Naming an archived prefix as a query scope reaches it, and then
+    /// this list is empty for that prefix — a skip that did not happen must
+    /// not be reported.</para>
+    /// </summary>
+    IReadOnlyList<string> ExcludedPrefixes) : IFreshnessSignals
 {
     bool IFreshnessSignals.WasTruncated => Truncated;
     bool IFreshnessSignals.MovedDuringQuery => ChangedDuringQuery;
@@ -52,7 +72,7 @@ public record QueryEnvelope<T>(
     /// </summary>
     public QueryEnvelope<TOut> Map<TOut>(Func<T, TOut> project) =>
         new([.. Items.Select(project)], Truncated, NextCursor, ScannedFiles, ReturnedItems,
-            TotalMatches, GenerationStart, GenerationEnd, ChangedDuringQuery);
+            TotalMatches, GenerationStart, GenerationEnd, ChangedDuringQuery, ExcludedPrefixes);
 }
 
 public enum CaseMode
@@ -296,10 +316,11 @@ public sealed record FrontmatterSearchResult(
     /// A skipped file could be hiding a match, so "no match" is only
     /// exhaustive once this is empty — never omitted, empty list when clean.
     /// </summary>
-    IReadOnlyList<string> UnparseableFiles)
+    IReadOnlyList<string> UnparseableFiles,
+    IReadOnlyList<string> ExcludedPrefixes)
     : QueryEnvelope<FrontmatterMatch>(
         Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
-        GenerationStart, GenerationEnd, ChangedDuringQuery);
+        GenerationStart, GenerationEnd, ChangedDuringQuery, ExcludedPrefixes);
 
 /// <summary>
 /// The lint check names, as clients see them. These are wire strings, not a
@@ -380,7 +401,8 @@ public sealed record LintResult(
     long GenerationStart,
     long GenerationEnd,
     bool ChangedDuringQuery,
-    IReadOnlyList<string> UnexaminedFiles)
+    IReadOnlyList<string> UnexaminedFiles,
+    IReadOnlyList<string> ExcludedPrefixes)
     : QueryEnvelope<LintFinding>(
         Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
-        GenerationStart, GenerationEnd, ChangedDuringQuery);
+        GenerationStart, GenerationEnd, ChangedDuringQuery, ExcludedPrefixes);

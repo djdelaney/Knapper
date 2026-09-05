@@ -19,7 +19,13 @@ public sealed class LintFixtureVault : IDisposable
     public VaultLintService Lint { get; }
     public VaultGenerationCounter Generation { get; } = new();
 
-    public LintFixtureVault()
+    public LintFixtureVault() : this(ArchivedPrefixes.None) { }
+
+    /// <summary>See FixtureVault: a class fixture must construct with no arguments.</summary>
+    public static LintFixtureVault WithArchived(params string[] prefixes) =>
+        new(new ArchivedPrefixes(prefixes));
+
+    private LintFixtureVault(ArchivedPrefixes archived)
     {
         Dir.File("Notes/Hub.md", string.Join('\n',
         [
@@ -169,9 +175,9 @@ public sealed class LintFixtureVault : IDisposable
 
         var resolver = new VaultPathResolver(Dir.Path);
         var options = new VaultOptions { RootPath = resolver.Root };
-        var lister = new VaultFileLister(resolver, Generation, options);
+        var lister = new VaultFileLister(resolver, Generation, options, archived);
         var reader = new VaultReadService(resolver, options, Generation);
-        Lint = new VaultLintService(resolver, lister, reader, Generation, options);
+        Lint = new VaultLintService(resolver, lister, reader, Generation, options, archived);
     }
 
     public void Dispose()

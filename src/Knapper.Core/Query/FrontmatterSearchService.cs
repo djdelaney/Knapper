@@ -18,7 +18,8 @@ public sealed class FrontmatterSearchService(
     VaultFileLister lister,
     VaultReadService reader,
     VaultGenerationCounter generation,
-    VaultOptions options)
+    VaultOptions options,
+    ArchivedPrefixes archived)
 {
     private static readonly IDeserializer Yaml = new DeserializerBuilder().Build();
 
@@ -38,9 +39,14 @@ public sealed class FrontmatterSearchService(
         var pageSize = Math.Clamp(query.MaxResults ?? options.MaxResultsPerPage, 1, options.MaxResultsPerPage);
         var deadline = Environment.TickCount64 + options.QueryTimeoutMs;
 
+        // The exclusion rides in the CANDIDATE filter, so archived notes are
+        // never opened and never counted in `scanned` — that count is the
+        // evidence behind "no match means exhaustively examined", and it has
+        // to describe the scope the envelope reports on.
+        var excluded = archived.ExcludedFor(query.PathPrefix);
         var candidates = lister.CollectFilesSorted(
             query.PathPrefix,
-            rel => rel.EndsWith(".md", StringComparison.OrdinalIgnoreCase),
+            rel => rel.EndsWith(".md", StringComparison.OrdinalIgnoreCase) && !excluded.Covers(rel),
             ct);
 
         var items = new List<FrontmatterMatch>();
@@ -119,7 +125,8 @@ public sealed class FrontmatterSearchService(
             generationStart,
             generationEnd,
             generationEnd != generationStart,
-            unparseable);
+            unparseable,
+            excluded.Prefixes);
 
         // TotalMatches across ALL pages is only known on a first, complete
         // page (no cursor, no budget hit); continuation pages report null

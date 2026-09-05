@@ -44,6 +44,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `MaxReadBytes` | 4000000 | Whole-file read cap; beyond it reads fail `TooLarge` explicitly. |
 | `MaxBatchItems` | 50 | Cap for batch read and batch mutation. |
 | `LockTimeoutMs` | 10000 | How long a mutation waits for its locks. |
+| `ArchivedPrefixes` | *(empty)* | Vault subtrees holding superseded copies, vault-relative and rooted (`Archive`, `Notes/Old`). Two effects, deliberately different. **Queries** skip them unless the caller names one as its scope, and every response declares which it skipped in `excludedPrefixes` — so `truncated: false` keeps meaning "exhaustive over a scope you can see". **Mutations** refuse `[PathArchived]` for anything that would CHANGE what is already there (edit, append, delete, a move's source), while `vault_create`, `vault_mkdir` and a move's DESTINATION stay legal — filing a superseded copy is the workflow this protects, so banning it would ban archiving. Matching is ordinal and boundary-aware: `Archive` does not claim `Archived Recipes/`, and does not claim `archive/`. Validated at boot; a malformed entry refuses startup. Set it with `Vault__ArchivedPrefixes__0=Archive`. |
 
 ### `Mcp:*` — the HTTP surface
 
@@ -149,6 +150,7 @@ Tool errors are structured MCP errors whose message leads with the code:
 | `VerifyFailed` | Post-write reopen/byte-compare failed — surface to the user; do not retry blindly. From `vault_move`/`vault_delete` it can also mean the destination did not survive the operation AND the source pathname was taken by another writer; the message names the hidden file holding the original content, which a human must place. |
 | `LockTimeout` | Couldn't get the lock in time (long snapshot or contention). Retry later. |
 | `MutationBlocked` | Conflict file or unhealthy sync. Report to the user; never work around it. |
+| `PathArchived` | The path is in a `Vault:ArchivedPrefixes` subtree and the operation would change something already there. **TERMINAL — do not retry.** Creating and moving files INTO an archived prefix is allowed; editing, appending to, deleting, or moving one OUT is a human action, in Obsidian. |
 | `InvalidArgument`, `InvalidCursor` | Malformed request; cursors only work with the query that made them. |
 | `QueryTimeout` | Budget elapsed with zero progress — narrow the scope. |
 | `TooLarge` | File exceeds the read cap; never silently truncated. |

@@ -14,6 +14,13 @@ namespace Knapper.Core.Tests.Query;
 /// </summary>
 public sealed class FixtureVault : IDisposable
 {
+    /// <summary>
+    /// Archived subtrees this fixture's services enforce. Default off, so
+    /// every existing test measures the unarchived behaviour unchanged; the
+    /// archived-prefix tests pass one in.
+    /// </summary>
+    public ArchivedPrefixes Archived { get; }
+
     public TempDir Dir { get; } = new();
     public VaultPathResolver Resolver { get; }
     public VaultOptions Options { get; }
@@ -45,8 +52,20 @@ public sealed class FixtureVault : IDisposable
         "with spaces/nöte – ünïcode.md",
     ];
 
-    public FixtureVault()
+    /// <summary>
+    /// xUnit resolves a CLASS FIXTURE through a parameterless constructor, so
+    /// the archived variant is a factory rather than an optional parameter —
+    /// a `params string[]` ctor is not parameterless to the runner and every
+    /// fixture-based test in this assembly fails to construct.
+    /// </summary>
+    public FixtureVault() : this(ArchivedPrefixes.None) { }
+
+    public static FixtureVault WithArchived(params string[] prefixes) =>
+        new(new ArchivedPrefixes(prefixes));
+
+    private FixtureVault(ArchivedPrefixes archived)
     {
+        Archived = archived;
         Dir.File("Notes/Daily.md", "# Daily\nTODO alpha task\ntodo beta task\nDone gamma\nwrap TODO up\n");
         Dir.File("Notes/Sub/Deep.md", "deep content\nneedle here\n");
         Dir.File("Projects/pröject.md", "Ünïcode käse content\nneedle in pröject\n");
@@ -83,10 +102,10 @@ public sealed class FixtureVault : IDisposable
 
         Resolver = new VaultPathResolver(Dir.Path);
         Options = new VaultOptions { RootPath = Resolver.Root };
-        Search = new VaultSearchService(Resolver, Generation, Options);
-        Lister = new VaultFileLister(Resolver, Generation, Options);
+        Search = new VaultSearchService(Resolver, Generation, Options, Archived);
+        Lister = new VaultFileLister(Resolver, Generation, Options, Archived);
         Reader = new VaultReadService(Resolver, Options, Generation);
-        Frontmatter = new FrontmatterSearchService(Resolver, Lister, Reader, Generation, Options);
+        Frontmatter = new FrontmatterSearchService(Resolver, Lister, Reader, Generation, Options, Archived);
     }
 
     public void Dispose()

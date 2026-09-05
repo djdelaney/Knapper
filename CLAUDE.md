@@ -394,6 +394,17 @@ format by default.
 
 ## Mutation-layer invariants (silent-corruption-prone)
 
+- **Archived subtrees are read-only for CONTENT ALREADY THERE, and writable
+  for new arrivals.** `RequireNotArchived` refuses edit, append, delete and a
+  move's SOURCE with `[PathArchived]`; `vault_create`, `vault_mkdir` and a
+  move's DESTINATION are deliberately exempt. An archive is FILLED by writing
+  to it — a note is trimmed and its superseded version filed — so a blanket
+  ban under the prefix bans the workflow the setting exists to serve, and a
+  protection that blocks the ordinary case gets switched off. The check sits
+  INSIDE each operation's audited region (there is a real vault object, unlike
+  the resolver-gate refusals that precede auditing) and, for batch, in the
+  VALIDATE phase so one archived item fails the batch untouched. Pinned by
+  `ArchivedMutationTests`.
 - **`VaultMutationService` is the only mutation surface, and every operation
   on an existing file demands `expect_sha256`.** There is no unconditional
   write anywhere in the codebase and none may ever be added — not even as an
@@ -734,6 +745,27 @@ format by default.
   surfaces confident. Exclusion is structural here (`exclude_globs`), so the
   `!` is redundant where it worked; `exclude_globs: ["!x"]` also built
   `--glob=!!x`, which excludes only names literally starting with `!`.
+- **An archived prefix NARROWS the scope; it never makes a response lie.**
+  `Vault:ArchivedPrefixes` drops subtrees out of every query by default, and
+  `truncated: false` means "this scope was searched exhaustively" — so every
+  envelope carries `excludedPrefixes` naming what it skipped, and naming a
+  prefix as the query scope reaches it and then declares NOTHING (a skip that
+  did not happen must not be reported). Undeclared, this would be the >5MB
+  hole in `docs/extending.md` again except firing on every query rather than
+  rarely, and worse for one reason: that absence is unknown to the server,
+  this one is known. `ArchivedPrefixes.Covers` is the ONE predicate — ordinal
+  and boundary-aware, so "Archive" claims neither `Archived Recipes/` nor
+  `archive/`, which a bare `StartsWith` and a case-folding compare
+  respectively get wrong, silently and in opposite directions. The
+  ripgrep-side `--glob=!` is WORK-AVOIDANCE ONLY: it must be `--glob` (an
+  `--iglob` would fold case and hide a directory nobody named), and being
+  `--glob` it LOSES to the `--iglob` whitelist the `extensions` sugar emits,
+  so a search carrying extensions still gets archived paths back and only the
+  ordinal filter on each emitted path withholds them. Lint excludes from
+  REPORTING while keeping archived notes in the whole-vault link INDEX — they
+  are ordinary link targets, and dropping them manufactures a false
+  `unresolved_link` per inbound link. Pinned by `ArchivedScopeTests`,
+  `ArchivedLintTests`, `ArchivedPrefixesTests`.
 - **The completeness envelope never guesses.** `truncated: false` claims the
   scope was exhaustively searched; `total_matches` is null when not computed
   (rg's `begin` events fire only for files WITH matches — the honest

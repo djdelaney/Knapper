@@ -392,6 +392,29 @@ Directory.Build.props <Version>          the one carrier
   The link graph the next entry wants now exists, internal to lint.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
+- **Archived subtrees** — BUILT 2026-09-05 (`Vault:ArchivedPrefixes`). Grew
+  out of the entry below: instructing agents to leave `Archive/` alone only
+  works if they read the instruction, and the whole point of that entry is
+  that they often do not. Configuration rather than a marker in the vault is
+  the load-bearing choice — the rule constrains agents, agents can write any
+  vault path, so a rule stored in the vault can be switched off by the thing
+  it is aimed at.
+
+  What is NOT in scope for it, and why: `/health`, `/up` and the conflict and
+  oversized scans stay whole-vault. Those answer a question about the
+  filesystem, not about query scope — a Sync conflict file inside `Archive/`
+  still has to block mutations to its original, and an oversized file there is
+  still stranded. `vault_read` and `vault_stat` also stay open: reaching an
+  archived note by NAME is the documented way to read one, and lint needs
+  those bytes for the link index.
+
+  The residual worth naming: `scannedFiles` on a search carrying `extensions`
+  counts archived files whose matches were then withheld, because the rg-side
+  glob loses to the extension whitelist and the ordinal filter is what does
+  the work. That OVERSTATES coverage rather than understating it, which is the
+  safe direction — the dangerous failure is claiming exhaustiveness over a gap
+  the caller cannot see, and `excludedPrefixes` closes that one.
+
 - **Getting the vault's own conventions in front of an agent** — phase 1
   built 2026-09-05, phases 2 and 3 scoped. The problem: agents routinely do
   not read the vault's `CLAUDE.md`, so notes arrive with markdown links

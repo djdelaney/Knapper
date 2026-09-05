@@ -169,6 +169,27 @@ int Doctor()
         () => !string.IsNullOrWhiteSpace(vaultOptions.RootPath)
               && Directory.Exists(vaultOptions.RootPath)
               && !CaseSensitivityProbe.IsCaseInsensitive(vaultOptions.RootPath));
+    // The configured prefixes are in the LABEL, like ripgrep's version and
+    // resolved path, and for the same reason: the quiet failure here is an
+    // operator who set the env var, did not restart, and believes an archive
+    // is protected that is not. Reading the setting back off the running
+    // configuration is the only thing that answers that, and a bare "ok" would
+    // not — this must PRINT what it parsed, including "none".
+    {
+        var archivedLabel = "none";
+        try
+        {
+            var parsed = new ArchivedPrefixes(vaultOptions.ArchivedPrefixes);
+            if (parsed.Any)
+                archivedLabel = string.Join(", ", parsed.Prefixes);
+        }
+        catch (KnapperException e)
+        {
+            archivedLabel = $"INVALID — {e.Message}";
+        }
+        Check($"Vault:ArchivedPrefixes parses ({archivedLabel})",
+            () => !archivedLabel.StartsWith("INVALID", StringComparison.Ordinal));
+    }
     Check("Vault:CommitStampPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.CommitStampPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.CommitStampPath, vaultOptions.RootPath));

@@ -40,7 +40,8 @@ public sealed class MutationVault : IDisposable
             AuditLogPath = AuditPath,
         };
         Service = new VaultMutationService(
-            Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, SyncOptions, Audit);
+            Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, SyncOptions,
+            ArchivedPrefixes.None, Audit);
     }
 
     /// <summary>
@@ -53,16 +54,21 @@ public sealed class MutationVault : IDisposable
     /// <summary>A service whose sync gate is closed — for fail-closed tests.</summary>
     public VaultMutationService BlockedService => new(
         Resolver, Locks, Generation, Conflicts,
-        new StaticSyncGate(false), Options, SyncOptions, Audit);
+        new StaticSyncGate(false), Options, SyncOptions, ArchivedPrefixes.None, Audit);
 
     /// <summary>A service whose sync gate the test drives call by call.</summary>
     public VaultMutationService ServiceWithSyncGate(ISyncGate gate) => new(
-        Resolver, Locks, Generation, Conflicts, gate, Options, SyncOptions, Audit);
+        Resolver, Locks, Generation, Conflicts, gate, Options, SyncOptions, ArchivedPrefixes.None, Audit);
+
+    /// <summary>A service that treats the given prefixes as archived subtrees.</summary>
+    public VaultMutationService ServiceWithArchived(params string[] prefixes) => new(
+        Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, SyncOptions,
+        new ArchivedPrefixes(prefixes), Audit);
 
     /// <summary>A service with a deliberately tiny sync ceiling.</summary>
     public VaultMutationService ServiceWithMaxFileBytes(long max) => new(
         Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options,
-        new SyncOptions { MaxFileBytes = max }, Audit);
+        new SyncOptions { MaxFileBytes = max }, ArchivedPrefixes.None, Audit);
 
     public string Write(string relative, string content)
     {

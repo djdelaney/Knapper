@@ -37,6 +37,19 @@ public sealed class VaultOptions
     /// <summary>How long a mutation waits for its advisory locks before failing LockTimeout.</summary>
     public int LockTimeoutMs { get; set; } = 10_000;
 
+    /// <summary>
+    /// Vault subtrees holding superseded copies: skipped by every query
+    /// unless the caller names one, and immutable once written (create and
+    /// move-in stay legal — that is how an archive is filled). Vault-relative,
+    /// no leading slash, e.g. <c>Archive</c>. Empty = the feature is off.
+    ///
+    /// <para>This is CONFIGURATION rather than a marker in the vault because
+    /// the rule constrains agents, and an agent can write any vault path.
+    /// Validated at boot: a malformed entry refuses startup rather than
+    /// silently protecting a subtree nobody named.</para>
+    /// </summary>
+    public string[] ArchivedPrefixes { get; set; } = [];
+
     /// <summary>Append-only JSONL audit log — OUTSIDE the vault, always.</summary>
     public string AuditLogPath { get; set; } = "";
 

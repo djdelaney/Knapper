@@ -36,6 +36,26 @@ internal static class VaultConventions
         "information-dense style — lists and tables over prose, with the specifics (model numbers, URLs, " +
         "dimensions) kept in.";
 
+    /// <summary>
+    /// What a query says about an archived subtree. Goes on the DISCOVERY
+    /// surfaces, because the failure it prevents is an agent reading an
+    /// exhaustive-looking empty result as "no such note" when the note is
+    /// simply outside the default scope. The envelope's excludedPrefixes
+    /// carries the same fact per response; this is what makes an agent expect
+    /// it and know what to do about it.
+    /// </summary>
+    public const string ArchivedScope =
+        " Archived subtrees are skipped by default; excludedPrefixes names them — scope to one to reach it.";
+
+    /// <summary>
+    /// The write-side half. An error an agent cannot act on becomes a retry
+    /// loop or a workaround, so the clause says what IS allowed rather than
+    /// only what is not.
+    /// </summary>
+    public const string ArchivedWrites =
+        " [PathArchived]: the path is in an archived subtree. Creating and moving INTO one is allowed; " +
+        "changing what is already there is a human action.";
+
     /// <summary>Where content goes — applies to the tools that choose a path.</summary>
     public const string Placement =
         " New notes default to Quicknotes/ unless a more specific folder clearly fits; the folder hierarchy " +

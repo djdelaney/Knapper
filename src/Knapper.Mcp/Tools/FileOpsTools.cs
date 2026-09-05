@@ -14,7 +14,8 @@ public sealed class VaultMoveTool(VaultMutationService mutations, ToolSupport su
         "appearance fails [AlreadyExists] — nothing is ever silently replaced). The destination directory must " +
         "already exist." + VaultConventions.Placement +
         " A move here is NOT an Obsidian rename: nothing rewrites inbound [[wikilinks]], so links pointing at " +
-        "the old path go stale silently — find them with vault_lint's unresolved_link and fix them yourself.")]
+        "the old path go stale silently — find them with vault_lint's unresolved_link and fix them yourself." +
+        VaultConventions.ArchivedWrites)]
     public MutationResult Move(
         [Description("Vault-relative source path")] string sourcePath,
         [Description("Vault-relative destination path")] string destinationPath,
@@ -29,7 +30,8 @@ public sealed class VaultDeleteTool(VaultMutationService mutations, ToolSupport 
     [McpServerTool(Name = "vault_delete", UseStructuredContent = true, ReadOnly = false, OpenWorld = false, Destructive = true)]
     [Description(
         "SOFT delete: the file moves to .trash/ (structure preserved, collisions timestamped) — nothing is ever " +
-        "hard-deleted. Requires the file's current SHA-256. The response names the trash location.")]
+        "hard-deleted. Requires the file's current SHA-256. The response names the trash location." +
+        VaultConventions.ArchivedWrites)]
     public DeleteResult Delete(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256) =>
@@ -52,7 +54,7 @@ public sealed class VaultBatchTool(VaultMutationService mutations, ToolSupport s
         "Several mutations in one call. All locks are taken up front and EVERY item's hash/anchors/guards are " +
         "validated before the first write — one bad item fails the whole batch untouched. The apply phase is NOT " +
         "cross-file atomic: on a mid-batch I/O failure the response reports applied/failed/notAttempted per " +
-        "item." + VaultConventions.Writing)]
+        "item." + VaultConventions.Writing + VaultConventions.ArchivedWrites)]
     public BatchResult Batch(
         [Description("The operations (each path at most once)")] BatchOp[] items) =>
         support.Run("vault_batch", () => mutations.Batch(

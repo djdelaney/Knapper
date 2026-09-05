@@ -20,12 +20,17 @@ namespace Knapper.Core.Query;
 public sealed class VaultFileLister(
     VaultPathResolver resolver,
     VaultGenerationCounter generation,
-    VaultOptions options)
+    VaultOptions options,
+    ArchivedPrefixes archived)
 {
     public QueryEnvelope<VaultFileEntry> List(VaultFilesQuery query, CancellationToken ct = default)
     {
         var generationStart = generation.Current;
         var (rootAbsolute, prefixRelative) = ResolvePrefix(query.PathPrefix);
+        // Computed from the caller's scope, not from the configuration alone:
+        // a listing scoped INTO an archived prefix excludes nothing, and must
+        // not claim it did.
+        var excluded = archived.ExcludedFor(query.PathPrefix);
         var glob = query.Glob is null ? null : Globbing.Translate(query.Glob);
         var extensions = NormalizeExtensions(query.Extensions);
         var sizeFiltered = query.MinSize is not null || query.MaxSize is not null;
@@ -44,6 +49,13 @@ public sealed class VaultFileLister(
 
         foreach (var (relative, info) in Walk(new DirectoryInfo(rootAbsolute), prefixRelative, ct, deadline))
         {
+            // Before scannedFiles, deliberately. That count is the evidence
+            // behind "exhaustively searched", so it must describe the scope
+            // actually reported on — counting files this listing then hides
+            // would overstate the coverage the envelope claims.
+            if (excluded.Covers(relative))
+                continue;
+
             var isDirectory = info is DirectoryInfo;
             if (!isDirectory)
                 scannedFiles++;
@@ -104,7 +116,8 @@ public sealed class VaultFileLister(
             matched.Count, // the full walk completed, so the total is known even mid-pagination
             generationStart,
             generationEnd,
-            generationEnd != generationStart);
+            generationEnd != generationStart,
+            excluded.Prefixes);
     }
 
     /// <summary>Sorted full walk for other services (frontmatter search) needing a deterministic candidate list.</summary>

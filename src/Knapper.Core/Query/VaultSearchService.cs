@@ -16,7 +16,8 @@ namespace Knapper.Core.Query;
 public sealed class VaultSearchService(
     VaultPathResolver resolver,
     VaultGenerationCounter generation,
-    VaultOptions options)
+    VaultOptions options,
+    ArchivedPrefixes archived)
 {
     private readonly RipgrepRunner _runner = new(options.RipgrepPath);
 
@@ -66,6 +67,15 @@ public sealed class VaultSearchService(
             // to the same file from any other surface, and rides inside the
             // cursor as the resume position.
             var path = NormalizeRgPath(line);
+            // THE authority for archived exclusion (the rg glob upstream is
+            // only work-avoidance and loses to an --iglob whitelist). Ordinal
+            // and boundary-aware via the one shared predicate, so this surface
+            // and vault_files can never disagree about what "under Archive/"
+            // means. Before the cursor compare and before any counter: a
+            // withheld record must not consume a page slot, advance the resume
+            // position, or be counted as seen.
+            if (plan.Excluded.Covers(path))
+                return true;
             // Through the FULL resolver gate, not a bare Path.Combine —
             // rg output is trusted-adjacent, but every string that becomes a
             // filesystem path goes through the one gate (defense in depth).
@@ -132,6 +142,15 @@ public sealed class VaultSearchService(
             // Normalized for the same reason as the -l path above: rg echoes
             // back the "." it was handed on an unprefixed search.
             var path = NormalizeRgPath(line[..nul]);
+            // THE authority for archived exclusion (the rg glob upstream is
+            // only work-avoidance and loses to an --iglob whitelist). Ordinal
+            // and boundary-aware via the one shared predicate, so this surface
+            // and vault_files can never disagree about what "under Archive/"
+            // means. Before the cursor compare and before any counter: a
+            // withheld record must not consume a page slot, advance the resume
+            // position, or be counted as seen.
+            if (plan.Excluded.Covers(path))
+                return true;
             sum += count;
             var pos = (path, 0, 0);
             if (plan.CursorPosition is { } cur && QueryCursor.ComparePosition(pos, cur) <= 0)
@@ -165,6 +184,7 @@ public sealed class VaultSearchService(
         (string Path, int Line, int Column)? CursorPosition,
         int PageSize,
         IReadOnlyList<string> Prefixes,
+        ArchivedPrefixes Excluded,
         long GenerationStart);
 
     private Plan Prepare(VaultSearchQuery query, SearchMode mode)
@@ -187,11 +207,14 @@ public sealed class VaultSearchService(
             ? null
             : QueryCursor.Decode(query.Cursor, fingerprint);
         var pageSize = Math.Clamp(query.MaxResults ?? options.MaxResultsPerPage, 1, options.MaxResultsPerPage);
-        return new Plan(fingerprint, cursorPos, pageSize, prefixes, generation.Current);
+        return new Plan(
+            fingerprint, cursorPos, pageSize, prefixes, archived.ExcludedFor(prefixes), generation.Current);
     }
 
     private void AddCommonArgs(List<string> args, VaultSearchQuery query)
     {
+        var prefixes = ValidatePrefixes(query.PathPrefixes);
+        var plannedExclusions = archived.ExcludedFor(prefixes);
         args.Add(query.Case switch
         {
             CaseMode.Sensitive => "-s",
@@ -237,11 +260,37 @@ public sealed class VaultSearchService(
         //      dot-file, while `--iglob=!.*` suppresses a whitelist from
         //      EITHER flag. Case-insensitivity is irrelevant to a leading
         //      '.', so the iglob spelling costs nothing and covers both.
+        // Work-avoidance ONLY; the authority is the ordinal filter applied to
+        // every emitted path below. Two measured reasons it cannot be the
+        // contract:
+        //
+        //   * It must be --glob, NOT --iglob. --iglob folds case, and the
+        //     vault filesystem is case-SENSITIVE by hard requirement — an
+        //     --iglob spelling would also hide "archive/" when only "Archive"
+        //     was configured, silently excluding a directory nobody named and
+        //     putting this surface at odds with the native lister, which
+        //     compares ordinally. Over-exclusion is the dangerous direction.
+        //   * Being --glob, it loses to an --iglob WHITELIST from the
+        //     extension sugar above (the two flags are separate override sets,
+        //     and an --iglob include suppresses a --glob exclude — the same
+        //     asymmetry the hidden guard is spelled --iglob to exploit). So a
+        //     search carrying `extensions` still gets archived paths back from
+        //     rg, and only the ordinal filter withholds them.
+        //
+        // The residual is that `scannedFiles` then counts files whose matches
+        // were withheld. That OVERSTATES coverage rather than understating it,
+        // which is the safe direction: the dangerous failure is claiming
+        // exhaustiveness over a gap the caller cannot see, and excludedPrefixes
+        // closes that.
+        foreach (var prefix in plannedExclusions.Prefixes)
+        {
+            args.Add("--glob=!" + prefix);
+            args.Add("--glob=!" + prefix + "/**");
+        }
         args.Add("--iglob=!.*");
         args.Add("-e");
         args.Add(query.Pattern);
         args.Add("--");
-        var prefixes = ValidatePrefixes(query.PathPrefixes);
         if (prefixes.Count == 0)
         {
             // ALWAYS name a search target. Given no path, rg decides between
@@ -295,7 +344,8 @@ public sealed class VaultSearchService(
             outcome.Completed ? totalSeen : null,
             plan.GenerationStart,
             genEnd,
-            genEnd != plan.GenerationStart);
+            genEnd != plan.GenerationStart,
+            plan.Excluded.Prefixes);
     }
 
     /// <summary>
@@ -475,6 +525,15 @@ public sealed class VaultSearchService(
                             "will not silently omit it; rename the file (it is visible to `ls`, not to agents)");
                     }
                     var path = NormalizeRgPath(pathProp.GetString()!);
+                    // THE authority for archived exclusion (the rg glob upstream is
+                    // only work-avoidance and loses to an --iglob whitelist). Ordinal
+                    // and boundary-aware via the one shared predicate, so this surface
+                    // and vault_files can never disagree about what "under Archive/"
+                    // means. Before the cursor compare and before any counter: a
+                    // withheld record must not consume a page slot, advance the resume
+                    // position, or be counted as seen.
+                    if (plan.Excluded.Covers(path))
+                        return true;
                     var lineNumber = data.GetProperty("line_number").GetInt32();
                     var text = TrimNewline(GetLinesText(root));
                     var textBytes = System.Text.Encoding.UTF8.GetByteCount(text);

@@ -80,7 +80,7 @@ public class ToolSupportTests
             () => throw new IOException("disk")));
         // A truncated, generation-changed envelope on a successful call.
         support.Run("t", () => new Knapper.Core.Query.QueryEnvelope<int>(
-            [1], Truncated: true, null, 1, 1, null, 1, 2, ChangedDuringQuery: true));
+            [1], Truncated: true, null, 1, 1, null, 1, 2, ChangedDuringQuery: true, []));
 
         var snapshot = metrics.Read();
         snapshot.ToolCalls.ShouldBe(5);
