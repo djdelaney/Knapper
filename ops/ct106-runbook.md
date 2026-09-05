@@ -372,6 +372,18 @@ is only as good as the unit being finished when it is taken:
   and too high strands files SILENTLY while too low merely refuses them out
   loud.
 
+- `Vault__ArchivedPrefixes__0=<folder>` — IF this vault keeps superseded
+  copies in a folder agents should leave alone (Helios: `Archive`). Set it
+  here, in the same edit as everything else, because the failure is silent in
+  the useful direction only once: a server started without it serves the
+  archive to every search and accepts every edit to it, and nothing anywhere
+  says so. The `doctor` line below prints the parsed value — `ok
+  Vault:ArchivedPrefixes parses (Archive)` — and a bare `ok` is not what to
+  look for, `(none)` is what an unset variable reads as. Verify the folder
+  name against the vault itself (`ls /vault`), ordinally: the match is
+  case-sensitive and boundary-aware, so `Archive` protects neither `archive/`
+  nor `Archived Recipes/`.
+
 The ONE edit that genuinely cannot happen yet is §6.3's Access block: the AUD
 does not exist until the Access app does. That edit carries its own
 `daemon-reload` + `restart`, and re-running the `doctor` line below after it
@@ -1316,7 +1328,8 @@ pct exec 106 -- sh /opt/knapper/ops/check-installed.sh
 #         DIR — reconcile BY HAND. knapper.service differs
 #         FOREVER and legitimately: /etc holds this deployment's edits
 #         (AllowedHosts, the Access AUD, Sync__MaxAgeSeconds,
-#         Sync__MaxFileBytes), and copying the shipped unit over them reverts
+#         Sync__MaxFileBytes, Vault__ArchivedPrefixes__*), and copying the
+#         shipped unit over them reverts
 #         them all at once, silently, into a service that still starts.
 #         ⛔ READ THE LEGEND ABOVE EACH DIFF BEFORE READING THE DIFF. `-` is
 #         what is RUNNING here, `+` is what the release SHIPS — and a `+` line

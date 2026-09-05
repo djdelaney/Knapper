@@ -36,7 +36,8 @@
 #   1  some installed file DIFFERS, or /etc holds something ORPHANED or an
 #      override drop-in. Read each one. knapper.service legitimately differs
 #      forever: /etc carries THIS deployment's edits (AllowedHosts, the Access
-#      AUD, Sync__MaxAgeSeconds, Sync__MaxFileBytes) and copying the shipped
+#      AUD, Sync__MaxAgeSeconds, Sync__MaxFileBytes, Vault__ArchivedPrefixes__*)
+#      and copying the shipped
 #      unit over them reverts them all at once, silently, into a service that
 #      still starts. Every state at this level means "a human decides", not
 #      "wrong" — and nothing here is ever removed for you: /etc is
@@ -103,7 +104,7 @@ UNCLASSIFIED=0
 # the hand-maintained-list failure this script exists to close — that one is a
 # list of FILES that must agree with what ships, where an omission means a file
 # is never looked at. Here an omission means a line is looked at harder.
-SITE_KEYS='Mcp__AllowedHosts__|Mcp__Access__|Sync__MaxAgeSeconds|Sync__MaxFileBytes|Vault__RootPath|Vault__LockDirectory|Vault__AuditLogPath|Vault__MetricsPath|Vault__CommitStampPath'
+SITE_KEYS='Mcp__AllowedHosts__|Mcp__Access__|Sync__MaxAgeSeconds|Sync__MaxFileBytes|Vault__RootPath|Vault__LockDirectory|Vault__AuditLogPath|Vault__MetricsPath|Vault__CommitStampPath|Vault__ArchivedPrefixes__'
 
 # Compare one shipped file against its installed counterpart. Reports every
 # file, including the identical ones: the value of this script is the claim

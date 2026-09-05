@@ -32,6 +32,15 @@ Environment=Vault__LockDirectory=/var/lib/knapper/locks
 Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
 # Bounded counters snapshot the external monitor reads (rates as deltas).
 Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
+# Subtrees holding superseded copies. Queries skip them unless a caller names
+# one (and every response says which it skipped, in excludedPrefixes); edits,
+# appends, deletes and a move's SOURCE are refused [PathArchived], while
+# create, mkdir and a move's DESTINATION stay legal — an archive is FILLED by
+# writing to it. Commented because it is site config: a deployment with no
+# archive folder wants no value here, and a wrong one protects a subtree that
+# does not exist while leaving the real one open. `knapper doctor` prints what
+# it parsed, which is the only way to tell the setting took.
+#Environment=Vault__ArchivedPrefixes__0=Archive
 Environment=Sync__Mode=heartbeat
 Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 # The fail-closed budget, stated here even though it is the default: with the
