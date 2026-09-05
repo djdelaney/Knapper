@@ -474,7 +474,14 @@ Directory.Build.props <Version>          the one carrier
   host that honors annotations becomes primary.
 - **Bulk ingest of large files** — deliberately NOT built;
   [proposals/bulk-ingest.md](proposals/bulk-ingest.md) records why the
-  obvious tool is the wrong first move. Knapper has no upload-from-path, so
+  obvious tool is the wrong first move. ⚠️ A successor design exists and is
+  ALSO not built: [proposals/upload-grants.md](proposals/upload-grants.md)
+  (2026-09-05) answers the `Verified: true` objection below by binding a
+  locally computed source hash into the grant and requiring the commit receipt
+  to equal it. Read its Amendment 1 first — the transport is for content whose
+  base the caller does NOT hold, or that is not text; an anchored `vault_edit`
+  stays the cheaper and better-guarded path for evolving text at any size. The
+  entry below stands until something ships. Knapper has no upload-from-path, so
   content not already in the vault enters only through model output tokens.
   Chunked `vault_append` costs `B·(N−1)/2` re-sent tokens (quadratic in
   chunk count — smaller chunks are WORSE) and, the argument that survives a
