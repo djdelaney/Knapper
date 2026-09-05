@@ -392,6 +392,63 @@ Directory.Build.props <Version>          the one carrier
   The link graph the next entry wants now exists, internal to lint.
 - **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
   only if agents demonstrably need more than frontmatter + full-text.
+- **Getting the vault's own conventions in front of an agent** — phase 1
+  built 2026-09-05, phases 2 and 3 scoped. The problem: agents routinely do
+  not read the vault's `CLAUDE.md`, so notes arrive with markdown links
+  instead of `[[wikilinks]]`, frontmatter added to notes that had none, and
+  files dropped outside `Quicknotes/`. Three channels can carry the fix and
+  they are not interchangeable:
+
+  1. **Tool descriptions — BUILT** (`VaultConventions`, spliced into every
+     non-read-only tool but `vault_delete`, pinned by
+     `ToolManifestTests.Every_tool_that_writes_states_the_vault_conventions`).
+     The only channel that arrives at the moment of DRAFTING rather than
+     thousands of tokens earlier. Its cost is that the text is compiled in:
+     changing a convention needs a release. That is tolerable ONLY for rules
+     that are stable and actionable at the instant of a write, which is why
+     the constant holds four of them and not the folder map.
+  2. **A `vaultConventions` field on the read/query envelope — NOT BUILT.**
+     Responses are the one channel with room: descriptions and instructions
+     are both capped at 2048 characters per field, while a `vault_read` of the
+     vault's 11,266-byte `CLAUDE.md` returns whole (measured 2026-09-05). So
+     this is where the evolving material belongs — the folder map, the
+     per-type frontmatter table — extracted from a marked region of the note
+     itself, which is what makes it editable with no deploy.
+
+     Three things a naive version gets wrong. **Invalidation:** "every write
+     goes through Knapper" is FALSE — Dan's Obsidian apps write their replicas
+     and Sync delivers them, so a cache keyed on Knapper's own writes serves a
+     stale digest indefinitely after a phone edit. Revalidate on a
+     non-following stat, or hang it off `VaultGenerationCounter`, which
+     already watches the tree. (A stat is acceptable HERE and nowhere near the
+     commit path: no correctness property rides on it, and the worst case is
+     one call carrying advisory text one generation old.) **Framing:** the
+     field must be bounded server-side and named for its provenance, and the
+     instructions must say it governs HOW a note is written, never WHETHER to
+     act — otherwise it is a channel that turns note content into something an
+     agent reads as server authority, which the TRUST MODEL exists to deny.
+     The residual is real and is the accepted cost: anything that can write
+     the vault can shape that field, including any agent, since Knapper has no
+     path exemptions. **Do not key it per session:** ~68% of relay tool calls
+     arrive with no client identity at all (`docs/call-economics.md`), and
+     `clientInfo` is per-REQUEST and must never be cached, so a
+     once-per-window scheme has no usable key on the busiest surface.
+     Always-on and compact is the only shape that works.
+  3. **Convention lint on the mutation response — NOT BUILT**, and the only
+     one of the three that is enforcement rather than advice. Note this is
+     NOT "run `vault_lint` on write": its checks are link-graph checks, while
+     the conventions worth catching (a markdown link to an internal note,
+     frontmatter added to a note that had none, tags added) are a different
+     family — and two of them need the BEFORE content to judge, which the
+     mutation path already holds from its fresh read. Warnings only to start.
+     It changes every mutation response's shape, so it is a minor bump and the
+     `ToolSerialization` required-property rule applies.
+
+  Rejected: an MCP **resource** with `annotations: {audience, priority}`.
+  Claude Code is the primary surface and does not auto-load them, so it would
+  add a `resources` capability to a deliberately locked surface and put a
+  third copy of the same text on a channel nobody here reads. Re-opens if a
+  host that honors annotations becomes primary.
 - **Bulk ingest of large files** — deliberately NOT built;
   [proposals/bulk-ingest.md](proposals/bulk-ingest.md) records why the
   obvious tool is the wrong first move. Knapper has no upload-from-path, so

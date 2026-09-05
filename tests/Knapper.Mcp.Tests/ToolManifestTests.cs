@@ -81,6 +81,49 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
         problems.ShouldBeEmpty(string.Join("\n", problems));
     }
 
+    /// <summary>
+    /// A tool description is the only channel that reaches an agent at the
+    /// moment it is DRAFTING. The server instructions arrive once at
+    /// initialize, thousands of tokens earlier, and the vault's own CLAUDE.md
+    /// arrives only if the agent thought to read it — which many do not, and
+    /// which is the whole reason the conventions are spliced in here.
+    ///
+    /// So the property is: a tool that WRITES states them. The set is derived
+    /// from readOnlyHint rather than listed, because the failure this guards
+    /// is a NEW write tool shipping without the clause — a list would need
+    /// the same edit that was already forgotten. vault_delete is the one
+    /// exemption and is named here: it removes a note, so neither how a note
+    /// is written nor where one goes applies to it.
+    /// </summary>
+    [Fact]
+    public async Task Every_tool_that_writes_states_the_vault_conventions()
+    {
+        var tools = await ListToolsAsync();
+        tools.Count.ShouldBe(ToolNames.All.Count);
+
+        var writers = tools
+            .Where(t => t.TryGetProperty("annotations", out var a)
+                && a.TryGetProperty("readOnlyHint", out var ro)
+                && ro.ValueKind == JsonValueKind.False)
+            .Select(t => (name: t.GetProperty("name").GetString()!,
+                          description: t.TryGetProperty("description", out var d) ? d.GetString() ?? "" : ""))
+            .ToList();
+
+        writers.Select(w => w.name).ShouldContain("vault_edit"); // a derived set that came back empty proves nothing
+
+        foreach (var (name, description) in writers)
+        {
+            if (name == "vault_delete")
+                continue;
+
+            var states = description.Contains("[[wikilinks]]", StringComparison.Ordinal)
+                || description.Contains("Quicknotes/", StringComparison.Ordinal);
+            states.ShouldBeTrue(
+                $"{name} writes to the vault but its description carries neither VaultConventions block — an " +
+                "agent drafting through it has no statement of the vault's conventions at the point of use");
+        }
+    }
+
     [Fact]
     public async Task Every_tool_publishes_an_output_schema_that_describes_its_result()
     {

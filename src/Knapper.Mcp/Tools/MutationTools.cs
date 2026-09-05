@@ -19,7 +19,8 @@ public sealed class VaultEditTool(VaultMutationService mutations, ToolSupport su
         "lock the file is re-read, the hash compared, each edit's 'old' matched exactly 'count' times, guards " +
         "checked before and after, and the write verified by reopening and byte-comparing. On " +
         "[PreconditionFailed] the file changed since your read: re-read and rebuild the edit against current " +
-        "content — NEVER retry with the old base. Edits apply sequentially (later anchors see earlier results).")]
+        "content — NEVER retry with the old base. Edits apply sequentially (later anchors see earlier " +
+        "results)." + VaultConventions.Writing)]
     public MutationResult Edit(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256,
@@ -37,7 +38,8 @@ public sealed class VaultAppendTool(VaultMutationService mutations, ToolSupport 
     [McpServerTool(Name = "vault_append", UseStructuredContent = true, ReadOnly = false, OpenWorld = false)]
     [Description(
         "Append text to an existing file under the same lock + hash discipline as vault_edit (never an unlocked " +
-        "read-then-rewrite). Include a leading newline yourself if you need one.")]
+        "read-then-rewrite). Include a leading newline yourself if you need one." +
+        VaultConventions.Writing)]
     public MutationResult Append(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256,
@@ -51,7 +53,8 @@ public sealed class VaultCreateTool(VaultMutationService mutations, ToolSupport 
     [McpServerTool(Name = "vault_create", UseStructuredContent = true, ReadOnly = false, OpenWorld = false)]
     [Description(
         "Create a new file atomically — cannot replace a file that appears concurrently ([AlreadyExists]). " +
-        "The parent directory must already exist: create it first with vault_mkdir (a deliberate act).")]
+        "The parent directory must already exist: create it first with vault_mkdir (a deliberate act)." +
+        VaultConventions.Placement + VaultConventions.Writing)]
     public MutationResult Create(
         [Description("Vault-relative path")] string path,
         [Description("File content (may be empty)")] string text) =>
@@ -62,7 +65,9 @@ public sealed class VaultCreateTool(VaultMutationService mutations, ToolSupport 
 public sealed class VaultMkdirTool(VaultMutationService mutations, ToolSupport support)
 {
     [McpServerTool(Name = "vault_mkdir", UseStructuredContent = true, ReadOnly = false, OpenWorld = false)]
-    [Description("Create ONE directory level; the parent must already exist. Folder creation is deliberate, never implied.")]
+    [Description(
+        "Create ONE directory level; the parent must already exist. Folder creation is deliberate, never " +
+        "implied." + VaultConventions.Placement)]
     public string Mkdir(
         [Description("Vault-relative directory path")] string path) =>
         support.Run("vault_mkdir", () =>

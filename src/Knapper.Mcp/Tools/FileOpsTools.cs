@@ -12,7 +12,9 @@ public sealed class VaultMoveTool(VaultMutationService mutations, ToolSupport su
     [Description(
         "Move/rename a file. Requires the source's current SHA-256 and an ABSENT destination (a concurrent " +
         "appearance fails [AlreadyExists] — nothing is ever silently replaced). The destination directory must " +
-        "already exist.")]
+        "already exist." + VaultConventions.Placement +
+        " A move here is NOT an Obsidian rename: nothing rewrites inbound [[wikilinks]], so links pointing at " +
+        "the old path go stale silently — find them with vault_lint's unresolved_link and fix them yourself.")]
     public MutationResult Move(
         [Description("Vault-relative source path")] string sourcePath,
         [Description("Vault-relative destination path")] string destinationPath,
@@ -49,7 +51,8 @@ public sealed class VaultBatchTool(VaultMutationService mutations, ToolSupport s
     [Description(
         "Several mutations in one call. All locks are taken up front and EVERY item's hash/anchors/guards are " +
         "validated before the first write — one bad item fails the whole batch untouched. The apply phase is NOT " +
-        "cross-file atomic: on a mid-batch I/O failure the response reports applied/failed/notAttempted per item.")]
+        "cross-file atomic: on a mid-batch I/O failure the response reports applied/failed/notAttempted per " +
+        "item." + VaultConventions.Writing)]
     public BatchResult Batch(
         [Description("The operations (each path at most once)")] BatchOp[] items) =>
         support.Run("vault_batch", () => mutations.Batch(
