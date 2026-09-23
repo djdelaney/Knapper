@@ -20,6 +20,9 @@ public static partial class SecretScanner
         ("aws-access-key", AwsAccessKey()),
         ("github-token", GitHubToken()),
         ("slack-token", SlackToken()),
+        ("stripe-key", StripeKey()),
+        ("google-api-key", GoogleApiKey()),
+        ("jwt", Jwt()),
         ("api-key-like", ApiKeyLike()),
         ("bearer-token", BearerToken()),
     ];
@@ -30,13 +33,30 @@ public static partial class SecretScanner
     [GeneratedRegex(@"\bAKIA[0-9A-Z]{16}\b")]
     private static partial Regex AwsAccessKey();
 
-    [GeneratedRegex(@"\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})")]
+    // Classic (ghp_), OAuth (gho_), user-to-server (ghu_), server-to-server
+    // (ghs_) and refresh (ghr_) tokens share one shape; fine-grained PATs differ.
+    [GeneratedRegex(@"\b(gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})")]
     private static partial Regex GitHubToken();
 
     [GeneratedRegex(@"\bxox[bpoas]-[A-Za-z0-9-]{10,}")]
     private static partial Regex SlackToken();
 
-    [GeneratedRegex("""(?i)\b(api[_-]?key|secret|token|passwd|password)\b\s*[:=]\s*["']?[A-Za-z0-9_\-/+]{20,}""")]
+    [GeneratedRegex(@"\b[rs]k_(live|test)_[A-Za-z0-9]{16,}")]
+    private static partial Regex StripeKey();
+
+    [GeneratedRegex(@"\bAIza[0-9A-Za-z_\-]{35}")]
+    private static partial Regex GoogleApiKey();
+
+    // Header and payload are base64url JSON, so both open with "eyJ" ('{"').
+    [GeneratedRegex(@"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")]
+    private static partial Regex Jwt();
+
+    // No leading \b, so compound names match too (openaiApiKey, client_secret,
+    // accessToken, CF-Access-Client-Secret). An optional closing quote before
+    // the separator, because the likeliest place for a key in this vault is a
+    // plugin's JSON settings file — `"apiKey": "…"` — and the separator used
+    // to have to follow the name directly, so every JSON key walked past.
+    [GeneratedRegex("""(?i)(api[_-]?key|secret|token|passwd|password)["']?\s*[:=]\s*["']?[A-Za-z0-9_\-/+]{20,}""")]
     private static partial Regex ApiKeyLike();
 
     [GeneratedRegex(@"\b(sk-[A-Za-z0-9_\-]{20,}|Bearer\s+[A-Za-z0-9_\-\.=]{30,})")]

@@ -1,7 +1,6 @@
 using Knapper.Core.Generation;
 using Knapper.Core.Options;
 using Knapper.Core.Vault;
-using YamlDotNet.Serialization;
 
 namespace Knapper.Core.Query;
 
@@ -21,8 +20,6 @@ public sealed class FrontmatterSearchService(
     VaultOptions options,
     ArchivedPrefixes archived)
 {
-    private static readonly IDeserializer Yaml = new DeserializerBuilder().Build();
-
     public FrontmatterSearchResult Search(FrontmatterQuery query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query.Field))
@@ -83,7 +80,7 @@ public sealed class FrontmatterSearchService(
                     unparseable.Add(relative);
                     continue;
                 }
-                frontmatter = Yaml.Deserialize<Dictionary<string, object?>>(block!);
+                frontmatter = FrontmatterYaml.Deserialize(block!);
             }
             catch (Exception e) when (e is KnapperException or YamlDotNet.Core.YamlException)
             {

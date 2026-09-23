@@ -110,6 +110,20 @@ public sealed class GitCommitJobTests : IDisposable
     }
 
     [Fact]
+    public void A_note_above_the_attachment_cap_is_still_scanned()
+    {
+        // The cap is for attachments. A note between it and Sync's 5 MB
+        // ceiling used to be committed without being scanned at all.
+        _job.Init();
+        var note = new string('x', (int)GitCommitJob.MaxScanBlobBytes + 1024) + "\nmy key is AKIAIOSFODNN7EXAMPLE\n";
+        _v.Write("Notes/huge.md", note);
+
+        var ex = Should.Throw<KnapperException>(() => _job.Commit(Ample));
+        ex.Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        ex.Message.ShouldContain("Notes/huge.md");
+    }
+
+    [Fact]
     public void A_remote_appearing_on_the_local_only_repo_is_detected()
     {
         // Brief §10 is a hard prohibition enforced, until now, by absence.
@@ -333,11 +347,86 @@ public sealed class GitCommitJobTests : IDisposable
         ex.Message.ShouldContain("did not exit");
     }
 
+    /// <summary>
+    /// `.git/` is writable by everything running as the service account,
+    /// including obsidian-headless — a networked program sandboxed away from
+    /// /var/lib/knapper. Anything it plants there that git would EXECUTE runs
+    /// inside the commit job instead, with the commit job's wider access. Each
+    /// planted program writes a marker; none may ever appear.
+    /// </summary>
+    [Fact]
+    public void Planted_hooks_fsmonitor_and_signing_programs_never_run()
+    {
+        _job.Init();
+        var marker = Path.Combine(_v.Outside.Path, "pwned");
+        var payload = Script("payload.sh", $"echo \"$0 $*\" >> '{marker}'\n");
+        var hooks = Path.Combine(_v.VaultDir.Path, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        foreach (var hook in (string[])["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"])
+            Script(Path.Combine(hooks, hook), $"exec '{payload}' {hook}\n");
+        GitConfig("core.fsmonitor", payload);
+        GitConfig("commit.gpgSign", "true");
+        GitConfig("gpg.program", payload);
+
+        _v.Write("Notes/a.md", "content\n");
+        _job.Commit(Ample).Committed.ShouldBeTrue();
+
+        File.Exists(marker).ShouldBeFalse(
+            File.Exists(marker) ? $"a planted program ran: {File.ReadAllText(marker)}" : null);
+    }
+
+    [Fact]
+    public void A_planted_filter_driver_refuses_the_commit_before_add_can_run_it()
+    {
+        _job.Init();
+        var marker = Path.Combine(_v.Outside.Path, "pwned");
+        var clean = Script("clean.sh", $"echo ran >> '{marker}'\ncat\n");
+        GitConfig("filter.innocuous.clean", clean);
+        File.WriteAllText(Path.Combine(_v.VaultDir.Path, ".gitattributes"), "* filter=innocuous\n");
+        _v.Write("Notes/a.md", "content\n");
+
+        var ex = Should.Throw<KnapperException>(() => _job.Commit(Ample));
+        ex.Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        ex.Message.ShouldContain("filter.innocuous.clean");
+        File.Exists(marker).ShouldBeFalse("the filter ran during `git add`");
+    }
+
+    private string Script(string nameOrPath, string body)
+    {
+        var path = Path.IsPathRooted(nameOrPath) ? nameOrPath : Path.Combine(_v.Outside.Path, nameOrPath);
+        File.WriteAllText(path, "#!/bin/sh\n" + body);
+        File.SetUnixFileMode(path,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
+
+    private void GitConfig(string key, string value)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git") { RedirectStandardError = true };
+        foreach (var a in (string[])["-C", _v.VaultDir.Path, "config", key, value])
+            psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit();
+        p.ExitCode.ShouldBe(0, p.StandardError.ReadToEnd());
+    }
+
     [Theory]
     [InlineData("-----BEGIN OPENSSH PRIVATE KEY-----", "private-key")]
     [InlineData("ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github-token")]
     [InlineData("api_key = \"abcdefghij0123456789xyz\"", "api-key-like")]
     [InlineData("xoxb-1234567890-abcdefghij", "slack-token")]
+    // A plugin's JSON settings — the likeliest home for a key in a vault —
+    // put a quote between the name and the separator, which walked past.
+    [InlineData("  \"apiKey\": \"abcdefghij0123456789xyz\",", "api-key-like")]
+    [InlineData("{\"openaiApiKey\":\"abcdefghij0123456789xyz\"}", "api-key-like")]
+    [InlineData("'client_secret': 'abcdefghij0123456789xyz'", "api-key-like")]
+    [InlineData("accessToken = abcdefghij0123456789xyz", "api-key-like")]
+    [InlineData("CF-Access-Client-Secret: 0123456789abcdef0123456789abcdef", "api-key-like")]
+    [InlineData("gho_0123456789abcdefghijklmnopqrstuvwxyz", "github-token")]
+    [InlineData("ghs_0123456789abcdefghijklmnopqrstuvwxyz", "github-token")]
+    [InlineData("stripe: sk_live_0123456789abcdefABCD", "stripe-key")]
+    [InlineData("AIzaSyA0123456789abcdefghijklmnopqrstuv", "google-api-key")]
+    [InlineData("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLWJ5dGVz", "jwt")]
     public void Secret_scanner_catches_common_shapes(string line, string kind) =>
         SecretScanner.Scan("f.md", line).ShouldContain(f => f.Kind == kind);
 
@@ -345,6 +434,9 @@ public sealed class GitCommitJobTests : IDisposable
     [InlineData("the word password appears in prose")]
     [InlineData("password: short")]
     [InlineData("see my API key management doc")]
+    [InlineData("tokenizer = SentencePieceTokenizerWithDefaults")]
+    [InlineData("\"secretary\": \"Jane Smith-Wellington-Harrington\"")]
+    [InlineData("\"apiKey\": \"\"")]
     public void Secret_scanner_leaves_ordinary_prose_alone(string line) =>
         SecretScanner.Scan("f.md", line).ShouldBeEmpty();
 }
