@@ -203,7 +203,13 @@ format by default.
 - **`VaultPathResolver` is the only gate between agent-supplied path strings
   and the filesystem.** Nothing else may combine user input with the vault
   root. `VaultPath`'s constructor is internal so an API taking one is stating
-  validation already happened — don't add public construction.
+  validation already happened — don't add public construction. It refuses
+  control characters (C0, DEL, C1) and bidi overrides/isolates because
+  ripgrep's `-l` and count streams are framed by NEWLINE: a directory an
+  agent named `a\nNotes` beside a real `Notes/a` split one path into two that
+  each resolved, and search answered with a forged list under `truncated:
+  false`. RTL text and emoji ZWJ sequences stay legal — only the characters
+  that forge framing or display are refused (`VaultPathResolverTests`).
 - **Lock ordering is global-shared → per-path-exclusive, always**, and the
   commit job takes only the global lock exclusively — that's what makes
   deadlock structurally impossible. A new lock kind must slot into this
@@ -511,6 +517,12 @@ format by default.
   `Posix.LStat` first and refuses non-regular files — `ReadExisting` (the
   first read of every mutation), the private-name inspection,
   `CapturedIsOurs`, `RequireStillOurBytes`, and the rollback's `Holds`.
+  The READ surface has the same exposure with no lock to excuse it: lint reads
+  every note, so one FIFO named `*.md` hung every lint forever. Reads open
+  through `Posix.OpenRegularForRead` — O_NONBLOCK so the open cannot block,
+  O_NOFOLLOW, and the type judged by fstat on the DESCRIPTOR, not by a stat
+  taken before the open. A new read of vault bytes goes through it; a bare
+  `File.OpenRead`/`ReadAllBytes` reopens the hang (`NonRegularFileReadTests`).
 - **Byte equality is not ownership and not continued existence.** An earlier
   fix decided rollback by comparing content and pinned a test asserting a
   byte-identical replacement gets deleted "because no distinct content is

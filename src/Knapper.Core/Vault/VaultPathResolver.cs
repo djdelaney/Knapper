@@ -33,6 +33,13 @@ public sealed class VaultPathResolver
             throw Invalid("path is empty");
         if (relativePath.Contains('\0'))
             throw Invalid("path contains NUL");
+        if (FirstUnsafeChar(relativePath) is { } unsafeChar)
+        {
+            // The code point, never the raw character: echoing a newline or a
+            // bidi override back into an error message is the problem itself.
+            throw Invalid($"path contains U+{(int)unsafeChar:X4} — control and bidirectional-override " +
+                          "characters are not allowed in vault paths");
+        }
         if (relativePath.Contains('\\'))
             throw Invalid("backslash is not allowed in vault paths; use '/'");
         if (Path.IsPathRooted(relativePath))
@@ -81,6 +88,25 @@ public sealed class VaultPathResolver
         RejectSymlinkComponents(segments, relativePath);
 
         return new VaultPath { Relative = relative, Absolute = full };
+    }
+
+    /// <summary>
+    /// Control characters (C0, DEL, C1) and bidi embedding/override/isolate
+    /// characters. Obsidian never creates them, and every consumer downstream
+    /// assumes they cannot occur: ripgrep's <c>-l</c> and count streams are
+    /// framed by newline, so a directory named <c>a\nNotes</c> split one path
+    /// into two that each resolved to real files, and search reported a
+    /// forged list under <c>truncated: false</c>. Bidi overrides make a path
+    /// display as a different one to the human reading an agent's receipt.
+    /// </summary>
+    private static char? FirstUnsafeChar(string path)
+    {
+        foreach (var c in path)
+        {
+            if (char.IsControl(c) || c is >= '\u202A' and <= '\u202E' || c is >= '\u2066' and <= '\u2069')
+                return c;
+        }
+        return null;
     }
 
     private void RejectSymlinkComponents(List<string> segments, string original) =>

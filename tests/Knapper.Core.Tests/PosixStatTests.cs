@@ -113,4 +113,23 @@ public sealed class PosixStatTests : IDisposable
         Should.Throw<KnapperException>(() => Posix.LStat(Path.Combine(_dir.Path, "ghost")))
             .Code.ShouldBe(VaultErrorCode.NotFound);
     }
+
+    /// <summary>
+    /// FStat parses the same layout from a DESCRIPTOR (statx with
+    /// AT_EMPTY_PATH on Linux, fstat on macOS); the read surface judges file
+    /// type by it, so it is pinned against the path-based LStat.
+    /// </summary>
+    [Fact]
+    public void FStat_of_an_open_descriptor_agrees_with_LStat()
+    {
+        var path = _dir.File("note.md", "twelve bytes");
+        var byPath = Posix.LStat(path);
+
+        using var handle = Posix.OpenRegularForRead(path, "note.md");
+        var byFd = Posix.FStat(handle);
+
+        byFd.ShouldBe(byPath);
+        byFd.IsRegular.ShouldBeTrue();
+        byFd.Size.ShouldBe(12);
+    }
 }

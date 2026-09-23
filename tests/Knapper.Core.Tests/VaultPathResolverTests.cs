@@ -51,6 +51,36 @@ public sealed class VaultPathResolverTests : IDisposable
         ex.Code.ShouldBe(expected);
     }
 
+    /// <summary>
+    /// ripgrep's file-list stream is framed by newline, so an agent that
+    /// could create `Notes/a\nNotes/` next to a real `Notes/a` split one path
+    /// into two real-looking ones and search answered with a forged list.
+    /// </summary>
+    [Theory]
+    [InlineData("Notes/a\nNotes/real.md")]
+    [InlineData("Notes/a\rb.md")]
+    [InlineData("tab\there.md")]
+    [InlineData("bell\u0007.md")]
+    [InlineData("del\u007F.md")]
+    [InlineData("c1\u0085.md")]
+    [InlineData("invoice\u202Efdp.md")]   // right-to-left override: displays as "invoicedm.pdf"
+    [InlineData("isolate\u2066x\u2069.md")]
+    public void Rejects_control_and_bidi_override_characters(string path)
+    {
+        var ex = Should.Throw<KnapperException>(() => _resolver.Resolve(path));
+        ex.Code.ShouldBe(VaultErrorCode.InvalidPath);
+        // The message names the code point and never echoes the character.
+        ex.Message.ShouldContain("U+");
+        ex.Message.ShouldNotContain(path);
+    }
+
+    [Theory]
+    [InlineData("שלום/מסמך.md")]              // right-to-left TEXT is ordinary — only overrides are refused
+    [InlineData("مرحبا.md")]
+    [InlineData("family 👨\u200D👩\u200D👧.md")]  // zero-width joiner is a format char, not a control
+    public void Accepts_right_to_left_text_and_emoji_sequences(string path) =>
+        _resolver.Resolve(path).Relative.ShouldBe(path);
+
     [Fact]
     public void Rejects_NUL_in_path()
     {

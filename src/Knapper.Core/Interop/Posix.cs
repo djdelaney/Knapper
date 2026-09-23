@@ -61,6 +61,12 @@ internal static partial class Posix
     [LibraryImport("libc", EntryPoint = "lstat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int lstat_macos(string path, Span<byte> buffer);
 
+    [LibraryImport("libc", EntryPoint = "fstat", SetLastError = true)]
+    private static partial int fstat_macos(SafeFileHandle fd, Span<byte> buffer);
+
+    [LibraryImport("libc", EntryPoint = "statx", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int statx_fd(SafeFileHandle dirFd, string path, int flags, uint mask, Span<byte> buffer);
+
     [LibraryImport("libc", SetLastError = true)]
     private static partial int fsync(int fd);
 
@@ -339,7 +345,81 @@ internal static partial class Posix
                 ? new KnapperException(VaultErrorCode.NotFound, $"no such file: {path}")
                 : new KnapperException(VaultErrorCode.IoError, $"lstat({path}) failed (errno {errno})");
         }
+        return ParseStat(buffer);
+    }
 
+    /// <summary>
+    /// fstat(2)/statx(2) of an OPEN descriptor: what was actually opened,
+    /// which a path-based stat taken before the open cannot promise.
+    /// </summary>
+    internal static StatInfo FStat(SafeFileHandle handle)
+    {
+        Span<byte> buffer = stackalloc byte[256];
+        int rc;
+        if (OperatingSystem.IsMacOS())
+        {
+            rc = fstat_macos(handle, buffer);
+        }
+        else
+        {
+            const int AT_EMPTY_PATH = 0x1000;
+            const uint STATX_BASIC_STATS = 0x7ff;
+            rc = statx_fd(handle, "", AT_EMPTY_PATH, STATX_BASIC_STATS, buffer);
+        }
+        if (rc != 0)
+            throw new KnapperException(VaultErrorCode.IoError, $"fstat failed (errno {Marshal.GetLastPInvokeError()})");
+        return ParseStat(buffer);
+    }
+
+    /// <summary>
+    /// Open a vault file for READING, refusing anything but a regular file —
+    /// and without being able to hang on the way. The read surface used
+    /// File.OpenRead, which blocks in open(2) on a FIFO until a writer
+    /// appears: one FIFO named *.md anywhere in the vault hung every lint
+    /// forever. O_NONBLOCK makes that open return at once (it does not
+    /// change reads from a regular file), O_NOFOLLOW refuses a symlink
+    /// swapped in since Resolve, and the type is judged by fstat on the
+    /// DESCRIPTOR, so there is no window between the check and the open.
+    /// </summary>
+    internal static SafeFileHandle OpenRegularForRead(string path, string relativeForError)
+    {
+        const int O_RDONLY = 0;
+        var macOS = OperatingSystem.IsMacOS();
+        int O_NONBLOCK = macOS ? 0x4 : 0x800;
+        int O_NOFOLLOW = macOS ? 0x100 : 0x20000;
+        int O_CLOEXEC = macOS ? 0x1000000 : 0x80000;
+        int ELOOP = macOS ? 62 : 40;
+        const int ENOENT = 2;
+
+        var fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
+        {
+            var errno = Marshal.GetLastPInvokeError();
+            if (errno == ENOENT)
+                throw new KnapperException(VaultErrorCode.NotFound, $"no such file: {relativeForError}");
+            if (errno == ELOOP)
+                throw new KnapperException(VaultErrorCode.SymlinkRejected, $"{relativeForError} is a symlink — refused");
+            throw new KnapperException(VaultErrorCode.IoError, $"cannot open {relativeForError} (errno {errno})");
+        }
+        var handle = new SafeFileHandle(fd, ownsHandle: true);
+        try
+        {
+            if (!FStat(handle).IsRegular)
+            {
+                throw new KnapperException(VaultErrorCode.InvalidArgument,
+                    $"{relativeForError} is not a regular file (a FIFO, socket, device or directory) — refused");
+            }
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    private static StatInfo ParseStat(ReadOnlySpan<byte> buffer)
+    {
         if (OperatingSystem.IsMacOS())
         {
             // __DARWIN_STRUCT_STAT64: dev@0(i32) mode@4(u16) nlink@6(u16)

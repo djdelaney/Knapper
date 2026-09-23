@@ -47,8 +47,11 @@ public sealed class VaultSearchService(
     public QueryEnvelope<string> SearchFilesOnly(VaultSearchQuery query, CancellationToken ct = default)
     {
         var plan = Prepare(query, SearchMode.FilesOnly);
-        // Newline-separated paths (vault filenames cannot contain newlines —
-        // Obsidian forbids them). No begin events → scanned_files is an
+        // Newline-separated paths. Obsidian never creates a newline-bearing
+        // name and the resolver refuses to (VaultPathResolver's control-
+        // character rule), so the framing holds for everything an agent or a
+        // Sync client can produce; the per-entry resolve below is the backstop
+        // for a name a shell put there. No begin events → scanned_files is an
         // honest null, not a guess.
         var args = new List<string> { "-l" };
         AddCommonArgs(args, query);
