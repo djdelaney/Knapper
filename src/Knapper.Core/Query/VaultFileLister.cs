@@ -103,7 +103,7 @@ public sealed class VaultFileLister(
                 isDirectory,
                 isDirectory ? null : ((FileInfo)m.Info).Length,
                 new DateTimeOffset(m.Info.LastWriteTimeUtc, TimeSpan.Zero),
-                query.IncludeSha && !isDirectory ? Sha256Of(m.Info.FullName) : null);
+                query.IncludeSha && !isDirectory ? Sha256Of(m.Info.FullName, m.Relative) : null);
         }).ToList();
 
         var generationEnd = generation.Current;
@@ -180,19 +180,23 @@ public sealed class VaultFileLister(
         return dot < 0 ? "" : name[(dot + 1)..].ToLowerInvariant();
     }
 
-    private static string Sha256Of(string absolutePath)
+    private static string Sha256Of(string absolutePath, string relative)
     {
         try
         {
-            using var stream = File.OpenRead(absolutePath);
-            return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+            // Non-blocking and typed: a FIFO in the listing used to hang it.
+            using var handle = Interop.Posix.OpenRegularForRead(absolutePath, relative);
+            using var stream = new FileStream(handle, FileAccess.Read);
+            return VaultHash.Sha256HexOf(stream);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Typed and NAMED: a raw IOException here failed the whole
-            // listing with no indication of which file broke it.
+            // listing with no indication of which file broke it. The VAULT
+            // path, never the absolute one or the OS message carrying it —
+            // this text reaches the client verbatim.
             throw new KnapperException(VaultErrorCode.IoError,
-                $"cannot hash '{absolutePath}' for include_sha: {e.Message}", e);
+                $"cannot hash '{relative}' for include_sha", e);
         }
     }
 

@@ -18,11 +18,8 @@ public static class VaultHash
     /// returned — a capped stat would make large synced attachments
     /// unmanageable through the authoritative interface.
     /// </summary>
-    public static string Sha256HexOfFile(string absolutePath)
-    {
-        using var stream = File.OpenRead(absolutePath);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
-    }
+    public static string Sha256HexOf(Stream stream) =>
+        Convert.ToHexStringLower(SHA256.HashData(stream));
 
     public static bool Matches(string expected, ReadOnlySpan<byte> data) =>
         string.Equals(expected.Trim(), Sha256Hex(data), StringComparison.OrdinalIgnoreCase);

@@ -1,5 +1,6 @@
 using System.Text;
 using Knapper.Core.Generation;
+using Knapper.Core.Interop;
 using Knapper.Core.Options;
 using Knapper.Core.Vault;
 
@@ -118,21 +119,26 @@ public sealed class VaultReadService(
         if (!File.Exists(vp.Absolute))
             return Finish(new VaultStatResult(vp.Relative, false, false, null, null, null, null, null, null, 0, 0, false));
 
-        var info = new FileInfo(vp.Absolute);
-        var mtime = new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero);
-        if (info.Length > options.MaxReadBytes)
+        // Every byte below comes through ONE descriptor, opened non-blocking
+        // and judged regular by fstat — see Posix.OpenRegularForRead.
+        using var handle = Posix.OpenRegularForRead(vp.Absolute, vp.Relative);
+        var st = Posix.FStat(handle);
+        var mtime = DateTimeOffset.FromUnixTimeSeconds(st.MtimeSec).AddTicks(st.MtimeNsec / 100);
+        if (st.Size > options.MaxReadBytes)
         {
             // The cap bounds the BODY, never the hash: the SHA is the
             // precondition currency for move/soft-delete, and a stat that
             // omitted it would strand every large synced attachment.
             // Text/encoding detection is bounded to a prefix; totalLines
             // stays null (it would require a full decode).
-            var (largeEncoding, largeIsText) = DetectTextBounded(vp.Absolute);
+            using var large = new FileStream(handle, FileAccess.Read);
+            var (largeEncoding, largeIsText) = DetectTextBounded(large);
+            large.Position = 0;
             return Finish(new VaultStatResult(
-                vp.Relative, true, false, info.Length, mtime,
-                largeEncoding, largeIsText, VaultHash.Sha256HexOfFile(vp.Absolute), null, 0, 0, false));
+                vp.Relative, true, false, st.Size, mtime,
+                largeEncoding, largeIsText, VaultHash.Sha256HexOf(large), null, 0, 0, false));
         }
-        var bytes = File.ReadAllBytes(vp.Absolute);
+        var bytes = ReadBounded(handle, st.Size, vp.Relative);
         string? encoding;
         bool isText;
         int? totalLines = null;
@@ -171,26 +177,33 @@ public sealed class VaultReadService(
     {
         if (Directory.Exists(vp.Absolute))
             throw new KnapperException(VaultErrorCode.InvalidArgument, $"path is a directory: {vp.Relative}");
-        FileInfo info = new(vp.Absolute);
-        if (!info.Exists)
-            throw new KnapperException(VaultErrorCode.NotFound, $"no such file: {vp.Relative}");
-        if (info.Length > options.MaxReadBytes)
+        // Non-blocking, no-follow, typed by fstat on the descriptor: a FIFO
+        // here used to block open(2) forever, and lint reads every note.
+        using var handle = Posix.OpenRegularForRead(vp.Absolute, vp.Relative);
+        var size = Posix.FStat(handle).Size;
+        if (size > options.MaxReadBytes)
         {
             throw new KnapperException(VaultErrorCode.TooLarge,
-                $"{vp.Relative} is {info.Length} bytes; the read cap is {options.MaxReadBytes}. " +
+                $"{vp.Relative} is {size} bytes; the read cap is {options.MaxReadBytes}. " +
                 "This vault's notes should never approach the cap — if this file is legitimate, raise Vault:MaxReadBytes.");
         }
-        // Bounded read, not ReadAllBytes: an external writer can grow the
-        // file between the stat above and the read (TOCTOU) — the buffer is
-        // sized from the stat, and one extra probe byte detects growth
-        // instead of materializing it.
-        using var stream = File.OpenRead(vp.Absolute);
-        var buffer = new byte[info.Length + 1];
+        return ReadBounded(handle, size, vp.Relative);
+    }
+
+    /// <summary>
+    /// Bounded read, not ReadAllBytes: an external writer can grow the file
+    /// between the stat and the read (TOCTOU) — the buffer is sized from the
+    /// stat, and one extra probe byte detects growth instead of materializing it.
+    /// </summary>
+    private static byte[] ReadBounded(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long size, string relative)
+    {
+        using var stream = new FileStream(handle, FileAccess.Read);
+        var buffer = new byte[size + 1];
         var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
         if (read == buffer.Length)
         {
             throw new KnapperException(VaultErrorCode.IoError,
-                $"{vp.Relative} grew while being read (external writer) — re-run the read");
+                $"{relative} grew while being read (external writer) — re-run the read");
         }
         return buffer[..read];
     }
@@ -202,10 +215,9 @@ public sealed class VaultReadService(
     /// A multi-byte sequence the cut may have truncated is trimmed before
     /// validating so a clean boundary can't misread as binary.
     /// </summary>
-    private static (string Encoding, bool IsText) DetectTextBounded(string absolutePath)
+    private static (string Encoding, bool IsText) DetectTextBounded(Stream stream)
     {
         const int PrefixBytes = 64 * 1024;
-        using var stream = File.OpenRead(absolutePath);
         var buffer = new byte[PrefixBytes];
         var read = stream.ReadAtLeast(buffer, PrefixBytes, throwOnEndOfStream: false);
         var hasBom = read >= 3 && buffer.AsSpan(0, 3).SequenceEqual(Utf8Bom);

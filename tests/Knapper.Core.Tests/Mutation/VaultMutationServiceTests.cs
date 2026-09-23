@@ -376,4 +376,18 @@ public sealed class VaultMutationServiceTests : IDisposable
         ok.GetProperty("BeforeSha256").GetString().ShouldBe(sha);
         ok.GetProperty("AfterSha256").GetString().ShouldBe(result.NewSha256);
     }
+
+    [Fact]
+    public void Newline_bearing_names_cannot_be_created_as_files_or_directories()
+    {
+        // The search-forgery setup: a directory whose name, split at the
+        // newline, yields two paths that each resolve to real files.
+        _v.Write("Notes/a", "decoy\n");
+        Should.Throw<KnapperException>(() => _v.Service.CreateDirectory("Notes/a\nNotes"))
+            .Code.ShouldBe(VaultErrorCode.InvalidPath);
+        Should.Throw<KnapperException>(() => _v.Service.Create("Notes/a\nNotes/real.md", "x\n"))
+            .Code.ShouldBe(VaultErrorCode.InvalidPath);
+        Directory.GetFileSystemEntries(Path.Combine(_v.VaultDir.Path, "Notes")).ShouldBe(
+            [Path.Combine(_v.VaultDir.Path, "Notes", "a")]);
+    }
 }
