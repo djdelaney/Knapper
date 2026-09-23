@@ -1,7 +1,6 @@
 using Knapper.Core.Generation;
 using Knapper.Core.Options;
 using Knapper.Core.Vault;
-using YamlDotNet.Serialization;
 
 namespace Knapper.Core.Query;
 
@@ -45,8 +44,6 @@ public sealed class VaultLintService(
     VaultOptions options,
     ArchivedPrefixes archived)
 {
-    private static readonly IDeserializer Yaml = new DeserializerBuilder().Build();
-
     public LintResult Lint(LintQuery query, CancellationToken ct = default)
     {
         var checks = ResolveChecks(query.Checks);
@@ -265,7 +262,7 @@ public sealed class VaultLintService(
         Dictionary<string, object?>? map;
         try
         {
-            map = Yaml.Deserialize<Dictionary<string, object?>>(block);
+            map = FrontmatterYaml.Deserialize(block);
         }
         catch (YamlDotNet.Core.YamlException)
         {

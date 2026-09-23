@@ -39,6 +39,18 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     public const long MaxScanBlobBytes = 4_000_000;
 
     /// <summary>
+    /// Text formats scanned at ANY size: the cap above exists for attachment-
+    /// class blobs, and applying it to notes left every .md between the cap and
+    /// Sync's 5,000,000-byte ceiling committed unscanned. The extension only
+    /// CLASSIFIES; the bytes are still fetched by blob SHA, never by name.
+    /// </summary>
+    internal static readonly HashSet<string> AlwaysScannedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".txt", ".json", ".canvas", ".yaml", ".yml", ".csv", ".env", ".ini", ".conf",
+        ".toml", ".xml", ".html", ".js", ".ts", ".py", ".sh", ".ps1", ".sql", ".log",
+    };
+
+    /// <summary>
     /// Wall-clock bound on any one git invocation. Every git call in this
     /// class runs while the vault-wide commit lock is held EXCLUSIVELY, and
     /// every mutation needs that lock in shared mode — so a git that never
@@ -49,6 +61,19 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// commit cycle and the cost of never expiring is a wedged vault.
     /// </summary>
     public const int GitTimeoutMs = 120_000;
+
+    /// <summary>
+    /// Per-invocation overrides for every config key the commands this job
+    /// runs would EXECUTE: hooks (pre-commit, commit-msg, post-commit…),
+    /// the fsmonitor daemon command `add` consults, and a commit-signing
+    /// program. See <see cref="Run"/>.
+    /// </summary>
+    internal static readonly string[] NeutralizedConfig =
+    [
+        "core.hooksPath=/dev/null",
+        "core.fsmonitor=false",
+        "commit.gpgSign=false",
+    ];
 
     /// <summary>Test seams: a stand-in git, and a bound short enough to assert.</summary>
     internal string GitExecutable = "git";
@@ -99,6 +124,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
         using (locks.AcquireCommitLock(lockTimeout))
         {
+            RequireNoFilterDrivers();
             Run("add", "-A");
 
             // --raw -z: NUL-delimited entries carrying each change's NEW BLOB
@@ -159,6 +185,28 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         return outcome;
     }
 
+    /// <summary>
+    /// A `filter.&lt;name&gt;.clean` (or `.process`) driver runs a program on
+    /// every matching file during `add`, under a name chosen by whoever wrote
+    /// the config, so no fixed `-c` override can neutralize it. Knapper never
+    /// configures one, so any present — including one pulled in through an
+    /// include — is refused as tampering rather than run. Reading config runs
+    /// nothing.
+    /// </summary>
+    private void RequireNoFilterDrivers()
+    {
+        var keys = Run("config", "--list", "--name-only", "-z")
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var drivers = keys.Where(k => k.StartsWith("filter.", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (drivers.Count > 0)
+        {
+            throw new KnapperException(VaultErrorCode.MutationBlocked,
+                $"commit refused: the vault's git config defines a filter driver ({string.Join(", ", drivers)}), " +
+                "which would run a program during `git add`. Knapper never sets one — treat it as tampering, " +
+                "inspect .git/config, and remove it before committing again.");
+        }
+    }
+
     /// <summary>Age of HEAD in seconds, or null when there is no commit yet — for the freshness monitor.</summary>
     public double? LastCommitAgeSeconds()
     {
@@ -213,7 +261,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
                 // Size first (cat-file -s is metadata-only): attachment-class
                 // blobs are skipped per MaxScanBlobBytes, never materialized.
                 var size = long.Parse(Run("cat-file", "-s", newBlobSha).Trim());
-                if (size > MaxScanBlobBytes)
+                if (size > MaxScanBlobBytes && !AlwaysScannedExtensions.Contains(Path.GetExtension(path)))
                     continue;
                 content = Run("cat-file", "blob", newBlobSha);
             }
@@ -237,6 +285,23 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
         };
+        // Nothing on disk may choose code for git to run. This job holds the
+        // commit lock and writes /var/lib/knapper, but `.git/` is writable by
+        // whatever else runs as the service account — obsidian-headless, a
+        // networked npm program confined to /vault and /home/knapper. A hook,
+        // an fsmonitor command or a signing program it planted there would run
+        // HERE, outside its own sandbox. System and global config are cut off
+        // entirely; the repo's own config is needed (identity), so the keys
+        // that name a program are overridden per call, and filter drivers —
+        // which have arbitrary names and cannot be overridden that way — are
+        // refused before `add` could run one (RequireNoFilterDrivers).
+        psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        psi.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        foreach (var setting in NeutralizedConfig)
+        {
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(setting);
+        }
         psi.ArgumentList.Add("-C");
         psi.ArgumentList.Add(resolver.Root);
         foreach (var a in args)

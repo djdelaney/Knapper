@@ -700,6 +700,18 @@ format by default.
   picks the work up, which is why the bound is the safe direction
   (`A_git_flooding_stderr_does_not_wedge_the_commit_lock`,
   `A_git_that_never_exits_is_killed_rather_than_holding_the_lock_forever`).
+  **And nothing on disk may choose a program for git to run.** `.git/` is
+  writable by everything running as the service account — including
+  obsidian-headless, a networked npm program sandboxed AWAY from
+  /var/lib/knapper — so a hook, `core.fsmonitor` or `gpg.program` planted
+  there would run inside the commit job with its wider access. `Run` cuts off
+  system/global config and overrides every executing key it can name
+  (`NeutralizedConfig`); filter drivers have attacker-chosen names, so any
+  `filter.*` key refuses the commit before `add` could run it. A new git
+  invocation or a new executing config key joins that list
+  (`Planted_hooks_fsmonitor_and_signing_programs_never_run`). The scanner's
+  size cap is for ATTACHMENTS: text formats are scanned at any size, or every
+  note between the cap and Sync's ceiling enters history unscanned.
 
 ## Query-layer invariants (silent-corruption-prone)
 
@@ -848,6 +860,13 @@ format by default.
   events (.git/.obsidian/.trash, temp files) are filtered because queries
   cannot see those paths; without the filter every git commit and every
   workspace.json save Sync delivers would flip `changed_during_query`.
+- **Frontmatter YAML is parsed ONLY through `FrontmatterYaml`, which refuses
+  nesting past `MaxDepth` before deserializing.** YamlDotNet's deserializer
+  recurses per level with no limit, so a ~20 KB `a: [[[[…]]]]` note overflowed
+  the stack — uncatchable in .NET, so it killed the PROCESS, and because lint
+  indexes the whole vault, every lint after the restart killed it again. One
+  vault_create plants it. A second `Deserialize` call site elsewhere reopens
+  it (`FrontmatterDepthTests`, which crash the test host if the guard goes).
 - **Frontmatter search reports what it could not examine.** Broken YAML and
   non-UTF-8 .md files land in `UnparseableFiles` — a skipped file could be
   hiding a match, and "no match" must mean the scope was exhaustively
