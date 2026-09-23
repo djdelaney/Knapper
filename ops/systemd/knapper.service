@@ -50,10 +50,13 @@ Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 Environment=Sync__MaxAgeSeconds=300
 Environment=Mcp__BindAddress=127.0.0.1
 Environment=Mcp__Port=3535
-Environment=Mcp__AllowedHosts__0=mcp.example.com
-# Access origin validation: set these when the Cloudflare Access apps exist —
-# BOTH of them, in one edit. Runbook §6.2 creates both before §6.3 edits this
-# file, so this block is filled in once and the service restarts once.
+# Access origin validation AND the public hostname: set these when the
+# Cloudflare Access apps exist — BOTH of them, in one edit. Runbook §6.2
+# creates both before §6.3 edits this file, so this block is filled in once
+# and the service restarts once. The hostname lives in this block because the
+# server REFUSES to start with a public AllowedHosts and Access off: that pair
+# is the whole vault served to whoever reaches the name.
+#Environment=Mcp__AllowedHosts__0=mcp.example.com
 #Environment=Mcp__Access__Enabled=true
 #Environment=Mcp__Access__TeamDomain=https://YOURTEAM.cloudflareaccess.com
 #Environment=Mcp__Access__Audience=YOUR_ACCESS_APP_AUD

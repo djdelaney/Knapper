@@ -69,6 +69,19 @@ internal sealed class FakeAccessEdge : IDisposable
     /// </summary>
     internal const string PublicHost = "mcp.example.test";
 
+    /// <summary>
+    /// What the origin behind this edge needs: the public Host allowed, and
+    /// the explicit test-rig override, because the server otherwise refuses
+    /// to boot with a public hostname and Access off. THIS fake edge enforces
+    /// Access in front of it; the origin's own JWT validation is covered by
+    /// the in-process AccessTopologyTests.
+    /// </summary>
+    internal static Dictionary<string, string> OriginSettings => new()
+    {
+        ["Mcp__AllowedHosts__0"] = PublicHost,
+        ["Mcp__Access__AllowPublicHostsWithoutAccess"] = "true",
+    };
+
     private const string LoginPath = "/cdn-cgi/access/login/";
 
     private readonly WebApplication _app;
