@@ -38,6 +38,15 @@ public sealed class AccessOptions
     public bool AllowLoopback { get; set; } = true;
 
     /// <summary>
+    /// Boot with Access disabled while <c>Mcp:AllowedHosts</c> names a public
+    /// hostname. Refused by default: that pair only means something when the
+    /// server is reachable under that name, and without origin validation
+    /// anything reaching it reads and mutates the whole vault. For a test rig
+    /// whose own fake edge stands in front — never production.
+    /// </summary>
+    public bool AllowPublicHostsWithoutAccess { get; set; }
+
+    /// <summary>
     /// The JWKS Access signs with — a bare key set, NOT an OIDC discovery
     /// document. Access publishes no discovery document at the team domain;
     /// deriving a MetadataAddress 404s silently and the server authenticates

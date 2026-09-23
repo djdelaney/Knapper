@@ -52,11 +52,12 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 |---|---|---|
 | `BindAddress` | `127.0.0.1` | IP literal (never "localhost"). Loopback in production too — cloudflared is the only ingress. |
 | `Port` | 3535 | |
-| `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. |
+| `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. A public name with `Access:Enabled` false **refuses startup** — see `Access:AllowPublicHostsWithoutAccess`. |
 | `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. E.g. disable the mutation tools for a read-only deployment. |
 | `RestrictHealthToLoopback` | true | `/health` (detailed) 404s for non-loopback callers. |
 | `LogToolCalls` | true | One Information log line per tool call, reads included — to **stdout**, i.e. the service journal (`journalctl -u knapper`), never to `Vault:AuditLogPath`. The two settings sit next to each other in the unit file and write to different places: audit log = mutations only, on disk; this = every call, in the journal. |
 | `Access:Enabled` | false | Cloudflare Access assertion validation at the origin. |
+| `Access:AllowPublicHostsWithoutAccess` | false | Boot with a public `AllowedHosts` entry while `Access:Enabled` is false. Refused by default because the pair serves the whole vault, unauthenticated, to anything reaching the hostname. For test rigs with their own fake edge in front; never production. |
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
 | `Access:MonitoringAudience` | — | Second AUD accepted on `/up` only. Must differ from `Access:Audience` — equal values would give the monitoring credential the whole vault surface, so startup **refuses**. Empty is the **single-app setup**: `/up` falls back to accepting the owner audience, so the monitor authenticates with the vault's own token and the credential in its config file on another machine carries every note. Supported, but a downgrade, not a neutral default — and note the asymmetry: an equal AUD refuses startup outright, while an empty one boots clean with `doctor` all-ok, `/health` and `/up` green, and `knapper verify` *skipping* the check that would catch it (no `CF_MONITOR_*` pair to test with). A startup **warning** is the only signal, so two apps is the default (runbook §6.2 creates both before the unit is edited). |

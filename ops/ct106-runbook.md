@@ -357,9 +357,11 @@ Configure `knapper.service` ONCE, here, before anything reads its environment
 is only as good as the unit being finished when it is taken:
 
 - paths, if they differ from the unit's defaults;
-- `Mcp__AllowedHosts__0` = the REAL public hostname (the unit ships the
-  `mcp.example.com` placeholder). §6.3 re-checks it because that is when it
-  starts mattering, not because it is edited then;
+- NOT `Mcp__AllowedHosts__0`. The public hostname moved into §6.3's Access
+  block (commented out in the shipped unit): the server REFUSES to start with
+  a public hostname allowed and Access off, because that pair is the whole
+  vault served to whoever reaches the name. Setting it here makes the
+  `enable --now` below fail;
 - `Sync__MaxAgeSeconds=300` — see the sync-gate bullet below for why it is
   pinned explicitly.
 - `Sync__MaxFileBytes=5000000` — the largest file Obsidian Sync will carry;
@@ -384,8 +386,9 @@ is only as good as the unit being finished when it is taken:
   case-sensitive and boundary-aware, so `Archive` protects neither `archive/`
   nor `Archived Recipes/`.
 
-The ONE edit that genuinely cannot happen yet is §6.3's Access block: the AUD
-does not exist until the Access app does. That edit carries its own
+The ONE edit that genuinely cannot happen yet is §6.3's Access block (and
+the public hostname that rides in it): the AUD does not exist until the
+Access app does. That edit carries its own
 `daemon-reload` + `restart`, and re-running the `doctor` line below after it
 is the cheapest way to confirm the unit still says what you think.
 
@@ -405,7 +408,7 @@ cp /opt/knapper/ops/systemd/*.{service,timer} /etc/systemd/system/
 # copytruncate is mandatory (ob holds the fd) — see §4.
 cp /opt/knapper/ops/logrotate/knapper-sync-log /etc/logrotate.d/
 logrotate --debug /etc/logrotate.d/knapper-sync-log   # parses? names the real log?
-$EDITOR /etc/systemd/system/knapper.service     # the three edits listed above
+$EDITOR /etc/systemd/system/knapper.service     # the edits listed above
 systemctl daemon-reload
 # NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
 # with no .git, and the repo is not created until §7. It starts there.
@@ -652,6 +655,12 @@ and still without a write.
    tunnel config: Knapper's local-caller exemption is loopback peer AND
    loopback Host, and rewriting tunneled requests to `localhost` would
    dress them up as same-box callers.
+   The route is live before any Access app exists, and that is safe ONLY
+   because the origin does not yet allow the public hostname: until §6.3 the
+   rebinding guard answers every tunneled request 403. That is also why the
+   hostname cannot be set early — the server refuses to start with a public
+   `Mcp__AllowedHosts__0` and Access off, rather than serve the vault to
+   whoever finds the route in this window.
 2. **BOTH Access applications, before the unit is touched.** One Cloudflare
    console session, two apps, two service tokens:
 
@@ -669,22 +678,24 @@ and still without a write.
    point, or an operator reading §6.3 as "the Access edit", ends up in the
    dangerous configuration by following the document. Write both AUDs down
    now; §6.3 spends them together.
-3. Origin validation ON (knapper.service) — **the ONE unit edit, all four
-   values, one restart**: `Mcp__Access__Enabled=true`,
+3. Origin validation ON (knapper.service) — **the ONE unit edit, all five
+   values, one restart**: `Mcp__AllowedHosts__0` (the REAL public hostname,
+   not the shipped `mcp.example.com` placeholder), `Mcp__Access__Enabled=true`,
    `Mcp__Access__TeamDomain`, `Mcp__Access__Audience` (the root app's AUD),
    `Mcp__Access__MonitoringAudience` (the `/up` app's) — then
    `systemctl daemon-reload && systemctl restart knapper`. The unit ships all
-   four commented out; uncomment all four. This is the one edit §5 could not
-   fold in, because neither AUD exists until the apps do; re-run §5's `doctor`
-   line afterwards so the captured environment matches the unit again. The
-   server refuses to start if it cannot fetch the signing keys — that refusal
-   is the feature, and it warns if `MonitoringAudience` came out empty.
-   **`Mcp__AllowedHosts__0` must already be the
-   real public hostname**: a tunneled request keeps that hostname, and the
-   DNS-rebinding guard rejects every Host it does not recognize — with the
-   shipped `mcp.example.com` placeholder still in place, ingress comes up
-   and then refuses all of it. Verify through the tunnel, not from the CT:
-   a loopback `curl` passes the guard no matter what this is set to.
+   five commented out; uncomment all five. This is the one edit §5 could not
+   fold in, because neither AUD exists until the apps do, and the hostname
+   may not be allowed before Access is on; re-run §5's `doctor` line
+   afterwards so the captured environment matches the unit again. The server
+   refuses to start if it cannot fetch the signing keys — that refusal is the
+   feature, and it warns if `MonitoringAudience` came out empty. It also
+   refuses a public `AllowedHosts` with `Access__Enabled` still commented out,
+   which is how a half-applied edit announces itself. A tunneled request keeps
+   the public hostname, and the DNS-rebinding guard rejects every Host it does
+   not recognize — so a typo there brings ingress up and then refuses all of
+   it. Verify through the tunnel, not from the CT: a loopback `curl` passes
+   the guard no matter what this is set to.
 4. **Why two apps, and what one costs.** The `/up` app must be a genuinely
    SEPARATE application: startup refuses when `Mcp__Access__MonitoringAudience`
    equals `Mcp__Access__Audience`, because equal AUDs give the monitoring

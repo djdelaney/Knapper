@@ -41,6 +41,31 @@ public static class HostGuard
             && IsLoopbackHost(context!.Request.Host.Host);
     }
 
+    /// <summary>
+    /// Null when coherent; the refusal when Access is off and a configured
+    /// allowed host is public. A public name in AllowedHosts exists for one
+    /// reason — requests arriving under it through the tunnel — so pairing it
+    /// with disabled origin validation is exposure, not a dev setup. Refusing
+    /// here, rather than warning, is what makes the runbook's step order safe:
+    /// a tunnel routed before the Access apps exist reaches a server that
+    /// 403s the public Host, instead of one that serves it.
+    /// </summary>
+    public static string? UnauthenticatedExposureError(Knapper.Core.Options.McpOptions options)
+    {
+        if (options.Access.Enabled || options.Access.AllowPublicHostsWithoutAccess)
+            return null;
+        var publicHosts = (options.AllowedHosts ?? [])
+            .Select(h => h?.Trim())
+            .Where(h => !string.IsNullOrEmpty(h) && !IsLoopbackHost(h))
+            .ToList();
+        if (publicHosts.Count == 0)
+            return null;
+        return $"Mcp:AllowedHosts names a public hostname ({string.Join(", ", publicHosts)}) but " +
+               "Mcp:Access:Enabled is false — anything reaching this server under that name could read " +
+               "and MUTATE the whole vault. Enable Access (runbook §6.3), or remove the public hostname " +
+               "until you do.";
+    }
+
     public static HashSet<string> BuildAllowedHosts(IEnumerable<string>? configured)
     {
         var set = new HashSet<string>(Loopback, StringComparer.OrdinalIgnoreCase);

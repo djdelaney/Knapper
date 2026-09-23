@@ -68,6 +68,36 @@ public class StartupContainmentTests
             "would carry the whole vault surface");
 
     /// <summary>
+    /// A public name in AllowedHosts is only there so the tunnel's requests
+    /// get through; with Access off, that is the whole vault served to
+    /// whoever reaches the hostname. The unit used to ship exactly this pair
+    /// and the server only warned.
+    /// </summary>
+    [Fact]
+    public void A_public_allowed_host_with_Access_disabled_refuses_startup() =>
+        ShouldRefuseStartup(
+            _ => new() { ["Mcp:AllowedHosts:0"] = "mcp.example.test" },
+            "Mcp:Access:Enabled is false");
+
+    [Fact]
+    public void Loopback_allowed_hosts_with_Access_disabled_still_boot()
+    {
+        using var factory = new KnapperMcpFactory(new() { ["Mcp:AllowedHosts:0"] = "LOCALHOST" });
+        using var client = factory.CreateClient();
+    }
+
+    [Fact]
+    public void The_explicit_override_boots_a_public_host_without_Access()
+    {
+        using var factory = new KnapperMcpFactory(new()
+        {
+            ["Mcp:AllowedHosts:0"] = "mcp.example.test",
+            ["Mcp:Access:AllowPublicHostsWithoutAccess"] = "true",
+        });
+        using var client = factory.CreateClient();
+    }
+
+    /// <summary>
     /// The case-sensitivity probe is the first thing at boot to WRITE the vault
     /// root, so an unwritable root surfaces there. It must refuse with a
     /// diagnosis rather than escape as a raw filesystem exception — and must

@@ -102,7 +102,7 @@ public sealed class VerifyCommandTests : IDisposable
         // the rebinding guard refuses every tunneled request — §6.3's
         // `Mcp__AllowedHosts__0`, and the reason it is called out there.
         using var server = new AcceptanceServer(_vaultDir, _outsideDir,
-            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+            FakeAccessEdge.OriginSettings);
         using var edge = new FakeAccessEdge(server.Port);
 
         var (exitCode, output) = RunVerify(edge);
@@ -144,7 +144,7 @@ public sealed class VerifyCommandTests : IDisposable
     public void A_Managed_OAuth_refusal_is_described_by_what_it_carries_not_by_its_status_code()
     {
         using var server = new AcceptanceServer(_vaultDir, _outsideDir,
-            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+            FakeAccessEdge.OriginSettings);
         using var edge = new FakeAccessEdge(server.Port, rootRefusal: RootRefusal.ManagedOAuth);
 
         var (exitCode, output) = RunVerify(edge);
@@ -191,7 +191,7 @@ public sealed class VerifyCommandTests : IDisposable
         // the rebinding guard refuses every tunneled request — §6.3's
         // `Mcp__AllowedHosts__0`, and the reason it is called out there.
         using var server = new AcceptanceServer(_vaultDir, _outsideDir,
-            new Dictionary<string, string> { ["Mcp__AllowedHosts__0"] = FakeAccessEdge.PublicHost });
+            FakeAccessEdge.OriginSettings);
         using var edge = new FakeAccessEdge(server.Port, vaultSurfaceExposed: true);
 
         var (exitCode, output) = RunVerify(edge);

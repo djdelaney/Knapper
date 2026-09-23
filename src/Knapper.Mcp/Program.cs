@@ -176,6 +176,8 @@ var resolvedSyncOpts = app.Services.GetRequiredService<IOptions<SyncOptions>>().
 
 if (resolvedMcpOpts.Access.Validate() is { } accessConfigError)
     throw new InvalidOperationException(accessConfigError);
+if (HostGuard.UnauthenticatedExposureError(resolvedMcpOpts) is { } exposureError)
+    throw new InvalidOperationException(exposureError);
 
 var vaultRoot = app.Services.GetRequiredService<VaultPathResolver>().Root;
 bool vaultIsCaseInsensitive;
