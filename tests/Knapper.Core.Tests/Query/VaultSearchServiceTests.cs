@@ -522,7 +522,9 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
             Knapper.Core.Vault.ArchivedPrefixes.None);
         var ex = Should.Throw<KnapperException>(() => broken.SearchMatches(Q("x")));
         ex.Code.ShouldBe(VaultErrorCode.IoError);
-        ex.Message.ShouldContain("is ripgrep installed");
+        ex.Message.ShouldContain("knapper doctor");
+        // Reaches the client verbatim: no server path, no OS text.
+        ex.Message.ShouldNotContain("/nonexistent/rg");
     }
 
     [Fact]
@@ -538,5 +540,49 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
 
         // ...and a quiet query reports stability.
         _vault.Search.SearchMatches(Q("needle")).ChangedDuringQuery.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Every search input becomes an rg argument, and execve refuses one over
+    /// 128 KiB. A 200 KB pattern used to fail there — as an [IoError] carrying
+    /// the server's ripgrep path and OS text — instead of as invalid input.
+    /// </summary>
+    [Fact]
+    public void Oversized_search_inputs_are_refused_as_invalid_before_ripgrep_runs()
+    {
+        var huge = new string('x', 200_000);
+        var cases = new VaultSearchQuery[]
+        {
+            Q(huge),
+            Q(new string('é', VaultSearchService.MaxPatternBytes / 2 + 1)), // the cap counts UTF-8 bytes
+            Q("needle") with { IncludeGlobs = [huge] },
+            Q("needle") with { ExcludeGlobs = [new string('a', 257)] },
+            Q("needle") with { IncludeGlobs = [.. Enumerable.Repeat("*.md", 65)] },
+            Q("needle") with { Extensions = [.. Enumerable.Repeat("md", 65)] },
+        };
+        foreach (var query in cases)
+        {
+            foreach (var run in (Action[])[
+                () => _vault.Search.SearchMatches(query),
+                () => _vault.Search.SearchFilesOnly(query),
+                () => _vault.Search.SearchCounts(query)])
+            {
+                var ex = Should.Throw<KnapperException>(run);
+                ex.Code.ShouldBe(VaultErrorCode.InvalidArgument);
+                ex.Message.ShouldContain("cap");
+            }
+        }
+    }
+
+    [Fact]
+    public void Inputs_at_the_caps_still_search()
+    {
+        var query = Q("needle" + new string('x', VaultSearchService.MaxPatternBytes - 6)) with
+        {
+            Literal = true,
+            IncludeGlobs = [.. Enumerable.Repeat("*.md", VaultSearchService.MaxListItems)],
+            ExcludeGlobs = [new string('z', 256)],
+        };
+        _vault.Search.SearchMatches(query).Items.ShouldBeEmpty();
     }
 }

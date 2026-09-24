@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Knapper.Core.Generation;
 using Knapper.Core.Options;
@@ -190,10 +191,35 @@ public sealed class VaultSearchService(
         ArchivedPrefixes Excluded,
         long GenerationStart);
 
+    /// <summary>Far above any real search, far below the kernel's 128 KiB per-argument limit.</summary>
+    internal const int MaxPatternBytes = 8 * 1024;
+
+    /// <summary>Per list (globs, extensions) — the same bound as path prefixes.</summary>
+    internal const int MaxListItems = 64;
+
     private Plan Prepare(VaultSearchQuery query, SearchMode mode)
     {
         if (string.IsNullOrEmpty(query.Pattern))
             throw new KnapperException(VaultErrorCode.InvalidArgument, "pattern is required");
+        // Every one of these becomes an rg argument. Linux refuses a single
+        // argument over 128 KiB (E2BIG) and a whole argv over a few MB, so an
+        // unbounded pattern or list failed at execve — as an [IoError] that
+        // blamed the server — instead of as the caller's invalid input.
+        var patternBytes = Encoding.UTF8.GetByteCount(query.Pattern);
+        if (patternBytes > MaxPatternBytes)
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"pattern is {patternBytes} bytes; the cap is {MaxPatternBytes}");
+        }
+        foreach (var (name, list) in (ReadOnlySpan<(string, IReadOnlyList<string>?)>)
+                 [("include_globs", query.IncludeGlobs), ("exclude_globs", query.ExcludeGlobs), ("extensions", query.Extensions)])
+        {
+            if (list is { Count: > MaxListItems })
+            {
+                throw new KnapperException(VaultErrorCode.InvalidArgument,
+                    $"{list.Count} {name}; the cap is {MaxListItems}");
+            }
+        }
         if (query.ContextBefore is < 0 or > 50 || query.ContextAfter is < 0 or > 50)
             throw new KnapperException(VaultErrorCode.InvalidArgument, "context must be between 0 and 50 lines");
 

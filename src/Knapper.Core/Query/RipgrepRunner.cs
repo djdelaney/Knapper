@@ -74,8 +74,12 @@ internal sealed class RipgrepRunner(string ripgrepPath)
         }
         catch (Win32Exception e)
         {
+            // No path and no OS text: this reaches the client verbatim. The
+            // one caller-reachable trigger was argv over the kernel's
+            // per-argument limit (E2BIG), which the search caps now refuse
+            // first; what remains is a server fault `knapper doctor` names.
             throw new KnapperException(VaultErrorCode.IoError,
-                $"cannot execute ripgrep at '{ripgrepPath}' — is ripgrep installed and on PATH? ({e.Message})");
+                "cannot execute ripgrep on the server — run `knapper doctor` there to diagnose it", e);
         }
 
         using (process)

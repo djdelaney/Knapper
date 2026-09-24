@@ -44,6 +44,14 @@ internal static class Globbing
     {
         if (string.IsNullOrWhiteSpace(glob) || glob.Contains('\0'))
             throw new KnapperException(VaultErrorCode.InvalidArgument, "glob is empty or contains NUL");
+        // Length here, not only in Translate: vault_search's globs never reach
+        // Translate, and an unbounded one became an rg argument long enough
+        // for execve to refuse (E2BIG).
+        if (glob.Length > MaxGlobLength)
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"glob is {glob.Length} characters; the cap is {MaxGlobLength}");
+        }
         if (glob[0] == '!')
         {
             throw new KnapperException(VaultErrorCode.InvalidArgument,
