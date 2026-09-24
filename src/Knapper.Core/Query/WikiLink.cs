@@ -211,6 +211,12 @@ internal static class WikiLink
 
     private static IEnumerable<Ref> ScanLinks(string scannable, string raw, int lineNo, bool inTable)
     {
+        // Byte columns are accumulated, never recounted from the start of the
+        // line: link starts only move forward, and recounting made one long
+        // line of links quadratic (a 1 MB line of [[a]] took seconds, with
+        // lint's deadline only checked between files).
+        var columnChar = 0;
+        var columnBytes = 0;
         for (var i = 0; i + 1 < scannable.Length; i++)
         {
             if (scannable[i] != '[' || scannable[i + 1] != '[')
@@ -223,9 +229,11 @@ internal static class WikiLink
             var inner = raw.Substring(i + 2, close - (i + 2));
 
             var (target, fragment, isBlock, alias, unescapedPipe) = Split(inner);
+            columnBytes += Encoding.UTF8.GetByteCount(raw.AsSpan(columnChar, start - columnChar));
+            columnChar = start;
             yield return new Ref(
                 lineNo,
-                ByteColumn(raw, start),
+                columnBytes + 1,
                 raw[start..(close + 2)],
                 isEmbed,
                 target,
@@ -301,47 +309,54 @@ internal static class WikiLink
     /// true. A backtick run opens a span that only a run of the SAME length
     /// closes; an unclosed run is literal text (CommonMark), so it masks
     /// nothing.
+    ///
+    /// Linear: each run's closer is found through a precomputed "next run of
+    /// this length" table. Searching forward from every unmatched run was
+    /// quadratic in the number of runs on a line — a note an agent can write.
     /// </summary>
-    private static string MaskInlineCode(string line)
+    internal static string MaskInlineCode(string line)
     {
         if (!line.Contains('`', StringComparison.Ordinal))
             return line;
-        var chars = line.ToCharArray();
-        var i = 0;
-        while (i < chars.Length)
+
+        var starts = new List<int>();
+        var lengths = new List<int>();
+        for (var i = 0; i < line.Length;)
         {
-            if (chars[i] != '`')
+            if (line[i] != '`')
             {
                 i++;
                 continue;
             }
             var open = i;
-            while (i < chars.Length && chars[i] == '`')
+            while (i < line.Length && line[i] == '`')
                 i++;
-            var runLength = i - open;
-            var close = FindRun(chars, i, runLength);
+            starts.Add(open);
+            lengths.Add(i - open);
+        }
+
+        var nextSameLength = new int[starts.Count];
+        var lastSeen = new Dictionary<int, int>();
+        for (var k = starts.Count - 1; k >= 0; k--)
+        {
+            nextSameLength[k] = lastSeen.TryGetValue(lengths[k], out var j) ? j : -1;
+            lastSeen[lengths[k]] = k;
+        }
+
+        var chars = line.ToCharArray();
+        for (var k = 0; k < starts.Count;)
+        {
+            var close = nextSameLength[k];
             if (close < 0)
-                continue; // literal backticks; leave the rest of the line scannable
-            for (var j = open; j < close + runLength; j++)
-                chars[j] = ' ';
-            i = close + runLength;
+            {
+                k++; // literal backticks; leave the rest of the line scannable
+                continue;
+            }
+            for (var c = starts[k]; c < starts[close] + lengths[close]; c++)
+                chars[c] = ' ';
+            k = close + 1;
         }
         return new string(chars);
-    }
-
-    private static int FindRun(char[] chars, int from, int runLength)
-    {
-        for (var i = from; i < chars.Length; i++)
-        {
-            if (chars[i] != '`')
-                continue;
-            var start = i;
-            while (i < chars.Length && chars[i] == '`')
-                i++;
-            if (i - start == runLength)
-                return start;
-        }
-        return -1;
     }
 
     /// <summary>Which lines render as table rows, and which candidate blocks do not render at all.</summary>
@@ -661,7 +676,4 @@ internal static class WikiLink
     }
 
     private static string Trim(string line) => line.Trim().TrimEnd('\r');
-
-    private static int ByteColumn(string line, int charIndex) =>
-        Encoding.UTF8.GetByteCount(line.AsSpan(0, charIndex)) + 1;
 }
