@@ -253,6 +253,37 @@ public sealed class VerifyCommandTests : IDisposable
             .SingleOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal))
         ?? throw new InvalidOperationException($"no line starting '{prefix}' in:\n{output}");
 
+    /// <summary>
+    /// A secret on the command line is readable by every process on the box
+    /// (/proc/*/cmdline) and lands in shell history. The runbook never passes
+    /// one that way; the CLI now refuses to take one at all.
+    /// </summary>
+    [Theory]
+    [InlineData("--client-secret")]
+    [InlineData("--monitor-client-secret")]
+    public void A_secret_on_the_command_line_is_refused(string flag)
+    {
+        var (exitCode, output) = RunVerifyRaw("--url", "https://mcp.example.test/", flag, "s3cret-value");
+        exitCode.ShouldBe(2, output);
+        output.ShouldContain("CF_");
+        output.ShouldNotContain("s3cret-value");
+    }
+
+    /// <summary>
+    /// Service-token secrets travel as request headers: plain http to a remote
+    /// host sends them in the clear. Loopback http stays legal (every other
+    /// test here runs on it).
+    /// </summary>
+    [Theory]
+    [InlineData("http://mcp.example.test/")]
+    [InlineData("ftp://mcp.example.test/")]
+    public void A_non_https_remote_URL_is_refused_before_any_request(string url)
+    {
+        var (exitCode, output) = RunVerifyRaw("--url", url);
+        exitCode.ShouldBe(2, output);
+        output.ShouldContain("must be https://");
+    }
+
     /// <summary>Straight at the server, no edge — the §5 same-box shape.</summary>
     private static (int ExitCode, string Output) RunVerify(int port) =>
         RunVerify(new Uri($"http://127.0.0.1:{port}/"), null);
@@ -264,6 +295,25 @@ public sealed class VerifyCommandTests : IDisposable
     /// </summary>
     private static (int ExitCode, string Output) RunVerify(FakeAccessEdge edge) =>
         RunVerify(edge.Url, edge);
+
+    /// <summary>Exactly these arguments after `verify`, no credentials in the environment.</summary>
+    private static (int ExitCode, string Output) RunVerifyRaw(params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = AppContext.BaseDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var a in (string[])["exec", CliDll(), "verify", .. args])
+            psi.ArgumentList.Add(a);
+        using var process = Process.Start(psi)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.WaitForExit(60_000).ShouldBeTrue("verify did not finish");
+        return (process.ExitCode, stdout.Result + stderr.Result);
+    }
 
     private static (int ExitCode, string Output) RunVerify(Uri url, FakeAccessEdge? edge)
     {

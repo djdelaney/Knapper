@@ -48,11 +48,11 @@ internal enum RootRefusal
 
 internal sealed class FakeAccessEdge : IDisposable
 {
-    // The host application's service token — `verify`'s --client-id/secret.
+    // The host application's service token — `verify`'s CF_ACCESS_CLIENT_ID/SECRET.
     internal const string VaultTokenId = "vault-token.access";
     internal const string VaultTokenSecret = "vault-token-secret";
 
-    // The /up application's — --monitor-client-id/secret. Deliberately valid
+    // The /up application's — CF_MONITOR_CLIENT_ID/SECRET. Deliberately valid
     // ONLY on /up: the credential asymmetry is the thing §6.5 asserts.
     internal const string MonitorTokenId = "monitor-token.access";
     internal const string MonitorTokenSecret = "monitor-token-secret";
