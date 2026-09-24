@@ -186,9 +186,15 @@ apt install git jq
 # reports "searches": 0 for a query with no matches and so empties the
 # scannedFiles evidence behind every "no match" answer. `knapper doctor`
 # fails on anything older. Pin the version; never float latest.
+# The hash is pinned WITH the version: this binary is on every search path
+# the vault has, so a tampered download must fail here, loudly, not install.
+# It is ripgrep's own published .sha256 for this asset (checked 2026-09-24);
+# bump both lines together, and ci.yml's copy with them.
 RG=15.2.0
+RG_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
 curl -sSLf -o /tmp/rg.tar.gz \
   "https://github.com/BurntSushi/ripgrep/releases/download/${RG}/ripgrep-${RG}-x86_64-unknown-linux-musl.tar.gz"
+echo "${RG_SHA256}  /tmp/rg.tar.gz" | sha256sum -c -   # must print OK; stop here if not
 tar xzf /tmp/rg.tar.gz -C /tmp
 install "/tmp/ripgrep-${RG}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
 rg --version                                  # must report 15.x or newer

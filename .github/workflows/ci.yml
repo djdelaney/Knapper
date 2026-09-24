@@ -17,7 +17,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to a COMMIT, not a tag: a tag can be moved to new
+      # code by whoever controls the action's repo, and this job builds the
+      # binary that holds the vault. The comment names the tag the SHA was
+      # resolved from (2026-09-24); bump both together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # AGENTS.md and CLAUDE.md are two real byte-identical files (a symlink
       # would be tidier, but agent tooling in use here refuses to read one).
@@ -54,7 +58,7 @@ jobs:
       - name: Shell tests
         run: tests/shell/run.sh
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
 
@@ -68,9 +72,13 @@ jobs:
       - name: Install ripgrep (pinned)
         run: |
           RG_VERSION=15.2.0
+          # ripgrep's published .sha256 for this asset; pinned with the
+          # version, same pair as runbook §3.
+          RG_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
           RG_DIR="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
           curl -sSLf -o /tmp/rg.tar.gz \
             "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_DIR}.tar.gz"
+          echo "${RG_SHA256}  /tmp/rg.tar.gz" | sha256sum -c -
           tar xzf /tmp/rg.tar.gz -C /tmp
           sudo install "/tmp/${RG_DIR}/rg" /usr/local/bin/rg
           rg --version
