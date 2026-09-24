@@ -64,30 +64,50 @@ internal static class Verify
                     expectVersionFromSelf = true;
                     break;
                 case "--client-id": clientId = value; i++; break;
-                case "--client-secret": clientSecret = value; i++; break;
                 case "--monitor-client-id": monitorId = value; i++; break;
-                case "--monitor-client-secret": monitorSecret = value; i++; break;
+                // Refused rather than accepted: argv is readable by every
+                // process on the box (/proc/*/cmdline) and lands in shell
+                // history, so a secret there is exposed the moment it is typed.
+                // The runbook already supplies them through a 0600 env file.
+                case "--client-secret":
+                case "--monitor-client-secret":
+                    Console.Error.WriteLine(
+                        $"verify: {args[i]} is not accepted — a secret on the command line is readable by every " +
+                        "process on the box and lands in shell history. Set CF_ACCESS_CLIENT_SECRET / " +
+                        "CF_MONITOR_CLIENT_SECRET in the environment instead (runbook §6.5).");
+                    return 2;
                 default:
                     Console.Error.WriteLine($"verify: unknown argument '{args[i]}'");
                     return 2;
             }
         }
 
-        // Env fallbacks so the service-token SECRET never has to appear in a
-        // shell history or a systemd unit's ExecStart.
+        // The service-token SECRETS come from the environment only, so they
+        // never appear in a shell history or a systemd unit's ExecStart.
         clientId ??= Environment.GetEnvironmentVariable("CF_ACCESS_CLIENT_ID");
-        clientSecret ??= Environment.GetEnvironmentVariable("CF_ACCESS_CLIENT_SECRET");
+        clientSecret = Environment.GetEnvironmentVariable("CF_ACCESS_CLIENT_SECRET");
         monitorId ??= Environment.GetEnvironmentVariable("CF_MONITOR_CLIENT_ID");
-        monitorSecret ??= Environment.GetEnvironmentVariable("CF_MONITOR_CLIENT_SECRET");
+        monitorSecret = Environment.GetEnvironmentVariable("CF_MONITOR_CLIENT_SECRET");
 
         if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var endpoint))
         {
             Console.Error.WriteLine(
-                "usage: knapper verify --url <https://mcp.example.com/> [--client-id ID --client-secret SECRET] " +
-                "[--monitor-client-id ID --monitor-client-secret SECRET] " +
+                "usage: knapper verify --url <https://mcp.example.com/> [--client-id ID] [--monitor-client-id ID] " +
                 "[--expect-version X.Y.Z | --expect-this-version] [--expect-access]\n" +
-                "  Service-token credentials also read from CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET and " +
-                "CF_MONITOR_CLIENT_ID/CF_MONITOR_CLIENT_SECRET.");
+                "  Service-token secrets are read ONLY from CF_ACCESS_CLIENT_SECRET and CF_MONITOR_CLIENT_SECRET " +
+                "(ids also from CF_ACCESS_CLIENT_ID / CF_MONITOR_CLIENT_ID).");
+            return 2;
+        }
+
+        // Service-token secrets travel as request headers, so anything but
+        // TLS to a remote host sends them in the clear. Plain http stays
+        // legal on loopback, where the same-box checks (and the acceptance
+        // suite's fake edge) live.
+        if (endpoint.Scheme != Uri.UriSchemeHttps && !(endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback))
+        {
+            Console.Error.WriteLine(
+                $"verify: refusing '{endpoint}' — a non-loopback URL must be https://, or the service-token " +
+                "secrets would cross the network unencrypted.");
             return 2;
         }
 
@@ -248,7 +268,7 @@ internal static class Verify
             else if (monitor is null)
             {
                 Skip("the monitoring token cannot reach the vault surface",
-                    "no --monitor-client-id/--monitor-client-secret given (single-app setup)");
+                    "no CF_MONITOR_CLIENT_ID/CF_MONITOR_CLIENT_SECRET given (single-app setup)");
             }
             else
             {

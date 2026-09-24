@@ -55,7 +55,7 @@ int Usage()
 {
     Console.Error.WriteLine(
         "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|version|" +
-        "verify --url <url> [--expect-version X.Y.Z] [--client-id ID --client-secret SECRET]>");
+        "verify --url <url> [--expect-version X.Y.Z] [--client-id ID]  (secrets: CF_ACCESS_CLIENT_SECRET env only)>");
     return 2;
 }
 
