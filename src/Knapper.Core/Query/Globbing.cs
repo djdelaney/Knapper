@@ -136,10 +136,72 @@ internal static class Globbing
         // regex gives); the timeout is belt-and-suspenders should the
         // pattern ever pick up a construct that forces the backtracking
         // engine. Both must stay.
-        return new Regex(sb.ToString(),
-            RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
-            TimeSpan.FromMilliseconds(250));
+        try
+        {
+            return new Regex(sb.ToString(),
+                RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
+                TimeSpan.FromMilliseconds(250));
+        }
+        catch (ArgumentException)
+        {
+            // The rules above should make this unreachable; if a construct
+            // slips past them it is still the caller's glob, not a server
+            // fault — never an [Internal].
+            throw new KnapperException(VaultErrorCode.InvalidArgument, $"glob could not be translated: {glob}");
+        }
     }
+
+    /// <summary>
+    /// A character class read EXACTLY as rg's globset reads it, as explicit
+    /// ranges — never by pasting the body into a .NET class, which differs in
+    /// three silent ways and one loud one. globset EXTENDS the previous range
+    /// on a further "-c": "[0-1-3]" is 0..3 to rg, while .NET reads 0..1, '-'
+    /// and '3' and misses '2'. .NET's "-[...]" is class SUBTRACTION; to globset
+    /// '[' is an ordinary character. A leading or trailing '-' is literal in
+    /// both. And a range ending below its start ("[z-a]", or "[a-z-[" which
+    /// extends a..z down to '[') is an error in globset — it reached the .NET
+    /// parser here and came back an untyped [Internal] from vault_files while
+    /// vault_search, which lets rg parse, answered [InvalidArgument].
+    /// Measured against rg 15.1; the differential test pins the agreement.
+    /// </summary>
+    private static List<(char Lo, char Hi)> RgClassRanges(string body, string glob)
+    {
+        var ranges = new List<(char Lo, char Hi)>();
+        var inRange = false;
+        for (var i = 0; i < body.Length; i++)
+        {
+            var c = body[i];
+            if (c == '-' && i == 0)
+            {
+                ranges.Add(('-', '-'));
+            }
+            else if (c == '-' && !inRange)
+            {
+                inRange = true;
+            }
+            else if (inRange)
+            {
+                var (lo, _) = ranges[^1];
+                if (c < lo)
+                {
+                    throw new KnapperException(VaultErrorCode.InvalidArgument,
+                        $"invalid range '{lo}-{c}' in glob character class: {glob}");
+                }
+                ranges[^1] = (lo, c);
+                inRange = false;
+            }
+            else
+            {
+                ranges.Add((c, c));
+            }
+        }
+        if (inRange)
+            ranges.Add(('-', '-'));
+        return ranges;
+    }
+
+    private static string EscapeInClass(char c) =>
+        c is '\\' or ']' or '[' or '^' or '-' ? "\\" + c : c.ToString();
 
     /// <summary>Matches a normalized vault-relative path against a translated glob.</summary>
     internal static bool IsMatch(Regex translated, string relativePath)
@@ -165,12 +227,17 @@ internal static class Globbing
             throw new KnapperException(VaultErrorCode.InvalidArgument, $"unbalanced '[' in glob: {glob}");
 
         var body = glob[(start + 1)..end];
-        if (body.StartsWith('!'))
-            body = "^" + body[1..];
-        // '\' has no special meaning in our globs; escape it so it can't
-        // mutate the regex class. Everything else ([-, ^ position, ranges)
-        // carries regex class semantics already.
-        sb.Append('[').Append(body.Replace("\\", "\\\\")).Append(']');
+        var negated = body.StartsWith('!');
+        if (negated)
+            body = body[1..];
+        sb.Append('[').Append(negated ? "^" : "");
+        foreach (var (lo, hi) in RgClassRanges(body, glob))
+        {
+            sb.Append(EscapeInClass(lo));
+            if (hi != lo)
+                sb.Append('-').Append(EscapeInClass(hi));
+        }
+        sb.Append(']');
         return end + 1;
     }
 }

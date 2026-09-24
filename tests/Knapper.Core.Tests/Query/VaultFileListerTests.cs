@@ -41,6 +41,13 @@ public sealed class VaultFileListerTests : IClassFixture<FixtureVault>
         "*.md", "*.sh", "*.bin",
         "Notes/*.md", "Notes/**/*.md", "**/Deep.md", "**/*.md",
         "fm/?.md", "many/needles-[01].md", "many/needles-[!01].md",
+        // Class shapes where a pasted-in .NET class disagrees with rg's
+        // globset: '[' is an ordinary character (not "-[" subtraction), a
+        // leading '-' is literal, and a further "-c" EXTENDS the previous
+        // range — "[0-1-3]" is 0..3 to rg (needles-2 included), and
+        // "[0-9-[]" extends 0..9 up to '['.
+        "many/needles-[[0].md", "many/needles-[-2].md",
+        "many/needles-[0-1-3].md", "many/needles-[0-9-[].md", "many/needles-[1-].md",
         "{Notes,fm}/*.md", "*.{md,sh}",
         "with spaces/*.md", "Projects/pröject.md",
         "nope/*.md",
@@ -193,5 +200,24 @@ public sealed class VaultFileListerTests : IClassFixture<FixtureVault>
         {
             File.Delete(link);
         }
+    }
+
+    /// <summary>
+    /// Class shapes rg itself refuses. vault_files used to hand them to the
+    /// .NET regex parser and answer an untyped [Internal]; vault_search, which
+    /// lets rg parse the glob, answered [InvalidArgument]. The same string
+    /// must be the same kind of error on both surfaces.
+    /// </summary>
+    [Theory]
+    [InlineData("[z-a].md")]
+    [InlineData("many/needles-[a-z-[b].md")]
+    [InlineData("many/needles-[3-1].md")]
+    public void Class_shapes_rg_refuses_are_InvalidArgument_on_both_surfaces(string glob)
+    {
+        Should.Throw<KnapperException>(() => _vault.Lister.List(new VaultFilesQuery { Glob = glob }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        Should.Throw<KnapperException>(() => _vault.Search.SearchFilesOnly(
+                new VaultSearchQuery { Pattern = "x", IncludeGlobs = [glob] }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
     }
 }
