@@ -132,6 +132,22 @@ internal sealed class RipgrepRunner(string ripgrepPath)
             var stderr = stderrTask.GetAwaiter().GetResult();
             if (!timedOut && !stoppedEarly && process.ExitCode == 2)
             {
+                // Exit 2 means two different things. A query rg cannot parse
+                // (regex, glob) is refused before any file is read — the
+                // caller's input. A file rg could not READ is reported per
+                // file with "(os error N)" while every other file is still
+                // searched — the server's filesystem, and it means the answer
+                // is NOT exhaustive. Calling the second "rejected the query"
+                // sent callers to rewrite a correct search.
+                var unreadable = UnreadablePaths(stderr);
+                if (unreadable.Count > 0)
+                {
+                    throw new KnapperException(VaultErrorCode.IoError,
+                        $"ripgrep could not read {unreadable.Count} file(s) in this scope " +
+                        $"({string.Join("; ", unreadable.Take(3))}{(unreadable.Count > 3 ? "; …" : "")}) — " +
+                        "the search cannot claim to be exhaustive, so no result is returned. Narrow the " +
+                        "scope past them, or fix the files' permissions on the server");
+                }
                 throw new KnapperException(VaultErrorCode.InvalidArgument,
                     $"ripgrep rejected the query: {Truncate(stderr.Trim(), 500)}");
             }
@@ -142,6 +158,30 @@ internal sealed class RipgrepRunner(string ripgrepPath)
                 ExitCode: process.HasExited ? process.ExitCode : -1,
                 StdErr: stderr);
         }
+    }
+
+    /// <summary>
+    /// rg's per-file error lines ("rg: ./Notes/a.md: Permission denied (os
+    /// error 13)"), reduced to the vault path and the reason. Paths are
+    /// relative — rg runs in the vault root over "." or resolved prefixes —
+    /// and the "./" and errno are dropped so the text matches every other
+    /// surface's spelling of a vault path.
+    /// </summary>
+    internal static List<string> UnreadablePaths(string stderr)
+    {
+        var found = new List<string>();
+        foreach (var raw in stderr.Split('\n'))
+        {
+            var line = raw.Trim();
+            var os = line.IndexOf(" (os error ", StringComparison.Ordinal);
+            if (!line.StartsWith("rg: ", StringComparison.Ordinal) || os < 0)
+                continue;
+            var body = line[4..os];
+            if (body.StartsWith("./", StringComparison.Ordinal))
+                body = body[2..];
+            found.Add(body);
+        }
+        return found;
     }
 
     /// <summary>
