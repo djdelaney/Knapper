@@ -82,8 +82,11 @@ public sealed class FrontmatterSearchService(
                 }
                 frontmatter = FrontmatterYaml.Deserialize(block!);
             }
-            catch (Exception e) when (e is KnapperException or YamlDotNet.Core.YamlException)
+            catch (Exception e) when (e is KnapperException or YamlDotNet.Core.YamlException
+                                           or IOException or UnauthorizedAccessException)
             {
+                // Reported, not fatal: one note that could not be read is one
+                // note that could be hiding a match, not a failed search.
                 unparseable.Add(relative);
                 continue;
             }
