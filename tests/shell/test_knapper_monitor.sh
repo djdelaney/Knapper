@@ -53,10 +53,12 @@ setup() {
     # script prefers it, so this exercises the branch production uses.
     printf '#!/bin/sh\ncat >> "%s"\n' "$MAILBOX" > "$DIR/bin/sendmail"
 
-    # pct exec <ct> -- stat -c %%Y <stamp>   → a fresh stamp (now)
-    # pct exec <ct> -- cat <metrics>         → a snapshot with no counters moving
-    printf '#!/bin/sh\ncase "$*" in\n  *stat*) date +%%s ;;\n  *cat*) printf %%s %s ;;\nesac\n' \
-        "'{\"StartedAt\":\"2026-08-14T00:00:00Z\"}'" > "$DIR/bin/pct"
+    # pct exec <ct> -- stat -c %%Y <stamp>   → $DIR/stamp (default: now)
+    # pct exec <ct> -- cat <metrics>         → $DIR/metrics (default: no counters)
+    date +%s > "$DIR/stamp"
+    printf '%s' '{"StartedAt":"2026-08-14T00:00:00Z"}' > "$DIR/metrics"
+    printf '#!/bin/sh\ncase "$*" in\n  *stat*) cat "%s/stamp" ;;\n  *cat*) cat "%s/metrics" ;;\nesac\n' \
+        "$DIR" "$DIR" > "$DIR/bin/pct"
 
     for b in sendmail pct; do chmod +x "$DIR/bin/$b"; done
 
@@ -90,8 +92,8 @@ EOF
     chmod +x "$DIR/bin/curl"
 }
 
-run() {
-    OUT=$(PATH="$DIR/bin:$PATH" sh "$SCRIPT" "$DIR/conf" 2>&1)
+run() { # $1 = shell to run the script under (default sh)
+    OUT=$(PATH="$DIR/bin:$PATH" "${1:-sh}" "$SCRIPT" "$DIR/conf" 2>&1)
     RC=$?
     MAIL=$(cat "$MAILBOX")
 }
@@ -169,6 +171,46 @@ assert_rc 1
 assert_mailed "could not be read (absent)"
 case "$MAIL" in *"Secret Project"*) fail "body content leaked into the alert mail" ;; esac
 case "$MAIL" in *roadmap*) fail "body content leaked into the alert mail" ;; esac
+
+# ── 7. numbers from the CT are never EVALUATED (root on the Proxmox host) ─
+# Shell arithmetic evaluates its operands, and under bash `OPTIND[$(cmd)]`
+# runs cmd — `set -u` does not stop it, because OPTIND is always set
+# (measured: the pre-fix script ran this payload under bash). The monitor runs as root on the HOST and reads these values out of the
+# CT, so this was a CT → host escape waiting for someone to run the script
+# with bash. Each shell available is tried; neither may run the payload, and
+# the alert must name the refusal without echoing the value.
+for SH in dash bash; do
+    command -v "$SH" >/dev/null 2>&1 || continue
+    setup "hostile metrics counter under $SH"
+    stub_curl '{"status":"ok","oversized":{"ok":true}}' 200
+    PWNED="$DIR/pwned"
+    # Same StartedAt as the baseline, so the delta branch is reached.
+    printf '%s' '{"StartedAt":"2026-08-14T00:00:00Z","ToolErrors":0}' > "$DIR/state/last-metrics.json"
+    printf '{"StartedAt":"2026-08-14T00:00:00Z","ToolErrors":"OPTIND[$(touch %s)]"}' "$PWNED" > "$DIR/metrics"
+    run "$SH"
+    [ -e "$PWNED" ] && fail "the CT-supplied counter was EXECUTED by $SH"
+    assert_rc 1
+    assert_mailed "metrics counter ToolErrors is not a plain non-negative number"
+    case "$MAIL" in *touch*) fail "the hostile value was echoed into the mail" ;; esac
+
+    setup "hostile stamp mtime under $SH"
+    stub_curl '{"status":"ok","oversized":{"ok":true}}' 200
+    PWNED="$DIR/pwned"
+    printf 'OPTIND[$(touch %s)]\n' "$PWNED" > "$DIR/stamp"
+    run "$SH"
+    [ -e "$PWNED" ] && fail "the CT-supplied stamp mtime was EXECUTED by $SH"
+    assert_rc 1
+    assert_mailed "commit stamp mtime from CT 106 is not a plain number"
+done
+
+# ── 8. honest counters still alert on a real delta ────────────────────────
+setup "real tool-error delta → mail"
+stub_curl '{"status":"ok","oversized":{"ok":true}}' 200
+printf '%s' '{"StartedAt":"2026-08-14T00:00:00Z","ToolErrors":3}' > "$DIR/state/last-metrics.json"
+printf '%s' '{"StartedAt":"2026-08-14T00:00:00Z","ToolErrors":500}' > "$DIR/metrics"
+run
+assert_rc 1
+assert_mailed "tool errors: 497 since the last monitor run"
 
 [ "$FAILURES" -eq 0 ] || exit 1
 echo "   $N cases passed"

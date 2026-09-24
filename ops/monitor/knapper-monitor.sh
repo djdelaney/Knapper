@@ -106,6 +106,21 @@ fail() {
 "
 }
 
+# Every number below is read out of CT 106 and this script runs as ROOT on
+# the Proxmox host. Shell arithmetic EVALUATES its operands: under bash,
+# $((X)) with X='a[$(cmd)]' runs cmd, so a compromised CT that controls
+# metrics.json or the stamp's mtime would get root on the host. dash happens
+# to refuse that payload, but only by accident of which sh this is — and a
+# non-number also silently disabled the delta alerts. So nothing from the CT
+# reaches $(( )) until it is proven to be plain digits (18 at most, inside
+# any shell's integer range). Never echo the rejected value into the mail.
+is_uint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ ${#1} -le 18 ]
+}
+
 # One mail, either interface. sendmail(8) needs the headers in the body.
 send_mail() {
     _to="$1"
@@ -196,6 +211,8 @@ rm -f "$UP_BODY"
 STAMP_MTIME=$(pct exec "$CT_ID" -- stat -c %Y "$STAMP_PATH" 2>/dev/null)
 if [ -z "${STAMP_MTIME:-}" ]; then
     fail "commit stamp ${STAMP_PATH} missing/unreadable in CT ${CT_ID} — commit timer never succeeded (or CT stopped)"
+elif ! is_uint "$STAMP_MTIME"; then
+    fail "commit stamp mtime from CT ${CT_ID} is not a plain number — refused unevaluated; snapshot freshness is BLIND until this is explained"
 else
     NOW=$(date +%s)
     AGE=$((NOW - STAMP_MTIME))
@@ -216,11 +233,6 @@ else
     PREV=""
     [ -r "$PREV_FILE" ] && PREV=$(cat "$PREV_FILE")
 
-    delta() { # $1 jq field name
-        CUR_V=$(printf '%s' "$CURRENT" | jq -r ".$1 // 0")
-        PREV_V=$(printf '%s' "$PREV" | jq -r ".$1 // 0" 2>/dev/null || echo 0)
-        echo $((CUR_V - PREV_V))
-    }
 
     CUR_START=$(printf '%s' "$CURRENT" | jq -r '.StartedAt // ""')
     PREV_START=$(printf '%s' "$PREV" | jq -r '.StartedAt // ""' 2>/dev/null || echo "")
@@ -231,8 +243,17 @@ else
         :
     else
         check_delta() { # $1 field  $2 max  $3 description
-            D=$(delta "$1")
-            [ "$D" -gt "$2" ] && fail "$3: ${D} since the last monitor run (max $2)"
+            CUR_V=$(printf '%s' "$CURRENT" | jq -r ".$1 // 0" 2>/dev/null)
+            PREV_V=$(printf '%s' "$PREV" | jq -r ".$1 // 0" 2>/dev/null)
+            if ! is_uint "$CUR_V" || ! is_uint "$PREV_V"; then
+                fail "metrics counter $1 is not a plain non-negative number — refused unevaluated (tampered snapshot, or its shape changed); this rate check is BLIND"
+                return 0
+            fi
+            D=$((CUR_V - PREV_V))
+            if [ "$D" -gt "$2" ]; then
+                fail "$3: ${D} since the last monitor run (max $2)"
+            fi
+            return 0
         }
         check_delta AuditAppendFailures "$MAX_AUDIT_FAILURES" "AUDIT APPEND FAILURES — landed changes may lack audit records"
         check_delta QueryTimeouts       "$MAX_QUERY_TIMEOUTS" "query timeouts"
