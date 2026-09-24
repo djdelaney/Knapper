@@ -237,10 +237,13 @@ public sealed class VaultLintService(
                 var bytes = reader.ReadBytesChecked(resolver.Resolve(relative));
                 (content, _) = VaultReadService.DecodeStrict(bytes, relative);
             }
-            catch (KnapperException)
+            catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
             {
                 // Still a valid link TARGET (the file exists); only its
-                // headings and its own links are unknown.
+                // headings and its own links are unknown. A raw I/O failure
+                // on ONE note is this note's problem too — it used to escape
+                // and fail the whole-vault lint, where batch read reports the
+                // same failure per item.
                 index.Unexamined.Add(relative);
                 continue;
             }
