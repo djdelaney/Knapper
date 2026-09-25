@@ -19,7 +19,7 @@ public sealed class AuditFailureTests : IDisposable
     private void BreakAuditSink() =>
         File.SetUnixFileMode(_v.AuditPath, UnixFileMode.UserRead);
 
-    [Fact]
+    [PermissionDenialFact]
     public void Audit_unavailable_refuses_the_mutation_before_any_write()
     {
         var sha = _v.Write("Notes/a.md", "original\n");

@@ -152,7 +152,7 @@ public sealed class GitCommitJobTests : IDisposable
         outcome.Committed.ShouldBeTrue("a deletion has no new content to scan and must commit");
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void An_unreadable_staged_blob_refuses_the_commit_instead_of_skipping_the_scan()
     {
         // A scan that cannot run must never pass as a scan that found

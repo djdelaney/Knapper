@@ -105,7 +105,7 @@ public sealed class OversizedFilesTests
     /// A directory it cannot read is "could not tell", never "none found".
     /// Non-root: mode 000 is what makes the walk throw.
     /// </summary>
-    [Fact]
+    [PermissionDenialFact]
     public void An_unreadable_directory_throws_rather_than_reporting_clean()
     {
         using var vault = new TempDir();

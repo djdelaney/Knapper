@@ -162,6 +162,15 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   an ISOLATED `KnapperMcpFactory` that nothing mutates — a delayed watcher
   event from a sibling test's edit legitimately advances the generation and
   flips the flag (observed as a real one-in-many-runs flake, 2026-08-09).
+- **A test that takes a permission away is `[PermissionDenialFact]`, not
+  `[Fact]`.** Root ignores file modes, so a mode-000 file or read-only
+  directory refuses nothing under uid 0 — every Claude cloud session — and
+  the test fails for a reason unrelated to Knapper. The attribute
+  (`tests/Shared/`, linked into each test project) skips only when a probe
+  MEASURES that refusal does not happen, and CI sets
+  `KNAPPER_REQUIRE_PERMISSION_DENIAL=1` so it never skips there. The
+  corollary for local runs: a cloud session's skip count is expected, a
+  cloud session's FAILURE is real.
 - Cross-process claims need cross-process tests: the probe binaries are
   copied into the test output by project reference and spawned with
   `dotnet exec`. An in-process test of flock proves nothing.

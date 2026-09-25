@@ -173,7 +173,7 @@ public sealed class OversizedBackstopTests
     /// becomes readable, and until it does every word this probe says is
     /// unfounded. Non-root: mode 000 is what makes the walk throw.
     /// </summary>
-    [Fact]
+    [PermissionDenialFact]
     public async Task A_scan_that_could_not_complete_is_not_reported_as_clean()
     {
         using var factory = Factory();
