@@ -14,6 +14,23 @@ dotnet run --project src/Knapper.Mcp            # http://127.0.0.1:3535
 curl -s 127.0.0.1:3535/health | jq .status      # "ok"
 ```
 
+For a vault to point it at, `tools/dev-vault.sh` generates a synthetic one —
+invented notes shaped like a real vault (wikilinks, embeds, attachments,
+frontmatter in every shape, unicode names, one of each lint finding, hidden
+entries), plus an `env.sh` holding the exports above:
+
+```sh
+tools/dev-vault.sh /tmp/kdev                    # target must be new or empty
+. /tmp/kdev/env.sh && dotnet run --project src/Knapper.Mcp
+```
+
+It refuses a non-empty target and any folder inside an existing Obsidian
+vault. `--hazards` adds the cases Knapper refuses or degrades on by design —
+a Sync conflict copy (so `/up` answers 503), a symlink out of the vault, a
+FIFO named `*.md`, a file over the Sync size ceiling — and is off by default
+so a plain dev vault reports healthy. Never build a dev vault from real
+notes: this repository is public.
+
 Prereqs: .NET 10 SDK, `ripgrep`, `git` on PATH. The sync gate DEFAULTS to
 `heartbeat` (fail closed: without a heartbeat path the server refuses to
 start) — `Sync__Mode=open` is the deliberate dev opt-out, and the server

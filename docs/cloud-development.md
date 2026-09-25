@@ -110,6 +110,22 @@ in [extending.md](extending.md).
 | `ops/publish.sh` | It must run from a clean checkout of the release tag, and its output is installed on the production host. |
 | Deployment, runbook §10, `knapper verify --url` | They need the production network and its credentials, which cloud sessions do not have and should not be given. |
 
+## Running a dev server
+
+To drive the real tools by hand — or let the session's agent try them —
+start a server over a generated vault (details in
+[usage.md](usage.md#running-locally-dev)):
+
+```sh
+tools/dev-vault.sh /tmp/kdev
+. /tmp/kdev/env.sh && dotnet run --project src/Knapper.Mcp &
+curl -s 127.0.0.1:3535/health | jq .status      # "ok"
+```
+
+It exercises what the unit fixtures cannot show together: the manifest and
+tool descriptions as a client receives them, pagination over real content,
+and a vault shaped like the ones Knapper serves.
+
 ## Keep dev sessions away from the production vault
 
 A cloud session can have claude.ai connectors enabled, including the
