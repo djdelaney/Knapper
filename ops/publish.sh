@@ -108,6 +108,7 @@ done
 # list is the point. Writing the deliberate omissions down is what separates
 # them from the accidental ones.
 NOT_SHIPPED='
+ops/claude-cloud-setup.sh
 ops/ct106-runbook.md
 ops/publish.sh
 ops/release.sh

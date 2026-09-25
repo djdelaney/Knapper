@@ -95,6 +95,15 @@ jobs:
       # This runner is unprivileged and is where they are supposed to run, so
       # the skip is switched off here: a runner that stopped refusing access
       # fails loudly (PermissionDenialTests names why) instead of skipping.
+      # publish.sh refuses to build when an ops/ file is neither shipped nor
+      # listed in its NOT_SHIPPED set. That gate used to run only at deploy
+      # time, from a tag, where tripping it means cutting another release:
+      # v0.9.1 was tagged green and could not be published because a PR added
+      # ops/claude-cloud-setup.sh without listing it. Running the real script
+      # here moves the refusal to the PR that causes it.
+      - name: Publish (artifact manifest gate)
+        run: ops/publish.sh
+
       - name: Test
         env:
           KNAPPER_REQUIRE_PERMISSION_DENIAL: '1'
