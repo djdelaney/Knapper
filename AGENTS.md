@@ -44,6 +44,10 @@ Developer docs (read on demand; this file stays invariants-only):
   contracts; testing and build conventions; scoped-but-unbuilt ideas; the
   OPEN DECISIONS list (and the closed ones — check it before re-litigating
   anything a review already settled).
+- [`docs/cloud-development.md`](docs/cloud-development.md) — developing
+  from Claude Code cloud sessions: the setup script (`ops/claude-cloud-setup.sh`
+  is the master copy of a paste), verifying an environment, and why
+  `dotnet test` there reports 11 skips (root; `[PermissionDenialFact]`).
 - [`ops/ct106-runbook.md`](ops/ct106-runbook.md) — production deployment.
   Runbooks describe how to VERIFY live state, never what it was (house rule):
   date and mark anything observed.

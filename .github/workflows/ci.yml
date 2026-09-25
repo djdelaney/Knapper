@@ -73,7 +73,8 @@ jobs:
         run: |
           RG_VERSION=15.2.0
           # ripgrep's published .sha256 for this asset; pinned with the
-          # version, same pair as runbook §3.
+          # version, same pair as runbook §3 and ops/claude-cloud-setup.sh
+          # (tests/shell/test_ripgrep_pin.sh fails the build on any drift).
           RG_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
           RG_DIR="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
           curl -sSLf -o /tmp/rg.tar.gz \

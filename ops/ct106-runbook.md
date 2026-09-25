@@ -189,7 +189,8 @@ apt install git jq
 # The hash is pinned WITH the version: this binary is on every search path
 # the vault has, so a tampered download must fail here, loudly, not install.
 # It is ripgrep's own published .sha256 for this asset (checked 2026-09-24);
-# bump both lines together, and ci.yml's copy with them.
+# bump both lines together, with ci.yml's and ops/claude-cloud-setup.sh's
+# copies (tests/shell/test_ripgrep_pin.sh fails CI on any drift).
 RG=15.2.0
 RG_SHA256=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c
 curl -sSLf -o /tmp/rg.tar.gz \

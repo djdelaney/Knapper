@@ -23,6 +23,10 @@ logs a warning while it's active. The CLI reads the same settings:
 dotnet run --project src/Knapper.Cli -- doctor
 ```
 
+Developing from a Claude Code cloud session instead: see
+[cloud-development.md](cloud-development.md) for the environment setup and
+how to verify it.
+
 ## Configuration reference
 
 Sources, in precedence order: environment variables (`Section__Key=…`) →

@@ -81,6 +81,7 @@ intentionally stays vague enough not to rot — trust those, not this.
 | [docs/architecture.md](docs/architecture.md) | Project structure, the query + transaction layers, locking model, gates, security model |
 | [docs/usage.md](docs/usage.md) | Running/configuring, connecting clients, the 14-tool reference, error codes, monitoring |
 | [docs/extending.md](docs/extending.md) | Adding tools/queries/mutations without breaking the contracts; test + build conventions |
+| [docs/cloud-development.md](docs/cloud-development.md) | Developing from Claude Code cloud sessions: the environment setup script, how to verify a new environment, what stays local |
 | [docs/call-economics.md](docs/call-economics.md) | Why vault work feels slow when the server answers in ~12ms, why call COUNT is the only lever an agent has, and the dated baseline to measure against (`ops/call-economics.sh`) |
 | [ops/ct106-runbook.md](ops/ct106-runbook.md) | Production deployment on the Proxmox LXC |
 | [CLAUDE.md](CLAUDE.md) (= [AGENTS.md](AGENTS.md)) | The silent invariants — what a change must not break even though nothing would fail loudly. Two byte-identical files, one per agent convention (not a symlink — some tooling refuses those); edit `CLAUDE.md` then `cp CLAUDE.md AGENTS.md`. CI aborts on drift |
