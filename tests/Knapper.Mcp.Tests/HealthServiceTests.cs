@@ -80,7 +80,7 @@ public sealed class HealthServiceTests : IDisposable
         report.Status.ShouldBe("degraded");
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void Audit_probe_detects_a_directory_that_stops_accepting_writes()
     {
         var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");
@@ -143,7 +143,7 @@ public sealed class HealthServiceTests : IDisposable
     /// Non-root, like the read-only audit-dir test above: mode 000 is what
     /// makes the walk throw.
     /// </summary>
-    [Fact]
+    [PermissionDenialFact]
     public void A_scan_that_fails_on_the_FIRST_call_reports_unknown_not_clean()
     {
         var rg = WriteFakeRipgrep("echo 'ripgrep 999.0.0'");

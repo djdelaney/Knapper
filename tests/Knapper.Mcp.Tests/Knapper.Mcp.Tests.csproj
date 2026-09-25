@@ -17,6 +17,12 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Shouldly" />
+    <Using Include="Knapper.TestSupport" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared test support: ONE copy linked into every test project. -->
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

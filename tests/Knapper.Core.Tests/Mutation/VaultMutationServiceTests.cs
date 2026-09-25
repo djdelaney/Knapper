@@ -294,7 +294,7 @@ public sealed class VaultMutationServiceTests : IDisposable
         _v.ReadText("a.md").ShouldBe("alpha\n");
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void A_raw_io_failure_mid_batch_preserves_the_partial_receipt()
     {
         // Validation sees an existing writable-looking parent; the apply

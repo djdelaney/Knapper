@@ -88,5 +88,13 @@ jobs:
 
       # Includes the black-box acceptance tier: real server processes over
       # real HTTP, plus the cross-process flock probes.
+      #
+      # KNAPPER_REQUIRE_PERMISSION_DENIAL: [PermissionDenialFact] tests skip
+      # where file modes are not enforced (root — every Claude cloud session).
+      # This runner is unprivileged and is where they are supposed to run, so
+      # the skip is switched off here: a runner that stopped refusing access
+      # fails loudly (PermissionDenialTests names why) instead of skipping.
       - name: Test
+        env:
+          KNAPPER_REQUIRE_PERMISSION_DENIAL: '1'
         run: dotnet test Knapper.slnx --configuration Release --no-build

@@ -67,7 +67,7 @@ public sealed class KnapperMetricsTests : IDisposable
         }
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void Audit_log_append_failures_reach_the_metrics_sink()
     {
         using var metrics = new KnapperMetrics(MetricsPath);

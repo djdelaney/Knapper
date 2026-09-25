@@ -43,7 +43,7 @@ public sealed class UnreadableNoteQueryTests : IDisposable
         _dir.Dispose();
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void Lint_reports_an_unreadable_note_as_unexamined_and_still_answers()
     {
         var lint = new VaultLintService(_resolver, _lister, _reader, _generation, _options, ArchivedPrefixes.None);
@@ -53,7 +53,7 @@ public sealed class UnreadableNoteQueryTests : IDisposable
         result.Items.ShouldNotContain(f => f.Path == "Notes/Real.md");
     }
 
-    [Fact]
+    [PermissionDenialFact]
     public void Frontmatter_search_reports_an_unreadable_note_and_still_answers()
     {
         var search = new FrontmatterSearchService(_resolver, _lister, _reader, _generation, _options, ArchivedPrefixes.None);
@@ -68,7 +68,7 @@ public sealed class UnreadableNoteQueryTests : IDisposable
     /// query" — sending the caller to rewrite a correct search. It is the
     /// server's filesystem, and the answer is not exhaustive.
     /// </summary>
-    [Fact]
+    [PermissionDenialFact]
     public void Search_over_an_unreadable_note_is_an_IoError_naming_it_not_a_rejected_query()
     {
         var search = new VaultSearchService(_resolver, _generation, _options, ArchivedPrefixes.None);
