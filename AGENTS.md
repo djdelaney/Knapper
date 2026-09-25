@@ -890,6 +890,12 @@ format by default.
   indexes the whole vault, every lint after the restart killed it again. One
   vault_create plants it. A second `Deserialize` call site elsewhere reopens
   it (`FrontmatterDepthTests`, which crash the test host if the guard goes).
+  It also throws ONLY `YamlException`, which is what both callers catch as
+  "could not examine": YamlDotNet's scanner throws `InvalidOperationException`
+  for any unclosed `[`/`{` followed by another line, and that one note failed
+  whole-vault lint and frontmatter search with [Internal] until the method
+  translated every foreign type by exclusion (`FrontmatterParseFailureTests`
+  fuzzes it). Narrowing that catch to the types seen so far reopens it.
 - **Frontmatter search reports what it could not examine.** Broken YAML and
   non-UTF-8 .md files land in `UnparseableFiles` — a skipped file could be
   hiding a match, and "no match" must mean the scope was exhaustively

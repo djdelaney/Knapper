@@ -28,11 +28,36 @@ internal static class FrontmatterYaml
 
     private static readonly IDeserializer Deserializer = new DeserializerBuilder().Build();
 
-    /// <summary>Null for an empty document; throws <see cref="YamlException"/> when malformed or nested too deeply.</summary>
+    /// <summary>
+    /// Null for an empty document; throws <see cref="YamlException"/> — and
+    /// ONLY YamlException — when malformed or nested too deeply.
+    /// </summary>
+    /// <remarks>
+    /// "Only" is this method's job, not YamlDotNet's: its scanner throws
+    /// <see cref="InvalidOperationException"/> for any unclosed <c>[</c> or
+    /// <c>{</c> followed by another line (<c>status: [unclosed\ntags: a</c>) —
+    /// ordinary hand-edit damage. Both callers catch YamlException as "could
+    /// not examine this note", so the stray type escaped them and failed lint
+    /// and frontmatter search for the whole vault with [Internal], from one
+    /// note. Translating at the ONE parse point, and by exclusion rather than
+    /// by listing the types seen so far, is what keeps a type nobody has met
+    /// yet from doing the same (<c>FrontmatterParseFailureTests</c> fuzzes it).
+    /// Out-of-memory is not a property of the note and is left alone.
+    /// </remarks>
     public static Dictionary<string, object?>? Deserialize(string block)
     {
-        RequireBoundedDepth(block);
-        return Deserializer.Deserialize<Dictionary<string, object?>>(block);
+        try
+        {
+            RequireBoundedDepth(block);
+            return Deserializer.Deserialize<Dictionary<string, object?>>(block);
+        }
+        catch (Exception e) when (e is not (YamlException or OutOfMemoryException))
+        {
+            // The inner exception's type, never the block: frontmatter is note
+            // content and must not ride an exception into a log.
+            throw new YamlException(Mark.Empty, Mark.Empty,
+                $"frontmatter could not be parsed ({e.GetType().Name})", e);
+        }
     }
 
     private static void RequireBoundedDepth(string block)
