@@ -43,6 +43,7 @@ contract):
 | `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), the Proxmox-host monitor kit (`ops/monitor/`: silent-on-success alerting over `/up` + commit-stamp age + metrics deltas), self-verifying publish script, CT 106 deployment runbook |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |
 | `tools/Knapper.MutationProbe` | child-process probe for two-process stale-edit / simultaneous-create races |
+| `tools/dev-vault.sh` | generates a synthetic Obsidian-shaped vault (plus `env.sh`) for running a dev server by hand; `--hazards` adds the fail-closed cases |
 | `tests/` | three tiers: `Knapper.Core.Tests` (semantics, including real multi-process lock and mutation races), `Knapper.Mcp.Tests` (the wire envelope in-process, including the Cloudflare Access topology), and `Knapper.AcceptanceTests` (the brief §13 black box: REAL server processes spawned over real HTTP — two-process transport races, fault injection, ripgrep-oracle equivalence) |
 
 ## Build
