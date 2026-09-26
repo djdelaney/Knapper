@@ -94,6 +94,38 @@ out=$(lib 'retention_drops a.tgz a.tgz /o/a.tgz /o/prev.tgz')
 out=$(lib 'prune_command $(retention_drops a.tgz b.tgz /o/a.tgz /o/b.tgz /o/c.tgz /o/d.tgz | tr "\n" " ")')
 [ "$out" = "rm -f -- /o/c.tgz /o/d.tgz" ] || fail "prune command is malformed: '$out'"
 
+# ── the refusal path: `prune` is the only action that deletes ───────────────
+# Args: VERIFY_OK DRY_RUN NO_PRUNE KEEP_A KEEP_B DROP...
+check_action() {
+    got=$(lib "retention_action $1")
+    [ "$got" = "$2" ] || fail "retention_action $1 → '$got', expected '$2'"
+}
+check_action "1 0 0 a b /o/c" prune
+check_action "0 0 0 a b /o/c" unverified      # verify did not pass in THIS run
+check_action "1 1 0 a b /o/c" dry-run
+check_action "0 1 0 a b /o/c" dry-run
+check_action "1 0 1 a b /o/c" no-prune
+check_action "1 0 0 a b" nothing
+check_action "1 0 0 a a /o/prev" same-version  # rollback target unknown
+check_action "0 1 1 a a /o/prev" same-version
+# Exhaustive: across every flag combination, prune appears exactly once.
+prunes=0
+for v in 0 1; do for d in 0 1; do for n in 0 1; do
+    [ "$(lib "retention_action $v $d $n a b /o/c")" = prune ] && prunes=$((prunes + 1))
+done; done; done
+[ "$prunes" -eq 1 ] || fail "prune is reachable from $prunes flag combinations; only verified+real+no --no-prune may reach it"
+
+# ── ssh never eats the gate answers ─────────────────────────────────────────
+out=$(lib 'SSH_OPTS=(); CT_SSH=h; MONITOR_SSH=m; ssh() { printf "%s " "$@"; }; echo "ct:$(ct true)"; echo "mon:$(mon true)"; echo "stdin:$(ct_stdin bash -s </dev/null)"')
+case "$out" in *"ct:-n "*) ;; *) fail "ct must pass ssh -n (it would read the gate answers): $out" ;; esac
+case "$out" in *"mon:-n "*) ;; *) fail "mon must pass ssh -n: $out" ;; esac
+case "$out" in *"stdin:-n "*) fail "ct_stdin must NOT pass -n — its remote script arrives on stdin: $out" ;; esac
+# And nothing bypasses the helpers: every `ssh -` outside a comment is one of
+# the three definitions.
+direct=$(grep -nE '(^|[^a-z_])ssh -' "$SCRIPT" | grep -vE '^[0-9]+: *#' \
+    | grep -vE '^[0-9]+:(ct|ct_stdin|mon)\(\) +\{ ssh ' || true)
+[ -z "$direct" ] || fail "ssh called directly, bypassing ct/ct_stdin/mon: $direct"
+
 # ── config loading ──────────────────────────────────────────────────────────
 out=$(KNAPPER_DEPLOY_ENV="$TMPROOT/absent.env" lib 'load_config' || true)
 case "$out" in *"no deploy config"*) ;; *) fail "a missing config file must stop the run: $out" ;; esac

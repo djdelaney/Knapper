@@ -200,6 +200,35 @@ prune_command() {
   printf ' %s' "$@"
 }
 
+# What to do with the DROP list. Prints exactly one word, and `prune` is the
+# ONLY answer that leads to a deletion — so the whole safety claim of §11b
+# ("nothing is deleted unless verify passed in THIS run, never under
+# --dry-run or --no-prune, never on a same-version re-deploy") is this
+# function's truth table, and test_deploy.sh pins all of it.
+#   retention_action VERIFY_OK DRY_RUN NO_PRUNE KEEP_A KEEP_B [DROP...]
+retention_action() {
+  local verify_ok="$1" dry_run="$2" no_prune="$3" keep_a="$4" keep_b="$5"
+  shift 5
+  if [ "$keep_a" = "$keep_b" ]; then echo same-version
+  elif [ "$#" -eq 0 ]; then echo nothing
+  elif [ "$dry_run" = 1 ]; then echo dry-run
+  elif [ "$verify_ok" != 1 ]; then echo unverified
+  elif [ "$no_prune" = 1 ]; then echo no-prune
+  else echo prune
+  fi
+}
+
+# Remote helpers. `-n` on ct and mon: ssh otherwise READS THIS SCRIPT'S STDIN,
+# which is where the gate answers come from — anything typed ahead while a
+# remote command runs (or the next answer on a pipe) is forwarded to the
+# remote command and lost, and the gate then waits on input that already
+# went. ct_stdin is the one deliberate exception, for a remote script sent
+# over stdin (§8 doctor). Every ssh in this file goes through these three;
+# test_deploy.sh checks both the flags and that nothing bypasses them.
+ct()       { ssh -n -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$CT_SSH" "$@"; }
+ct_stdin() { ssh -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$CT_SSH" "$@"; }
+mon()      { ssh -n -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$MONITOR_SSH" "$@"; }
+
 # Sourced by tests/shell/test_deploy.sh for the functions above; nothing below
 # runs when sourced that way.
 if [ "${KNAPPER_DEPLOY_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -219,8 +248,6 @@ done
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 load_config
 
-ct()  { ssh -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$CT_SSH" "$@"; }
-mon() { ssh -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$MONITOR_SSH" "$@"; }
 
 mkdir -p "$LOGDIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -406,7 +433,7 @@ say "8. doctor — with the running service's own environment"
 # built-in defaults.
 if [ "$DRY_RUN" -eq 0 ]; then
   DOCTOR_RC=0
-  DOCTOR_OUT="$(ct "bash -s" <<REMOTE
+  DOCTOR_OUT="$(ct_stdin "bash -s" <<REMOTE
 PID=\$(systemctl show knapper.service -p MainPID --value)
 if [ "\${PID:-0}" -gt 0 ] && tr '\\0' '\\n' < "/proc/\$PID/environ" | grep -q '^Vault__RootPath='; then
   xargs -0 -a "/proc/\$PID/environ" sh -c 'exec runuser -u knapper -- env -i "\$@" $CLI doctor' sh
@@ -482,26 +509,26 @@ elif printf '%s\n' "$TGZ_ALL" | grep -q "/$KEEP_B\$"; then
 else
   warn "rollback tarball $KEEP_B is NOT on the host — keeping only the running build"
 fi
-if [ "$KEEP_A" = "$KEEP_B" ]; then
-  :  # said above: nothing is pruned on a same-version re-deploy
-elif [ -z "${TGZ_DROP// /}" ]; then
-  ok "already exactly the keep set — nothing to prune"
-else
+# shellcheck disable=SC2086
+ACTION="$(retention_action "$VERIFY_OK" "$DRY_RUN" "$NO_PRUNE" "$KEEP_A" "$KEEP_B" $TGZ_DROP)"
+if [ "$ACTION" != same-version ]; then
   for f in $TGZ_DROP; do echo "   DROP  ${f##*/}"; done
-  if [ "$VERIFY_OK" -ne 1 ]; then
-    warn "verify did not pass in this run — REFUSING to prune tarballs"
-  elif [ "$DRY_RUN" -eq 1 ]; then
-    warn "dry-run: plan only, nothing deleted"
-  elif [ "$NO_PRUNE" -eq 1 ]; then
-    warn "--no-prune: nothing deleted — you now owe a manual prune"
-  else
+fi
+case "$ACTION" in
+  same-version) : ;;  # said above: the previous build's tarball is unknown here
+  nothing)      ok "already exactly the keep set — nothing to prune" ;;
+  dry-run)      warn "dry-run: plan only, nothing deleted" ;;
+  unverified)   warn "verify did not pass in this run — REFUSING to prune tarballs" ;;
+  no-prune)     warn "--no-prune: nothing deleted — you now owe a manual prune" ;;
+  prune)
     gate "Delete the DROP tarballs above? The KEEP lines stay."
     # shellcheck disable=SC2086
     ct "$(prune_command $TGZ_DROP)"
     ct "ls -1t $INSTALL_DIR/*.tar.gz" | sed 's/^/   now: /'
     ct "df -h $INSTALL_DIR | tail -1" | sed 's/^/   disk: /'
-  fi
-fi
+    ;;
+  *) die "internal: unknown retention action '$ACTION' — nothing deleted" ;;
+esac
 
 cat <<EOF
 
