@@ -27,7 +27,7 @@ Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + m
 | Project | Kind | Purpose |
 |---|---|---|
 | `Knapper.Core` | library | Everything that touches vault bytes: path containment, hashing, atomic commits, locks, query services, mutation service, gates, audit, git job. No ASP.NET, no MCP types. |
-| `Knapper.Mcp` | web app | The MCP host: 14 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. |
+| `Knapper.Mcp` | web app | The MCP host: 14 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. The write tools' convention clauses are composed at startup from `Conventions:*` (`Tools/VaultConventions.cs`) and budget-checked there. |
 | `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`. Shares Core, so the commit job uses the *same* lock implementation as mutations. |
 | `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
 | `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |
@@ -49,7 +49,7 @@ Core/
   KnapperException.cs      VaultErrorCode + the one exception type crossing layers
   KnapperMetrics.cs        bounded counters → atomic JSON snapshot (the monitor's rate signals)
   Interop/Posix.cs         flock / link / linkat-nofollow / creat / exchange / fsync-dir / realpath (LibraryImport)
-  Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions (POCOs)
+  Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions, ConventionsOptions (POCOs)
   Vault/
     VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/dot-segments)
     VaultPath.cs           proof-of-validation record (internal ctor)
@@ -70,12 +70,15 @@ Core/
     Globbing.cs            rg/gitignore-style glob → regex (lister side of the equivalence)
     QueryCursor.cs         fingerprint-bound continuation cursors
     QueryModels.cs         QueryEnvelope<T> + all query/response records
+    WikiLink.cs            THE wikilink/note-shape parser (fences, inline code, tables) — lint and the convention checks share it
+    VaultLintService.cs    vault_lint: link-graph + table checks over a whole-vault index
   Mutation/
     VaultMutationService.cs  THE mutation surface: edit/append/create/mkdir/move/delete/batch
     ConflictDetector.cs      Sync conflict-file gate
     SyncGate.cs / FileAgeSyncGate.cs  ISyncGate: mutations fail closed on unhealthy sync
     AuditLog.cs              append-only fsynced JSONL, outside the vault
-    MutationModels.cs        EditSpec, BatchItem, results, AuditContext
+    MutationModels.cs        EditSpec, BatchItem, results (with convention warnings), AuditContext
+    ConventionChecker.cs     Conventions:* write warnings — what a committed write ADDED; advisory, never throws
   Git/
     GitCommitJob.cs        the vault's only committer (vault-wide lock, staged secret scan)
     SecretScanner.cs       credential-shaped-content tripwire
@@ -109,6 +112,12 @@ lock → fresh read → SHA check → transform → validate guards
      → hidden same-dir temp + fsync → final SHA check → atomic replace
      → reopen and byte-compare → unlock
 ```
+
+After the commit and its verification, `ConventionChecker` compares the
+bytes the write ADDED against the configured conventions (`Conventions:*`) and
+attaches `warnings` to the receipt. It is advisory and total — it never
+throws — because by then the write has landed, and an error there would invite
+a retry of a write that already happened.
 
 The write-ahead audit intent means no change can exist that no audit line
 explains: if the audit sink is down, the mutation is refused BEFORE any

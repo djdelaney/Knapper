@@ -483,6 +483,12 @@ export Vault__MetricsPath='$STATE/metrics.json'
 export Sync__Mode=open
 # Uncomment to treat Archive/ as an archived prefix:
 # export Vault__ArchivedPrefixes__0=Archive
+# Uncomment to state and check note-writing conventions. A write that ADDS a
+# break comes back with `warnings` — e.g. append "#tag [x](Home.md)" to
+# Frontmatter/none.md (no tags, no frontmatter) for tags_added and
+# markdown_internal_link:
+# export Conventions__WikilinksOnly=true Conventions__NoNewFrontmatter=true Conventions__NoNewTags=true
+# export Conventions__NewNoteFolder=Notes
 EOF
 
 count=$(find "$VAULT" -type f -not -path '*/.*' | wc -l | tr -d ' ')

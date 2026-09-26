@@ -333,8 +333,9 @@ depends on, all measured on CT 106 2026-08-13 — re-verify if `ob` is upgraded:
   It is printed immediately after `File too large to sync (… max 5.00 MB)`, so
   a permanently rejected file yields an endless green signal. The heartbeat
   measures TRANSPORT health only.
-- **Obsidian Sync refuses any file over ~5 MB**, silently as far as the vault
-  is concerned. That makes `--file-types … video` above largely decorative,
+- **Obsidian Sync refuses any file over 5 MiB** (5,242,880 bytes inclusive —
+  bisected 2026-09-26 from a Mac, where the refusal happens at the ORIGIN's
+  upload), silently as far as the vault is concerned. That makes `--file-types … video` above largely decorative,
   and it is why Knapper needs its own size guard (tracked separately).
 - **`Fully synced` survived a severed network for ~57s** before `ob` noticed —
   its own detection latency, and the floor on how fast any log-derived gate
@@ -434,49 +435,45 @@ systemctl daemon-reload
 # NOT knapper-commit.timer — it runs `knapper commit`, which fails on a vault
 # with no .git, and the repo is not created until §7. It starts there.
 systemctl enable --now knapper-heartbeat.timer knapper.service
-# doctor reads env, not the service unit — so ASK THE UNIT for its environment
-# instead of retyping it. A hand-copied list is a second source of truth that
-# drifts silently: doctor then passes against a configuration nothing runs.
+# doctor reads env, not the service unit — so take the environment from the
+# RUNNING SERVICE instead of retyping it. A hand-copied list is a second source
+# of truth that drifts silently: doctor then passes against a configuration
+# nothing runs.
 #
-# The case guard is load-bearing: `systemctl show` answers exit 0 with an EMPTY
-# string for a unit that is misspelled, missing, or not yet loaded, and `env`
-# with no assignments is not an error either — so an unguarded line degrades to
-# running doctor against built-in defaults, which may well report all-ok. That
-# is the SAME "graded a configuration nothing runs" failure this pattern was
-# introduced to remove, wearing different clothes.
+# ⛔ Read it from /proc/<MainPID>/environ, NOT from `systemctl show -p
+# Environment --value`. That property is one space-separated string, and the
+# old recipe expanded it UNQUOTED on the assumption that no value contains a
+# space. `Conventions__Style` does (0.10.0), so the word-split handed `env` a
+# fragment of it as the COMMAND to run. The process's environ is NUL-separated,
+# so every value arrives intact — and it is the environment the service
+# actually started with, not a re-reading of the unit file, which is the
+# stronger claim anyway: an edit that was never followed by a restart shows up
+# here as the old value, which is the truth about what is running.
 #
-# NOTE: this reads inline `Environment=` ONLY. Values from an `EnvironmentFile=`
-# are read at exec time and never appear in this property, so if these units
-# ever gain one, the CLI silently gets a partial environment — and the guard
-# below would not catch it. Both call sites (§5 and §7) need revisiting then.
+# It also closes the PATH trap the old recipe had to pin by hand: the service's
+# PATH is systemd's manager PATH (it includes /usr/local/bin, where §3 pinned
+# ripgrep), and it is IN the process environment. `env -i` then drops the
+# operator's own variables, so doctor sees exactly the service's environment —
+# over SSH the operator's login PATH coincidentally found rg, over `pct exec` it
+# did not, and doctor reported `rg → not found` on a CT whose /health
+# simultaneously reported ripgrep 15.2.0.
 #
-# ⛔ PATH IS NOT IN `Environment=`, and it is the one variable that matters here
-# that the capture above cannot supply. knapper.service sets none, so the
-# SERVICE inherits systemd's manager PATH — which includes /usr/local/bin, where
-# §3 pinned ripgrep. This invocation inherits the OPERATOR's PATH instead: over
-# SSH that is a login PATH and it coincidentally works, over `pct exec` it is
-# /sbin:/bin:/usr/sbin:/usr/bin and doctor reports `rg → not found` on a CT
-# whose /health simultaneously reports ripgrep 15.2.0. Read alone that FAIL says
-# the release broke ripgrep detection, and the obvious response is a rollback.
-# Note `env VAR=x cmd` ADDS to the environment rather than replacing it, so the
-# unit's values arrive while PATH stays wrong — the case guard cannot see this.
-# Hence pinning it, to systemd's manager value:
-SYSTEMD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-KNAPPER_ENV=$(systemctl show knapper.service -p Environment --value)
-echo "$KNAPPER_ENV"     # eyeball it once: is this the config you meant?
-case "$KNAPPER_ENV" in
-  # Word-splitting is intended; no value contains a space (quote if one ever does).
-  # The checks live INSIDE this branch on purpose: /health and `verify` do not
-  # read this environment, so on a bad capture they would pass and the run
-  # would look clean with doctor never having executed at all.
-  *Vault__RootPath=*)
-      runuser -u knapper -- env PATH="$SYSTEMD_PATH" $KNAPPER_ENV \
-          /opt/knapper/cli/knapper doctor &&                                 # must be all-ok
-      curl -s 127.0.0.1:3535/health | jq .status &&                          # "ok"
-      runuser -u knapper -- /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/ ;;
-  *) echo "REFUSING: no usable environment from knapper.service — wrong unit name, or not loaded." \
-          "Fix this before continuing; nothing below proves anything without it." >&2 ;;
-esac
+# The guard is load-bearing: a stopped unit reports MainPID 0, and doctor run
+# against built-in defaults can report all-ok — the "graded a configuration
+# nothing runs" failure this recipe exists to remove. Values from an
+# `EnvironmentFile=` are covered too (they are in the process environment),
+# which the old property read never was.
+PID=$(systemctl show knapper.service -p MainPID --value)
+if [ "${PID:-0}" -gt 0 ] && tr '\0' '\n' < "/proc/$PID/environ" | grep -q '^Vault__RootPath='; then
+    tr '\0' '\n' < "/proc/$PID/environ" | grep -E '^(Vault|Sync|Mcp|Conventions)__'  # eyeball it once: is this the config you meant?
+    xargs -0 -a "/proc/$PID/environ" sh -c \
+        'exec runuser -u knapper -- env -i "$@" /opt/knapper/cli/knapper doctor' sh &&  # must be all-ok
+    curl -s 127.0.0.1:3535/health | jq .status &&                                         # "ok"
+    runuser -u knapper -- /opt/knapper/cli/knapper verify --url http://127.0.0.1:3535/
+else
+    echo "REFUSING: knapper.service is not running with a usable environment (MainPID=${PID:-?})." \
+         "Fix this before continuing; nothing below proves anything without it." >&2
+fi
 ```
 
 `doctor`'s ripgrep line names the binary it resolved
@@ -837,6 +834,11 @@ and still without a write.
 # Same rule as §5, same guard for the same reason: take the environment from the
 # unit that will run this job — an empty expansion here would `git-init` in
 # whatever directory the binary falls back to.
+# ⚠️ Unlike §5 this still reads the UNIT property, because knapper-commit is a
+# oneshot with no running process to read. That is safe only while none of its
+# values contains a space (true today: three Vault__ paths) — the word-split
+# below is the defect §5 was rewritten to remove. Give this unit such a value
+# and this recipe must change first.
 CLI_ENV=$(systemctl show knapper-commit.service -p Environment --value)
 case "$CLI_ENV" in
   *Vault__RootPath=*) ;;
