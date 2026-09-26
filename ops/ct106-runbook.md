@@ -1309,6 +1309,18 @@ carrying uncommitted edits cannot be reproduced from the tag, so the tag stops
 describing what is in production and every later "is this the fix?" question
 becomes unanswerable.
 
+**The guided run is `ops/deploy.sh`** (from the workstation, on the clean tag):
+it walks §10.1–§10.3 plus the unit reconcile, a MEASURED required-environment
+gate before the restart, doctor with the running process's own environment,
+verify through the public URL, `check-installed.sh`, a forced monitor run and
+tarball retention — stopping at every human decision. Its site values (service
+host, public URL, monitor host, required knobs) live in the operator's
+`~/.config/knapper/deploy.env`, copied from `ops/deploy.env.example`; the script
+itself carries none, and `tests/shell/test_deploy.sh` keeps it that way. Run
+`ops/deploy.sh --dry-run` first. One deliberate difference from §10.1: it takes
+NO snapshot — rollback is the retained tarball (§10.4), or rolling forward from
+a tag. The manual steps below remain the reference for what each gate proves.
+
 ### 10.1 Before touching the CT
 
 ```sh

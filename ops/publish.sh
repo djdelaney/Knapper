@@ -110,6 +110,8 @@ done
 NOT_SHIPPED='
 ops/claude-cloud-setup.sh
 ops/ct106-runbook.md
+ops/deploy.env.example
+ops/deploy.sh
 ops/publish.sh
 ops/release.sh
 ops/runbook-lint.sh

@@ -63,6 +63,7 @@ dotnet run --project src/Knapper.Cli -- doctor      # config/dependency checks (
 tools/dev-vault.sh /tmp/kdev && . /tmp/kdev/env.sh   # synthetic vault + dev env for a hand-run server
 ops/release.sh --patch --ship                       # bump + commit + tag on green CI (see below)
 ops/publish.sh                                      # linux-x64 tarball for CT 106
+ops/deploy.sh --dry-run                             # guided upgrade; site values in ~/.config/knapper/deploy.env
 ```
 
 Deployment: `ops/ct106-runbook.md` (condensed from the brief; the brief's
@@ -72,7 +73,12 @@ Deployment: `ops/ct106-runbook.md` (condensed from the brief; the brief's
 `tools/dev-vault.sh` (or the test fixtures). Never build one from, or copy
 notes out of, a real vault — including a local Obsidian Sync replica on the
 dev machine. This repository is public: real notes that reach a fixture, a
-test, or a commit are published, and nothing here would notice.
+test, or a commit are published, and nothing here would notice. The same rule
+covers the deployment: `ops/deploy.sh` and `ops/deploy.env.example` carry NO
+site values (host, address, URL, vault or folder names) — those live in the
+operator's untracked `~/.config/knapper/deploy.env`. `tests/shell/test_deploy.sh`
+fails on a real-looking hostname or IP by SHAPE, since listing the real values
+in a test would publish them.
 
 ## Cutting a release
 

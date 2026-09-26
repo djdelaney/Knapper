@@ -266,7 +266,8 @@ Two gates now stand on either side of that:
 - The **coverage gate** fails the publish if any file under `ops/` is neither
   in the archive nor on `NOT_SHIPPED` — it catches a file ADDED to the repo and
   never staged. `NOT_SHIPPED` is the runbook, `publish.sh`, `release.sh`,
-  `runbook-lint.sh` and `version.sh`: repo-side tooling with no business on a
+  `runbook-lint.sh`, `version.sh`, `claude-cloud-setup.sh`, and `deploy.sh`
+  with its `deploy.env.example`: repo-side tooling with no business on a
   deployed host.
 
 So adding a file under `ops/` means deciding, in the script, which it is. That
