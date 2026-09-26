@@ -550,6 +550,13 @@ internal static class WikiLink
     /// closes nothing — which is why the opening char and length are both
     /// carried rather than a bool.
     /// </summary>
+    /// <summary>
+    /// The fence mask for callers outside this parser (the write-side
+    /// convention checks). Same definition, so a link the lint skips as code
+    /// is one the convention check skips too.
+    /// </summary>
+    internal static bool[] FencedLines(IReadOnlyList<string> lines) => MarkFenced(lines);
+
     private static bool[] MarkFenced(IReadOnlyList<string> lines)
     {
         var fenced = new bool[lines.Count];

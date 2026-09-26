@@ -338,6 +338,25 @@ format by default.
   (`ToolResponseConformanceTests` compares every tool's real response
   against its published schema — schema and payload read at the same
   layer, both off the wire).
+- **Convention text and convention checks both come from `Conventions:*`,
+  never from vault content, and ONE flag drives both.** The build ships
+  nobody's conventions: until 0.10.0 they were compile-time constants, so one
+  vault's rules (its `Quicknotes/` folder included) reached every deployment
+  of this public repo. They are composed onto the write tools' descriptions
+  at startup (`VaultConventions.Apply`, a `PostConfigure` on the SDK's
+  options, forced at boot), which makes three things silent if broken:
+  composition must start from the tool's ORIGINAL description (an options
+  rebuild would otherwise append every clause twice); the composed string
+  must be budget-checked THERE, because a build test can only read the
+  unconfigured one (startup refuses an overlong result); and a new write tool
+  needs an entry in `VaultConventions.Clauses` or it states nothing
+  (`ConventionsWireTests` derives the writer set from readOnlyHint). The
+  checks (`ConventionChecker`) judge only what a write ADDED, run AFTER the
+  commit and verification, and never throw — an exception there turns a
+  landed, verified write into an error receipt and invites a retry of a
+  write that already happened. Reading the rules from the vault's CLAUDE.md
+  instead is the `ArchivedPrefixes` mistake: a rule stored in the vault can
+  be switched off by the agents it constrains.
 - **Tool errors lead with the bracketed code** (`[PreconditionFailed] …`) via
   `ToolSupport.Run` — agents parse that prefix to decide "re-read and
   rebuild" vs "give up". New tools go through `Run`; a bare exception would

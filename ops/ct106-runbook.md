@@ -386,6 +386,15 @@ is only as good as the unit being finished when it is taken:
   timer does not capture them. Too high strands files SILENTLY while too low
   merely refuses them out loud.
 
+- `Conventions__*` — this vault's note-writing conventions (Helios: all three
+  flags, plus its style line and `NewNoteFolder=Quicknotes`; the shipped unit
+  carries them commented out). Set them here, in the same edit: an
+  unconfigured server boots clean with every check green and simply tells
+  agents nothing about how notes are written here — the silent direction.
+  The `doctor` line prints what it parsed: `ok Conventions parse
+  (wikilinks-only, no-new-frontmatter, no-new-tags, style text, new notes in
+  Quicknotes/)`. A Style value with spaces needs the whole assignment quoted:
+  `Environment="Conventions__Style=…"`.
 - `Vault__ArchivedPrefixes__0=<folder>` — IF this vault keeps superseded
   copies in a folder agents should leave alone (Helios: `Archive`). Set it
   here, in the same edit as everything else, because the failure is silent in

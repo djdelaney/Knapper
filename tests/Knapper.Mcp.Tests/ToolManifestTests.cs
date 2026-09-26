@@ -82,45 +82,24 @@ public class ToolManifestTests : IClassFixture<KnapperMcpFactory>
     }
 
     /// <summary>
-    /// A tool description is the only channel that reaches an agent at the
-    /// moment it is DRAFTING. The server instructions arrive once at
-    /// initialize, thousands of tokens earlier, and the vault's own CLAUDE.md
-    /// arrives only if the agent thought to read it — which many do not, and
-    /// which is the whole reason the conventions are spliced in here.
-    ///
-    /// So the property is: a tool that WRITES states them. The set is derived
-    /// from readOnlyHint rather than listed, because the failure this guards
-    /// is a NEW write tool shipping without the clause — a list would need
-    /// the same edit that was already forgotten. vault_delete is the one
-    /// exemption and is named here: it removes a note, so neither how a note
-    /// is written nor where one goes applies to it.
+    /// The build ships NO vault's conventions. Until 0.10.0 they were
+    /// compile-time constants, so every deployment of this public repo told
+    /// its agents to use one person's default folder. A deployment that
+    /// configures nothing under Conventions:* must publish write tools that
+    /// say nothing about conventions — the configured case, and the property
+    /// that every writing tool then states them, is ConventionsWireTests.
     /// </summary>
     [Fact]
-    public async Task Every_tool_that_writes_states_the_vault_conventions()
+    public async Task An_unconfigured_deployment_states_no_conventions()
     {
         var tools = await ListToolsAsync();
-        tools.Count.ShouldBe(ToolNames.All.Count);
+        tools.Count.ShouldBe(ToolNames.All.Count); // a check over an empty list proves nothing
 
-        var writers = tools
-            .Where(t => t.TryGetProperty("annotations", out var a)
-                && a.TryGetProperty("readOnlyHint", out var ro)
-                && ro.ValueKind == JsonValueKind.False)
-            .Select(t => (name: t.GetProperty("name").GetString()!,
-                          description: t.TryGetProperty("description", out var d) ? d.GetString() ?? "" : ""))
-            .ToList();
-
-        writers.Select(w => w.name).ShouldContain("vault_edit"); // a derived set that came back empty proves nothing
-
-        foreach (var (name, description) in writers)
+        foreach (var tool in tools)
         {
-            if (name == "vault_delete")
-                continue;
-
-            var states = description.Contains("[[wikilinks]]", StringComparison.Ordinal)
-                || description.Contains("Quicknotes/", StringComparison.Ordinal);
-            states.ShouldBeTrue(
-                $"{name} writes to the vault but its description carries neither VaultConventions block — an " +
-                "agent drafting through it has no statement of the vault's conventions at the point of use");
+            var description = tool.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+            description.ShouldNotContain("CONVENTIONS:", Case.Sensitive, tool.GetProperty("name").GetString());
+            description.ShouldNotContain("New notes default to", Case.Sensitive, tool.GetProperty("name").GetString());
         }
     }
 

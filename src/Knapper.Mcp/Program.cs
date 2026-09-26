@@ -30,6 +30,18 @@ builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Services.Configure<VaultOptions>(builder.Configuration.GetSection(VaultOptions.SectionName));
 builder.Services.Configure<McpOptions>(builder.Configuration.GetSection(McpOptions.SectionName));
 builder.Services.Configure<SyncOptions>(builder.Configuration.GetSection(SyncOptions.SectionName));
+builder.Services.Configure<ConventionsOptions>(builder.Configuration.GetSection(ConventionsOptions.SectionName));
+
+// The deployment's note-writing conventions. Validated in the factory (forced
+// at boot below) so a malformed value refuses startup rather than being
+// published into every write tool's description.
+builder.Services.AddSingleton(sp =>
+{
+    var conventions = sp.GetRequiredService<IOptions<ConventionsOptions>>().Value;
+    if (conventions.Validate() is { Count: > 0 } problems)
+        throw new InvalidOperationException("Conventions misconfigured: " + string.Join("; ", problems));
+    return new ConventionChecker(conventions);
+});
 
 // ---- Core wiring. Singletons resolve VaultOptions once at startup — the
 // vault root and lock dir are deployment facts, not per-request values.
@@ -113,7 +125,8 @@ builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<VaultOptions>(),
     sp.GetRequiredService<IOptions<SyncOptions>>().Value,
     sp.GetRequiredService<ArchivedPrefixes>(),
-    sp.GetRequiredService<AuditLog>()));
+    sp.GetRequiredService<AuditLog>(),
+    sp.GetRequiredService<ConventionChecker>()));
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
 
@@ -144,6 +157,22 @@ builder.Services
         return next(context, ct);
     }));
 
+// The write tools' convention clauses come from Conventions:* (see
+// VaultConventions). PostConfigure runs after the SDK has collected the
+// registered tools into ToolCollection, and the composed text is checked
+// against the client delivery budget here — the one place it exists as the
+// served string. Forced at boot below, so an overlong result refuses startup.
+builder.Services.AddOptions<ModelContextProtocol.Server.McpServerOptions>()
+    .PostConfigure<IOptions<ConventionsOptions>>((server, conventions) =>
+    {
+        if (server.ToolCollection is not { } tools)
+            return;
+        var problems = Knapper.Mcp.Tools.VaultConventions.Apply(tools, conventions.Value);
+        if (problems.Count > 0)
+            throw new InvalidOperationException(
+                "Conventions:* make a tool description too long to survive delivery: " + string.Join("; ", problems));
+    });
+
 // Registered unconditionally and inertly; everything reads resolved options
 // at request time. See AccessAuth.
 AccessAuth.AddAccessAuthentication(builder.Services);
@@ -167,6 +196,7 @@ _ = app.Services.GetRequiredService<VaultLockManager>();
 _ = app.Services.GetRequiredService<KnapperMetrics>();
 _ = app.Services.GetRequiredService<AuditLog>();
 _ = app.Services.GetRequiredService<VaultMutationService>();
+_ = app.Services.GetRequiredService<IOptions<ModelContextProtocol.Server.McpServerOptions>>().Value;
 
 // The DI-resolved options — authoritative, reflecting env vars and every
 // source that lands after the builder-time snapshot. Security decisions below

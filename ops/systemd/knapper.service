@@ -41,6 +41,17 @@ Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
 # does not exist while leaving the real one open. `knapper doctor` prints what
 # it parsed, which is the only way to tell the setting took.
 #Environment=Vault__ArchivedPrefixes__0=Archive
+# The vault's note-writing conventions, stated in every write tool's
+# description and (for the three flags) checked on each write: a write that
+# breaks one still lands, and its receipt's `warnings` says what to fix.
+# Commented because they are site config — the build ships nobody's
+# conventions, and an unconfigured server states none. `knapper doctor` prints
+# what it parsed. Free text is capped at 400 characters, one line each.
+#Environment=Conventions__WikilinksOnly=true
+#Environment=Conventions__NoNewFrontmatter=true
+#Environment=Conventions__NoNewTags=true
+#Environment="Conventions__Style=match the vault's terse, information-dense style"
+#Environment=Conventions__NewNoteFolder=Quicknotes
 Environment=Sync__Mode=heartbeat
 Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 # The fail-closed budget, stated here even though it is the default: with the

@@ -27,9 +27,18 @@ public sealed class VaultMutationService(
     VaultOptions options,
     SyncOptions syncOptions,
     ArchivedPrefixes archived,
-    AuditLog? audit = null)
+    AuditLog? audit = null,
+    ConventionChecker? conventions = null)
 {
     private TimeSpan LockTimeout => TimeSpan.FromMilliseconds(options.LockTimeoutMs);
+
+    /// <summary>
+    /// Advisory checks on what a committed write added. Runs AFTER the
+    /// commit and verification and never throws (see
+    /// <see cref="ConventionChecker"/>), so it can never turn a landed write
+    /// into an error receipt.
+    /// </summary>
+    private readonly ConventionChecker conventionChecker = conventions ?? ConventionChecker.Off;
 
     /// <summary>
     /// Refuse an operation that would CHANGE something already inside an
@@ -197,7 +206,8 @@ public sealed class VaultMutationService(
             var gen = generation.Increment();
             var sha = VaultHash.Sha256Hex(written);
             TryAudit("create", vp.Relative, "ok", ctx, before: null, after: sha);
-            return new MutationResult(vp.Relative, null, sha, 0, written.Length, true, gen);
+            return new MutationResult(vp.Relative, null, sha, 0, written.Length, true, gen,
+                conventionChecker.Check(vp.Relative, before: null, written));
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
@@ -311,7 +321,8 @@ public sealed class VaultMutationService(
                 var sha = VaultHash.Sha256Hex(data);
                 TryAudit("move", source.Relative, "ok", ctx, before: sha, after: sha,
                     detail: "→ " + destination.Relative);
-                return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen);
+                // A move changes no bytes, so it adds nothing a convention could judge.
+                return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen, []);
             }
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
@@ -469,7 +480,7 @@ public sealed class VaultMutationService(
                 var (vp, before, after, item) = plans[i];
                 if (failedAt >= 0)
                 {
-                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.NotAttempted, null, null, null));
+                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.NotAttempted, null, null, null, []));
                     continue;
                 }
                 var opName = "batch-" + item.Kind.ToString().ToLowerInvariant();
@@ -492,7 +503,8 @@ public sealed class VaultMutationService(
                     var sha = VaultHash.Sha256Hex(after);
                     TryAudit(opName, vp.Relative, "ok", ctx,
                         before is null ? null : VaultHash.Sha256Hex(before), sha);
-                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Applied, sha, null, null));
+                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Applied, sha, null, null,
+                        conventionChecker.Check(vp.Relative, before, after)));
                 }
                 catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
                 {
@@ -501,7 +513,7 @@ public sealed class VaultMutationService(
                     // receipt for the items that already landed.
                     var ke = NormalizeIo(e, "batch-apply", vp.Relative);
                     TryAudit(opName, vp.Relative, ke.Code.ToString(), ctx, detail: NoteRecoveredSibling(ke));
-                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message));
+                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message, []));
                     failedAt = i;
                 }
             }
@@ -591,7 +603,8 @@ public sealed class VaultMutationService(
                 var gen = generation.Increment();
                 var afterSha = VaultHash.Sha256Hex(after);
                 TryAudit(op, vp.Relative, "ok", ctx, beforeSha, afterSha);
-                return new MutationResult(vp.Relative, beforeSha, afterSha, before.Length, after.Length, true, gen);
+                return new MutationResult(vp.Relative, beforeSha, afterSha, before.Length, after.Length, true, gen,
+                    conventionChecker.Check(vp.Relative, before, after));
             }
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)

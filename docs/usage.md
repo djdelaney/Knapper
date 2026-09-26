@@ -93,6 +93,31 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `MaxAgeSeconds` | 300 | Staleness threshold. Missing file = blocked (fail closed). |
 | `MaxFileBytes` | 5242880 | Largest file Obsidian Sync will carry; a write producing more is refused `TooLargeToSync`. A property of your **Sync plan**, not of Knapper — set it to match. The default is the standard plan's "max 5.00 MB" MEASURED: 5 MiB inclusive (2026-09-26: 5,242,880 bytes synced, 5,242,881 was refused at upload). Re-measure after a plan change or an `obsidian-headless` upgrade before trusting it. Errors are asymmetric: too low refuses writes loudly, too high strands them **silently**. Applies in every `Mode` — a guard with a mode-shaped hole is a bypass. |
 
+### `Conventions:*` — the vault's note-writing conventions
+
+What the write tools' descriptions tell agents, and which rules each write is
+checked against. **All off by default: the build ships nobody's conventions**,
+and an unconfigured server's write tools state none. Configuration, never
+vault content — a rule read from a note could be switched off by the agents it
+constrains (the same reason `ArchivedPrefixes` is config). Each flag drives
+both the sentence in the descriptions and the matching warning, so the two
+cannot disagree. Validated at boot, and startup refuses a combination that
+pushes any description past the client's 2048-character delivery cap.
+`knapper doctor` prints what it parsed.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `WikilinksOnly` | false | "Internal links are [[wikilinks]], never markdown links." Warns `markdown_internal_link` when a write ADDS a markdown link or embed whose target is not a URL (outside code; links already in the note are not re-reported). |
+| `NoNewFrontmatter` | false | "Do not add frontmatter to a note that lacks it." Warns `frontmatter_added` when an edit/append gives an existing note its first frontmatter block. New notes are not checked — which note types carry frontmatter is a per-vault rule a flag cannot express. |
+| `NoNewTags` | false | "Do not add tags to a note that does not use them." Warns `tags_added` when an edit/append gives an existing tagless note its first tag (inline `#tag` or frontmatter `tags`). New notes are not checked. Broken YAML reads as "could not tell", never "had none". |
+| `Style` | — | Free-text style guidance appended to the writing clause. Stated, never checked. ≤ 400 chars, one line. |
+| `NewNoteFolder` | — | Vault-relative default folder for new notes, stated on `vault_create`/`vault_mkdir`/`vault_move`. Stated, never checked. |
+
+Warnings are **advisory**: the write has already committed and verified, and
+the receipt's `warnings` (per item for `vault_batch`) says what to fix with a
+follow-up edit. The check never fails a write — anything it cannot judge
+(non-Markdown, non-UTF-8, unparseable YAML) yields no warning.
+
 ## Connecting clients
 
 - **Claude Code (local dev)**: `claude mcp add --transport http knapper http://127.0.0.1:3535/`
@@ -153,7 +178,10 @@ manifest.
 **The agent write loop**: `vault_read` (fresh) → build edit against that
 exact content → `vault_edit` with the returned `sha256`. On
 `[PreconditionFailed]`, the file changed under you: re-read and rebuild —
-never retry the old base.
+never retry the old base. Every edit/append/create/move receipt, and each
+`vault_batch` item, carries `warnings` — the configured conventions
+(`Conventions:*`) the write broke; empty when none. The write has landed
+either way; fix a warning with a follow-up edit.
 
 ## Error codes
 

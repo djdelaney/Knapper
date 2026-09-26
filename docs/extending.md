@@ -424,8 +424,9 @@ Directory.Build.props <Version>          the one carrier
   safe direction — the dangerous failure is claiming exhaustiveness over a gap
   the caller cannot see, and `excludedPrefixes` closes that one.
 
-- **Getting the vault's own conventions in front of an agent** — phase 1
-  built 2026-09-05, phases 2 and 3 scoped. The problem: agents routinely do
+- **Getting the vault's own conventions in front of an agent** — phases 1
+  and 3 built (phase 1 2026-09-05, made configurable with phase 3 in 0.10.0);
+  phase 2 scoped. The problem: agents routinely do
   not read the vault's `CLAUDE.md`, so notes arrive with markdown links
   instead of `[[wikilinks]]`, frontmatter added to notes that had none, and
   files dropped outside `Quicknotes/`. Three channels can carry the fix and
@@ -433,12 +434,18 @@ Directory.Build.props <Version>          the one carrier
 
   1. **Tool descriptions — BUILT** (`VaultConventions`, spliced into every
      non-read-only tool but `vault_delete`, pinned by
-     `ToolManifestTests.Every_tool_that_writes_states_the_vault_conventions`).
+     `ConventionsWireTests.Every_tool_that_writes_states_the_configured_conventions`).
      The only channel that arrives at the moment of DRAFTING rather than
-     thousands of tokens earlier. Its cost is that the text is compiled in:
-     changing a convention needs a release. That is tolerable ONLY for rules
-     that are stable and actionable at the instant of a write, which is why
-     the constant holds four of them and not the folder map.
+     thousands of tokens earlier. Until 0.10.0 the text was compile-time
+     constants, which shipped ONE vault's conventions — its `Quicknotes/`
+     folder included — to every deployment of this public build. It is now
+     composed at startup from `Conventions:*` (all off by default;
+     `ToolManifestTests.An_unconfigured_deployment_states_no_conventions`),
+     and startup refuses a composition that pushes a description over the
+     delivery budget, since the served string is no longer a constant a build
+     test can read. Still only for rules that are stable and actionable at
+     the instant of a write — the folder map and the per-type frontmatter
+     table belong to phase 2.
   2. **A `vaultConventions` field on the read/query envelope — NOT BUILT.**
      Responses are the one channel with room: descriptions and instructions
      are both capped at 2048 characters per field, while a `vault_read` of the
@@ -466,15 +473,27 @@ Directory.Build.props <Version>          the one carrier
      `clientInfo` is per-REQUEST and must never be cached, so a
      once-per-window scheme has no usable key on the busiest surface.
      Always-on and compact is the only shape that works.
-  3. **Convention lint on the mutation response — NOT BUILT**, and the only
-     one of the three that is enforcement rather than advice. Note this is
-     NOT "run `vault_lint` on write": its checks are link-graph checks, while
-     the conventions worth catching (a markdown link to an internal note,
-     frontmatter added to a note that had none, tags added) are a different
-     family — and two of them need the BEFORE content to judge, which the
-     mutation path already holds from its fresh read. Warnings only to start.
-     It changes every mutation response's shape, so it is a minor bump and the
-     `ToolSerialization` required-property rule applies.
+  3. **Convention warnings on the mutation response — BUILT in 0.10.0**
+     (`ConventionChecker`, `ConventionCheckerTests`, `ConventionsWireTests`).
+     Three checks, each enabled by the same `Conventions:*` flag that puts
+     its sentence in the descriptions, so claim and check cannot drift:
+     `markdown_internal_link`, `frontmatter_added`, `tags_added`. Every one
+     judges what the write ADDED against the bytes the mutation already held
+     from its fresh read — a note that broke a convention before the agent
+     arrived must not warn on every later edit. Frontmatter and tags are not
+     checked on CREATE (which note types carry frontmatter is a per-vault rule
+     a flag cannot express). Warnings only, by design: the check runs after
+     the commit and verification and never throws, because an exception there
+     would turn a landed write into an error receipt and invite a retry of a
+     write that already happened. Every receipt and batch item carries
+     `warnings` (empty when none), per the required-property rule.
+
+     Why configuration and not the vault's `CLAUDE.md`: prose cannot be turned
+     into mechanical checks reliably, and a rule read from the vault could be
+     switched off by the agents it constrains — the `ArchivedPrefixes`
+     argument. Scoped next, if wanted: a folder-placement check (it needs a
+     notion of "clearly fits" that a flag cannot carry), and counting
+     warnings in metrics.
 
   Rejected: an MCP **resource** with `annotations: {audience, priority}`.
   Claude Code is the primary surface and does not auto-load them, so it would

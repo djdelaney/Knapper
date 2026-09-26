@@ -17,7 +17,20 @@ public sealed record MutationResult(
     long BytesAfter,
     /// <summary>Always true on return — the reopen-and-byte-compare passed. Present so receipts SAY what was checked.</summary>
     bool Verified,
-    long Generation);
+    long Generation,
+    /// <summary>
+    /// Conventions this write broke (empty when none, or when no rule is
+    /// enabled). Always present: a response carries every property its schema
+    /// marks required.
+    /// </summary>
+    IReadOnlyList<ConventionWarning> Warnings);
+
+/// <summary>
+/// A vault convention (<c>Conventions:*</c>) that a COMMITTED write broke.
+/// Advisory: the write has already landed and verified; the agent fixes it
+/// with a follow-up edit. <c>Rule</c> is a stable snake_case code.
+/// </summary>
+public sealed record ConventionWarning(string Rule, string Message);
 
 public sealed record DeleteResult(
     string Path,
@@ -54,7 +67,9 @@ public sealed record BatchItemResult(
     BatchItemStatus Status,
     string? NewSha256,
     VaultErrorCode? ErrorCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    /// <summary>Conventions this item's write broke; empty unless Applied.</summary>
+    IReadOnlyList<ConventionWarning> Warnings);
 
 /// <summary>
 /// Batch outcome. NOT cross-file atomic (brief §7): all preconditions,

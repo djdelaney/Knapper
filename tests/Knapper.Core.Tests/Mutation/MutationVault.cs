@@ -70,6 +70,11 @@ public sealed class MutationVault : IDisposable
         Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options,
         new SyncOptions { MaxFileBytes = max }, ArchivedPrefixes.None, Audit);
 
+    /// <summary>A service that checks writes against the given conventions.</summary>
+    public VaultMutationService ServiceWithConventions(ConventionsOptions conventions) => new(
+        Resolver, Locks, Generation, Conflicts, StaticSyncGate.Open, Options, SyncOptions,
+        ArchivedPrefixes.None, Audit, new ConventionChecker(conventions));
+
     public string Write(string relative, string content)
     {
         VaultDir.File(relative, content);

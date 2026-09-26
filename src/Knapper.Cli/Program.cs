@@ -30,6 +30,7 @@ var configuration = new ConfigurationBuilder()
     .Build();
 var vaultOptions = configuration.GetSection(VaultOptions.SectionName).Get<VaultOptions>() ?? new VaultOptions();
 var syncOptions = configuration.GetSection(SyncOptions.SectionName).Get<SyncOptions>() ?? new SyncOptions();
+var conventionsOptions = configuration.GetSection(ConventionsOptions.SectionName).Get<ConventionsOptions>() ?? new ConventionsOptions();
 
 try
 {
@@ -189,6 +190,28 @@ int Doctor()
         }
         Check($"Vault:ArchivedPrefixes parses ({archivedLabel})",
             () => !archivedLabel.StartsWith("INVALID", StringComparison.Ordinal));
+    }
+    // Printed for the reason the archived prefixes are: the quiet failure is
+    // an operator who set Conventions__* and did not restart, and believes
+    // agents are being told (and checked against) rules they are not. The
+    // default states nothing, so "none" is a real answer, not an error.
+    {
+        var parts = new List<string>();
+        if (conventionsOptions.WikilinksOnly)
+            parts.Add("wikilinks-only");
+        if (conventionsOptions.NoNewFrontmatter)
+            parts.Add("no-new-frontmatter");
+        if (conventionsOptions.NoNewTags)
+            parts.Add("no-new-tags");
+        if (!string.IsNullOrWhiteSpace(conventionsOptions.Style))
+            parts.Add("style text");
+        if (!string.IsNullOrWhiteSpace(conventionsOptions.NewNoteFolder))
+            parts.Add($"new notes in {conventionsOptions.NewNoteFolder.Trim().Trim('/')}/");
+        var problems = conventionsOptions.Validate();
+        var label = problems.Count > 0
+            ? "INVALID — " + string.Join("; ", problems)
+            : parts.Count == 0 ? "none" : string.Join(", ", parts);
+        Check($"Conventions parse ({label})", () => problems.Count == 0);
     }
     Check("Vault:CommitStampPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.CommitStampPath)
