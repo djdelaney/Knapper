@@ -376,10 +376,13 @@ is only as good as the unit being finished when it is taken:
   same reason as `MaxAgeSeconds`: nobody reading `knapper.service` could
   otherwise see the ceiling that governs what agents may write. It is a
   property of the SYNC PLAN, not of Knapper — if the plan's limit changes,
-  this is the knob. Do NOT raise it to 5242880 on the assumption that "5 MB"
-  means MiB: `ob` reports an ambiguous "max 5.00 MB", nobody has bisected it,
-  and too high strands files SILENTLY while too low merely refuses them out
-  loud.
+  this is the knob. The unit is MiB (measured 2026-09-26: a 6,000,000-byte
+  note was refused as "5.72 MB, max 5.00 MB", and a 5,100,000-byte one synced
+  to CT 106 byte-exact), so the ceiling reads as 5242880 — but do NOT raise
+  the knob to it until the boundary byte itself is measured (drop 5,242,880-
+  and 5,242,881-byte synthetic notes into the vault on a Mac and read the
+  Mac's Sync activity log): too high strands files SILENTLY while too low
+  merely refuses them out loud.
 
 - `Vault__ArchivedPrefixes__0=<folder>` — IF this vault keeps superseded
   copies in a folder agents should leave alone (Helios: `Archive`). Set it
@@ -624,13 +627,15 @@ and still without a write.
   `knapper doctor` also reports no oversized files already present — that
   covers one written by a shell on the box, or predating the guard.
 
-  ⚠️ Neither covers the DOWNLOAD half. Measured 2026-08-13: the ceiling is
-  symmetric, so a >5MB note made on a Mac never reaches CT 106 — it is
-  missing here rather than oversized here, and no local scan can find what
-  never arrived. Knapper then answers reads for it with `[NotFound]` and
-  reports `truncated: false` over a scope it believes was exhaustive. Nothing
-  detects this today; do not let a clean `doctor` be read as proof the CT has
-  everything Helios has.
+  ⚠️ Neither covers a note made oversized on ANOTHER device. Measured
+  2026-09-26: the originating Mac refuses the upload itself ("File too large
+  to sync" in its own Sync activity log), so the note reaches no other
+  replica and CT 106 is never told it exists — nothing here, `sync.log`
+  included, can detect it. Knapper answers `[NotFound]` for it and
+  `truncated: false` means exhaustive over what Sync carries. A clean
+  `doctor` is not proof that no device holds an unsynced note; to check,
+  read that device's Sync activity log. Accepted as a documented limit
+  (`docs/extending.md`, open decisions).
 - **Conflict gate**: create `X (Conflicted copy 2026-01-01).md` beside a
   scratch note; mutations to BOTH must be refused until it is removed.
   Prefer a conflict file Sync itself produced if one has appeared.

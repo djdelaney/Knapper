@@ -47,13 +47,14 @@ public sealed class SyncOptions
     /// deployment decision. Set it to match your plan's per-file ceiling.
     ///
     /// The default is DELIBERATELY CONSERVATIVE. `ob` reports "max 5.00 MB",
-    /// which is ambiguous between 5,000,000 and 5,242,880, and nobody has
-    /// bisected the real boundary (CT 106, 2026-08-13). The two errors are not
+    /// and the unit is MiB (measured 2026-09-26: a 6,000,000-byte file was
+    /// reported as "5.72 MB"; 5,100,000 bytes synced), so the ceiling reads as
+    /// 5,242,880 — but the exact boundary byte is unmeasured. The two errors are not
     /// symmetric: set too low, some writes that would have synced are refused,
     /// loudly and with a typed error naming the limit; set too high, files in
     /// the gap pass the guard and are stranded silently — reproducing the exact
     /// failure the guard exists to prevent, now with a false sense of coverage.
-    /// Do not raise this to 5 * 1024 * 1024 without measuring first.
+    /// Do not raise this to 5 * 1024 * 1024 without measuring that byte first.
     ///
     /// Applies in every <see cref="Mode"/>, including "open": a guard with a
     /// mode-shaped hole in it is a bypass. A test or dev vault needing larger

@@ -91,7 +91,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Mode` | `heartbeat` | `heartbeat` (production default — refuses startup without `HeartbeatPath`, so a forgotten env line fails closed) or `open` (dev-only explicit opt-out, logged warning). |
 | `HeartbeatPath` | — | File the sync probe touches; mutations require it fresh. |
 | `MaxAgeSeconds` | 300 | Staleness threshold. Missing file = blocked (fail closed). |
-| `MaxFileBytes` | 5000000 | Largest file Obsidian Sync will carry; a write producing more is refused `TooLargeToSync`. A property of your **Sync plan**, not of Knapper — set it to match. The default is the conservative reading of `ob`'s ambiguous "max 5.00 MB" (5,000,000, not 5,242,880; unbisected as of 2026-08-13). Errors are asymmetric: too low refuses writes loudly, too high strands them **silently**. Applies in every `Mode` — a guard with a mode-shaped hole is a bypass. |
+| `MaxFileBytes` | 5000000 | Largest file Obsidian Sync will carry; a write producing more is refused `TooLargeToSync`. A property of your **Sync plan**, not of Knapper — set it to match. `ob`'s "MB" is MiB (measured 2026-09-26: a 6,000,000-byte file reported as "5.72 MB, max 5.00 MB"; 5,100,000 bytes synced), so the ceiling reads as 5,242,880 — the default stays at 5,000,000 until the exact boundary byte is measured. Errors are asymmetric: too low refuses writes loudly, too high strands them **silently**. Applies in every `Mode` — a guard with a mode-shaped hole is a bypass. |
 
 ## Connecting clients
 

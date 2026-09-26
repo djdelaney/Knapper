@@ -592,34 +592,45 @@ re-litigated per review.
 - **§8b re-run cadence** — the behavioral smoke test re-runs after major
   Claude model updates (steering drifts); failures fix descriptions and
   instructions, never the contract.
-- **Files Helios has that CT 106 does not** — OPEN, and the most serious
-  thing on this list. Measured 2026-08-13: Obsidian Sync's ~5MB per-file
-  ceiling is SYMMETRIC. A note created on one of Dan's Macs that exceeds it
-  never downloads to the CT, so the vault Knapper serves is a strict subset
-  of Helios and nothing local says so. `vault_read` answers `[NotFound]` for
-  a note that plainly exists; worse, searches report `truncated: false`,
-  which the query contract defines as "this scope was exhaustively
-  searched". That is the one known way the completeness envelope lies, and
-  it lies quietly.
+- **Oversized notes made on another device** — CLOSED 2026-09-26 as a
+  documented limit of the completeness contract. It was open as "files
+  Helios has that CT 106 does not": a note over Sync's per-file ceiling,
+  created on one of Dan's Macs, never reaches the CT, so `vault_read` answers
+  `[NotFound]` and searches report `truncated: false` without it.
 
-  `Sync__MaxFileBytes` does not help — it guards Knapper's writes.
-  `OversizedFiles.Scan` does not help — it finds oversized files that are
-  PRESENT, and this one is absent. Detection needs evidence the filesystem
-  does not carry.
+  The measurement that closed it (2026-09-26): two synthetic notes of
+  5,100,000 and 6,000,000 bytes were dropped into Helios on a Mac. The Mac's
+  own Obsidian client logged `File too large to sync (5.72 MB, max 5.00 MB)`
+  for the larger one and never uploaded it; the smaller one uploaded and
+  arrived on CT 106 byte-exact (SHA-256 matched). So the refusal happens at
+  the ORIGIN's upload. The note never reaches Sync's servers, so it reaches
+  no other replica — not CT 106, and not Dan's phones either. That removes
+  the premise: this is not a gap between Helios and the CT, it is a file
+  that exists on one device only, exactly like any file that never synced.
 
-  The only local candidate is ob's `sync.log`: the upload side logs
-  `File too large to sync (… max 5.00 MB)` with the filename, so if the
-  download side logs the same, the CT knows exactly which notes it could not
-  fetch and a check could name them. **Unmeasured — measure this before
-  designing anything.** If it logs nothing, the options get materially
-  worse: a manifest diff against a Mac, or accepting and documenting that
-  "exhaustive" means "exhaustive over what Sync delivered", which weakens a
-  contract the whole query layer is built on.
+  Consequences, and why no detector is being built:
+  - **There is no evidence on the CT to detect.** The one local candidate
+    was ob's `sync.log`, on the hope that a refused DOWNLOAD would be logged
+    by name. There is no download: the CT's ob is never told the file
+    exists. Neither `OversizedFiles.Scan` (finds files PRESENT) nor
+    `Sync__MaxFileBytes` (guards Knapper's own writes) could ever see it.
+  - **The contract is stated, not weakened.** `truncated: false` means
+    exhaustive over the vault as Sync carries it. That is the only vault any
+    replica other than the origin can see, and it is the one Knapper serves.
+  - The only possible detector runs on the ORIGIN device — a human-run
+    check of that Mac's own replica for files over 5 MiB. Not built. Agents
+    must never do it (the local replica is off-limits to them).
 
-  Whatever the answer, it belongs in the QUERY layer, not beside the
-  mutation guard. Do not bolt it onto the oversized backstop: that scanner
-  answers a different question and pairing them would make a partial answer
-  look complete.
+  Re-opens on: a Sync plan change (a plan with a higher per-file limit could
+  let an origin upload what the CT's `ob` then refuses to download — the
+  case the `sync.log` idea was for), or an `obsidian-headless` upgrade.
+  Re-measure with the same two-file procedure before relying on this entry.
+
+  The same measurement settled the unit: `ob`'s "MB" is MiB (6,000,000 bytes
+  printed as 5.72), so the ceiling reads as 5,242,880. `Sync__MaxFileBytes`
+  stays at 5,000,000 until the exact boundary byte (5,242,880 vs 5,242,881)
+  is measured — too high strands writes silently, too low only refuses them
+  loudly.
 
 Decided and CLOSED (do not re-open without new evidence): no case-folding
 of paths (ext4 legitimately distinguishes; the requirement is a

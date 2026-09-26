@@ -138,8 +138,9 @@ public sealed class SyncSizeLimitTests
     }
 
     /// <summary>
-    /// The default is the conservative reading of ob's ambiguous "max 5.00 MB"
-    /// (5,000,000, not 5,242,880 — unbisected as of 2026-08-13). Too low
+    /// The default is the conservative reading of ob's "max 5.00 MB":
+    /// 5,000,000, not 5,242,880. The unit is measured as MiB (2026-09-26) but
+    /// the exact boundary byte is not. Too low
     /// refuses writes loudly; too high strands them silently. Pinned so a
     /// later "tidy up to 5 * 1024 * 1024" has to argue with a test.
     /// </summary>

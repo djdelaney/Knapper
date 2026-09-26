@@ -597,9 +597,12 @@ format by default.
   verification is structurally blind to it, because nothing local is wrong.
   Two silent ways to break it: check the INPUT size instead (the real case is
   a small anchored insert into a note already near the ceiling), or "tidy"
-  the 5,000,000 default up to 5*1024*1024 — `ob` reports an ambiguous
-  "max 5.00 MB" that nobody has bisected, and the errors are not symmetric:
-  too low refuses writes loudly, too high strands them silently. Batch checks
+  the 5,000,000 default up to 5*1024*1024 on the strength of the unit alone.
+  The unit IS measured now — Sync's "MB" is MiB (2026-09-26: a 6,000,000-byte
+  file reported as "5.72 MB, max 5.00 MB"; a 5,100,000-byte one synced
+  byte-exact to CT 106) — but the exact boundary byte is not, and the errors
+  are not symmetric: too low refuses writes loudly, too high strands them
+  silently. Raise it only after measuring 5,242,880 and 5,242,881. Batch checks
   during VALIDATE, so an oversized item fails the batch untouched. Pinned by
   `SyncSizeLimitTests`. `/health` and `knapper doctor` are the backstop for
   oversized files PRESENT on the box (a shell wrote one, or it predates the
@@ -607,12 +610,17 @@ format by default.
   drift into disagreeing; oversized files FOUND never degrade `/up` to 503 —
   nothing is blocked, and a permanent alert nobody can clear is how a monitor
   gets ignored (`OversizedBackstopTests`).
-- **The size ceiling is SYMMETRIC, and the download half is an OPEN hole.**
-  A >5MB file created elsewhere never reaches CT 106 at all — ABSENT, not
-  oversized-and-present — so the scanner cannot see it and `truncated:
-  false` can claim exhaustiveness over a vault silently missing a note.
-  The one known way the completeness envelope lies; the oversized backstop
-  does NOT cover it. Detail: `docs/extending.md`.
+- **An oversized note made on another device is refused at ITS upload, and
+  the completeness envelope is over what Sync delivered.** Measured
+  2026-09-26: the originating Obsidian client logs "File too large to sync"
+  and never uploads it, so the note exists on that one device and NO other
+  replica — CT 106 included. Nothing on the CT can detect it: it is absent,
+  not oversized-and-present (the scanner cannot see it), and ob here never
+  hears of it (its `sync.log` cannot name it). So `truncated: false` means
+  exhaustive over the vault Sync carries, never over every device's local
+  replica. Do not build a CT-side detector for this — there is no evidence
+  on the CT to detect. Closed as a documented limit; detail and the
+  re-open trigger in `docs/extending.md`.
 - **A vault walk that could not COMPLETE is a third state, and every health
   surface must carry it.** `OversizedFiles.Scan` throws — unreadable
   directory, or the `DefaultBudget` wall clock expiring — rather than
