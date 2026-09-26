@@ -89,6 +89,11 @@ out=$(lib 'retention_drops a.tgz b.tgz /o/a.tgz /o/b.tgz /o/c.tgz')
 out=$(lib 'retention_drops a.tgz a.tgz /o/a.tgz /o/prev.tgz')
 [ -z "$out" ] || fail "a re-deploy of the running version must prune nothing (the rollback target is unknown): '$out'"
 
+# The deletion command keeps `--` a separate word, whatever spacing the DROP
+# list arrives with (fused, `rm -f --/opt/…` is an unknown option to rm).
+out=$(lib 'prune_command $(retention_drops a.tgz b.tgz /o/a.tgz /o/b.tgz /o/c.tgz /o/d.tgz | tr "\n" " ")')
+[ "$out" = "rm -f -- /o/c.tgz /o/d.tgz" ] || fail "prune command is malformed: '$out'"
+
 # ── config loading ──────────────────────────────────────────────────────────
 out=$(KNAPPER_DEPLOY_ENV="$TMPROOT/absent.env" lib 'load_config' || true)
 case "$out" in *"no deploy config"*) ;; *) fail "a missing config file must stop the run: $out" ;; esac

@@ -190,6 +190,16 @@ retention_drops() {
   done
 }
 
+# The remote command that deletes the DROP list. A function so the exact
+# string is testable: when the list lost the leading space the old inline
+# `rm -f --$TGZ_DROP` relied on, it became `rm -f --/opt/…`, which rm rejects
+# as an unknown option — failing closed, but failing the run at its last step
+# (first real 0.11.0 deploy, 2026-09-26).
+prune_command() {
+  printf 'rm -f --'
+  printf ' %s' "$@"
+}
+
 # Sourced by tests/shell/test_deploy.sh for the functions above; nothing below
 # runs when sourced that way.
 if [ "${KNAPPER_DEPLOY_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -487,7 +497,7 @@ else
   else
     gate "Delete the DROP tarballs above? The KEEP lines stay."
     # shellcheck disable=SC2086
-    ct "rm -f --$TGZ_DROP"
+    ct "$(prune_command $TGZ_DROP)"
     ct "ls -1t $INSTALL_DIR/*.tar.gz" | sed 's/^/   now: /'
     ct "df -h $INSTALL_DIR | tail -1" | sed 's/^/   disk: /'
   fi
