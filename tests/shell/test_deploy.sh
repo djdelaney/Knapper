@@ -115,6 +115,70 @@ for v in 0 1; do for d in 0 1; do for n in 0 1; do
 done; done; done
 [ "$prunes" -eq 1 ] || fail "prune is reachable from $prunes flag combinations; only verified+real+no --no-prune may reach it"
 
+# ── §11b end to end, against a fixture install dir ──────────────────────────
+# The table above is the DECISION; this runs the block that acts on it —
+# retention_step through the real ct, with ssh stubbed to run the remote
+# command locally — so a branch that printed its refusal and deleted anyway
+# fails here. Four fixture tarballs; the running build is 0.11.2, so with
+# 0.11.1 as the rollback target the DROP set is 0.9.0 and 0.10.0.
+FIX_ALL="knapper-0.10.0-linux-x64.tar.gz knapper-0.11.1-linux-x64.tar.gz knapper-0.11.2-linux-x64.tar.gz knapper-0.9.0-linux-x64.tar.gz"
+SSHLOG="$TMPROOT/ssh.log"
+FIX="$TMPROOT/install"  # fixed: retention_run executes in a $(…) subshell
+# Args: VERIFY_OK DRY_RUN NO_PRUNE CUR_VER; stdin is the gate answer.
+retention_run() {
+    rm -rf "$FIX"; mkdir -p "$FIX"
+    for f in $FIX_ALL; do : > "$FIX/$f"; done
+    : > "$SSHLOG"
+    SSHLOG="$SSHLOG" KNAPPER_DEPLOY_LIB=1 bash -c '
+        set -euo pipefail; . "$0"
+        INSTALL_DIR=$1 VERIFY_OK=$2 DRY_RUN=$3 NO_PRUNE=$4 CUR_VER=$5
+        ART=artifacts/knapper-0.11.2-linux-x64.tar.gz
+        SSH_OPTS=(); CT_SSH=fixture-host
+        ssh() {
+            while [ "$1" != "$CT_SSH" ]; do shift; done; shift
+            printf "%s\n" "$*" >> "$SSHLOG"; bash -c "$*"
+        }
+        retention_step' "$SCRIPT" "$FIX" "$@" 2>&1
+}
+remaining() { ls "$FIX" | tr '\n' ' ' | sed 's/ $//'; }
+untouched() {  # CASE OUTPUT
+    [ "$(remaining)" = "$FIX_ALL" ] || fail "$1: tarballs were deleted — left: $(remaining)"
+    ! grep -q 'rm ' "$SSHLOG" || fail "$1: a deletion was sent to the host: $(cat "$SSHLOG")"
+    case "$2" in *"type yes"*) fail "$1: reached the delete gate" ;; esac
+}
+
+out=$(retention_run 0 0 0 0.11.1 </dev/null)
+case "$out" in *"REFUSING to prune"*) ;; *) fail "unverified: no refusal printed: $out" ;; esac
+for v in 0.9.0 0.10.0; do
+    case "$out" in *"DROP  knapper-$v-"*) ;; *) fail "unverified: the plan must still print (DROP $v): $out" ;; esac
+done
+untouched unverified "$out"
+
+out=$(retention_run 0 1 0 0.11.1 </dev/null)
+case "$out" in *"plan only, nothing deleted"*) ;; *) fail "dry-run: no plan-only line: $out" ;; esac
+untouched dry-run "$out"
+
+out=$(retention_run 1 0 1 0.11.1 </dev/null)
+case "$out" in *"--no-prune: nothing deleted"*) ;; *) fail "no-prune: no warning: $out" ;; esac
+untouched no-prune "$out"
+
+out=$(retention_run 1 0 0 0.11.2 </dev/null)
+case "$out" in *"nothing is pruned"*) ;; *) fail "same-version: no warning: $out" ;; esac
+case "$out" in *DROP*) fail "same-version: a DROP list was printed: $out" ;; esac
+untouched same-version "$out"
+
+# Verified, but the operator declines the gate.
+out=$(echo no | retention_run 1 0 0 0.11.1)
+case "$out" in *"aborted at gate"*) ;; *) fail "declined gate: no abort: $out" ;; esac
+[ "$(remaining)" = "$FIX_ALL" ] || fail "declined gate: tarballs were deleted — left: $(remaining)"
+! grep -q 'rm ' "$SSHLOG" || fail "declined gate: a deletion was sent to the host"
+
+# Positive control: the fixture can see a deletion, and only DROP goes.
+out=$(echo yes | retention_run 1 0 0 0.11.1)
+[ "$(remaining)" = "knapper-0.11.1-linux-x64.tar.gz knapper-0.11.2-linux-x64.tar.gz" ] \
+    || fail "verified prune must leave exactly the keep pair — left: $(remaining); output: $out"
+grep -q '^rm -f -- ' "$SSHLOG" || fail "verified prune sent no rm: $(cat "$SSHLOG")"
+
 # ── ssh never eats the gate answers ─────────────────────────────────────────
 out=$(lib 'SSH_OPTS=(); CT_SSH=h; MONITOR_SSH=m; ssh() { printf "%s " "$@"; }; echo "ct:$(ct true)"; echo "mon:$(mon true)"; echo "stdin:$(ct_stdin bash -s </dev/null)"')
 case "$out" in *"ct:-n "*) ;; *) fail "ct must pass ssh -n (it would read the gate answers): $out" ;; esac

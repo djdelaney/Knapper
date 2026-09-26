@@ -229,6 +229,52 @@ ct()       { ssh -n -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$CT_SSH"
 ct_stdin() { ssh -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$CT_SSH" "$@"; }
 mon()      { ssh -n -o BatchMode=yes "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "$MONITOR_SSH" "$@"; }
 
+# §11b, the only deleting code in this file. A function, not inline in main,
+# so test_deploy.sh can run THIS block — through the real ct, against a
+# fixture install dir — and not only retention_action's truth table: a branch
+# that printed its refusal and then deleted anyway would pass the table.
+# Keeps exactly two tarballs: the build now running (verified this run) and the
+# rollback target. Nothing is deleted unless verify passed in THIS run; the
+# plan prints even under --dry-run. Reads ART, CUR_VER, INSTALL_DIR,
+# VERIFY_OK, DRY_RUN and NO_PRUNE.
+retention_step() {
+  local keep_a keep_b tgz_all tgz_drop action f
+  say "11b. Retention — tarballs in $INSTALL_DIR (keep: running + rollback target)"
+  keep_a="$(basename "$ART")"
+  keep_b="knapper-$CUR_VER-linux-x64.tar.gz"
+  tgz_all="$(ct "ls -1 $INSTALL_DIR/*.tar.gz 2>/dev/null || true")"
+  # shellcheck disable=SC2086
+  tgz_drop="$(retention_drops "$keep_a" "$keep_b" $tgz_all | tr '\n' ' ')"
+  echo "   KEEP  $keep_a   (running, verified this run)"
+  if [ "$keep_a" = "$keep_b" ]; then
+    warn "re-deploy of the running version: the previous build's tarball cannot be identified here — nothing is pruned"
+  elif printf '%s\n' "$tgz_all" | grep -q "/$keep_b\$"; then
+    echo "   KEEP  $keep_b   (rollback target)"
+  else
+    warn "rollback tarball $keep_b is NOT on the host — keeping only the running build"
+  fi
+  # shellcheck disable=SC2086
+  action="$(retention_action "$VERIFY_OK" "$DRY_RUN" "$NO_PRUNE" "$keep_a" "$keep_b" $tgz_drop)"
+  if [ "$action" != same-version ]; then
+    for f in $tgz_drop; do echo "   DROP  ${f##*/}"; done
+  fi
+  case "$action" in
+    same-version) : ;;  # said above: the previous build's tarball is unknown here
+    nothing)      ok "already exactly the keep set — nothing to prune" ;;
+    dry-run)      warn "dry-run: plan only, nothing deleted" ;;
+    unverified)   warn "verify did not pass in this run — REFUSING to prune tarballs" ;;
+    no-prune)     warn "--no-prune: nothing deleted — you now owe a manual prune" ;;
+    prune)
+      gate "Delete the DROP tarballs above? The KEEP lines stay."
+      # shellcheck disable=SC2086
+      ct "$(prune_command $tgz_drop)"
+      ct "ls -1t $INSTALL_DIR/*.tar.gz" | sed 's/^/   now: /'
+      ct "df -h $INSTALL_DIR | tail -1" | sed 's/^/   disk: /'
+      ;;
+    *) die "internal: unknown retention action '$action' — nothing deleted" ;;
+  esac
+}
+
 # Sourced by tests/shell/test_deploy.sh for the functions above; nothing below
 # runs when sourced that way.
 if [ "${KNAPPER_DEPLOY_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -492,43 +538,8 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 # ─────────── 11b. Retention — the reap that pairs with the sow ──────────
-# The only deleting code in this file. Keeps exactly two tarballs: the build
-# now running (verified this run) and the rollback target. Nothing is deleted
-# unless verify passed in THIS run; the plan prints even under --dry-run.
-say "11b. Retention — tarballs in $INSTALL_DIR (keep: running + rollback target)"
-KEEP_A="$(basename "$ART")"
-KEEP_B="knapper-$CUR_VER-linux-x64.tar.gz"
-TGZ_ALL="$(ct "ls -1 $INSTALL_DIR/*.tar.gz 2>/dev/null || true")"
-# shellcheck disable=SC2086
-TGZ_DROP="$(retention_drops "$KEEP_A" "$KEEP_B" $TGZ_ALL | tr '\n' ' ')"
-echo "   KEEP  $KEEP_A   (running, verified this run)"
-if [ "$KEEP_A" = "$KEEP_B" ]; then
-  warn "re-deploy of the running version: the previous build's tarball cannot be identified here — nothing is pruned"
-elif printf '%s\n' "$TGZ_ALL" | grep -q "/$KEEP_B\$"; then
-  echo "   KEEP  $KEEP_B   (rollback target)"
-else
-  warn "rollback tarball $KEEP_B is NOT on the host — keeping only the running build"
-fi
-# shellcheck disable=SC2086
-ACTION="$(retention_action "$VERIFY_OK" "$DRY_RUN" "$NO_PRUNE" "$KEEP_A" "$KEEP_B" $TGZ_DROP)"
-if [ "$ACTION" != same-version ]; then
-  for f in $TGZ_DROP; do echo "   DROP  ${f##*/}"; done
-fi
-case "$ACTION" in
-  same-version) : ;;  # said above: the previous build's tarball is unknown here
-  nothing)      ok "already exactly the keep set — nothing to prune" ;;
-  dry-run)      warn "dry-run: plan only, nothing deleted" ;;
-  unverified)   warn "verify did not pass in this run — REFUSING to prune tarballs" ;;
-  no-prune)     warn "--no-prune: nothing deleted — you now owe a manual prune" ;;
-  prune)
-    gate "Delete the DROP tarballs above? The KEEP lines stay."
-    # shellcheck disable=SC2086
-    ct "$(prune_command $TGZ_DROP)"
-    ct "ls -1t $INSTALL_DIR/*.tar.gz" | sed 's/^/   now: /'
-    ct "df -h $INSTALL_DIR | tail -1" | sed 's/^/   disk: /'
-    ;;
-  *) die "internal: unknown retention action '$ACTION' — nothing deleted" ;;
-esac
+# The only deleting code in this file; see retention_step above.
+retention_step
 
 cat <<EOF
 
