@@ -101,6 +101,16 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         ToolSurface.All.Keys.ShouldBe(Knapper.Core.ToolNames.All, ignoreOrder: true);
     }
 
+    [Fact]
+    public void The_read_only_names_the_verifier_asserts_match_the_tools_attributes()
+    {
+        // Same reason as above, for `verify --expect-read-only`: the server
+        // derives its read-only set from the attributes, the verifier asserts
+        // a LIST from another assembly, and the two must never disagree.
+        ToolSurface.All.Where(kv => ToolSurface.DeclaresReadOnly(kv.Value)).Select(kv => kv.Key)
+            .ShouldBe(Knapper.Core.ToolNames.ReadOnly, ignoreOrder: true);
+    }
+
     [Theory]
     [InlineData("localhost", null, true)]
     [InlineData("127.0.0.1", null, true)]

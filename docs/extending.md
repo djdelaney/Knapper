@@ -171,6 +171,15 @@ block — misconfiguration refuses boot, it doesn't surface on first call.
   `KNAPPER_REQUIRE_PERMISSION_DENIAL=1` so it never skips there. The
   corollary for local runs: a cloud session's skip count is expected, a
   cloud session's FAILURE is real.
+- **An acceptance listener binds port 0 and reports the port it got; never
+  pre-pick one.** `AcceptanceServer` starts the server with `Mcp__Port=0`
+  and reads Kestrel's "Now listening on" line; `FakeAccessEdge` reads its
+  bound address back from the server. The old `FreePort()` (bind :0, read,
+  release, hand the number over) left a window in which another listener or
+  an outgoing connection's source port — the same ephemeral range — could
+  take the port, and the bind then failed at random under parallel load: the
+  likeliest cause of a one-in-many `VerifyCommandTests` failure seen
+  2026-09-26, whose output was never captured.
 - Cross-process claims need cross-process tests: the probe binaries are
   copied into the test output by project reference and spawned with
   `dotnet exec`. An in-process test of flock proves nothing.
@@ -376,9 +385,11 @@ Directory.Build.props <Version>          the one carrier
   added later cannot be missed, and a tool that never declares the flag
   counts as a writer (`McpSurfaceTests.The_read_only_profile_serves_exactly_the_read_only_tools`,
   which compares against the full manifest's readOnlyHint, not a list).
-  Open: `knapper verify` asserts the full 14-tool surface, so it fails
-  against a read-only deployment; teaching it the profile is the next step
-  if one is ever run.
+  `knapper verify --expect-read-only` checks such a deployment: exactly
+  `ToolNames.ReadOnly` listed, and `vault_edit` refused as an unknown tool
+  (any answer at all, even `[NotFound]`, means it is callable). The flag is
+  explicit, never inferred from tools/list — a partially registered server
+  would otherwise verify as read-only.
 - **A config knob for the health-walk budget** — BUILT in 0.11.1 as
   `Vault:HealthScanBudgetMs`, and wider than this entry proposed: it covers
   BOTH health-path walks (the oversized scan and the uncached conflict scan,

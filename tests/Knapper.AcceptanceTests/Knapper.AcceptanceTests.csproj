@@ -45,4 +45,8 @@
                       Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\src\Knapper.Cli\bin\$(Configuration)\$(TargetFramework)\knapper.dll'))" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Shared test support: ONE copy linked into every test project. -->
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

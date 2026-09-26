@@ -1,3 +1,5 @@
+using Knapper.TestSupport;
+
 namespace Knapper.AcceptanceTests;
 
 /// <summary>
@@ -26,7 +28,11 @@ public sealed class DataProtectionStartupTests : IDisposable
         File.SetUnixFileMode(_unwritableHome, UnixFileMode.UserRead | UnixFileMode.UserExecute);
     }
 
-    [Fact]
+    // PermissionDenialFact: the reproduction RELIES on the unwritable HOME
+    // refusing a write, and root ignores file modes — under uid 0 (every
+    // Claude cloud session) the ring would persist to HOME and the warnings
+    // would never appear. The other two tests hold either way.
+    [PermissionDenialFact]
     public async Task Without_a_key_ring_path_the_warnings_appear()
     {
         // The reproduction. If this ever stops finding the warnings, the

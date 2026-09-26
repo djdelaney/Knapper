@@ -72,8 +72,7 @@ Environment=Sync__MaxAgeSeconds=300
 Environment=Mcp__BindAddress=127.0.0.1
 Environment=Mcp__Port=3535
 # Read-only deployment: serve only the tools that declare ReadOnly (derived,
-# never listed). `knapper verify` expects the full surface and will fail its
-# tool-surface check against such a deployment.
+# never listed). Verify it with `knapper verify --expect-read-only`.
 #Environment=Mcp__ReadOnly=true
 # Access origin validation AND the public hostname: set these when the
 # Cloudflare Access apps exist — BOTH of them, in one edit. Runbook §6.2

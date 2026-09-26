@@ -284,6 +284,39 @@ public sealed class VerifyCommandTests : IDisposable
         output.ShouldContain("must be https://");
     }
 
+    /// <summary>
+    /// A read-only deployment (Mcp:ReadOnly) passes verify only when verify
+    /// is TOLD to expect one — never inferred, or a partially registered
+    /// server would pass as read-only — and then the write tools must be
+    /// uncallable, not merely unlisted. Both mismatches fail on the right check.
+    /// </summary>
+    [Fact]
+    public void A_read_only_deployment_passes_only_when_verify_expects_one()
+    {
+        using var readOnly = new AcceptanceServer(_vaultDir, _outsideDir,
+            new Dictionary<string, string> { ["Mcp__ReadOnly"] = "true" });
+        var url = $"http://127.0.0.1:{readOnly.Port}/";
+
+        var (code, output) = RunVerifyRaw("--url", url, "--expect-read-only");
+        code.ShouldBe(0, output);
+        output.ShouldContain("ok    tools/list is EXACTLY the locked read-only surface (7 tools)");
+        output.ShouldContain("ok    the mutation surface is ABSENT (read-only profile)");
+
+        var (plainCode, plain) = RunVerifyRaw("--url", url);
+        plainCode.ShouldNotBe(0, plain);
+        plain.ShouldContain("MISSING: vault_edit");
+
+        using var full = new AcceptanceServer(_vaultDir, _outsideDir);
+        var (fullCode, fullOut) = RunVerifyRaw("--url", $"http://127.0.0.1:{full.Port}/", "--expect-read-only");
+        fullCode.ShouldNotBe(0, fullOut);
+        // Every write tool is named, in whatever order the server lists them.
+        var surfaceLine = fullOut.Split('\n').Single(l => l.StartsWith("FAIL  tools/list is EXACTLY the locked read-only surface", StringComparison.Ordinal));
+        foreach (var writer in Knapper.Core.ToolNames.All.Except(Knapper.Core.ToolNames.ReadOnly))
+            surfaceLine.ShouldContain(writer);
+        surfaceLine.ShouldContain("UNEXPECTED:");
+        fullOut.ShouldContain("vault_edit ANSWERED");
+    }
+
     /// <summary>Straight at the server, no edge — the §5 same-box shape.</summary>
     private static (int ExitCode, string Output) RunVerify(int port) =>
         RunVerify(new Uri($"http://127.0.0.1:{port}/"), null);

@@ -37,6 +37,7 @@ internal static class Verify
         string? url = null, clientId = null, clientSecret = null, monitorId = null, monitorSecret = null;
         string? expectVersion = null;
         var expectAccess = false;
+        var expectReadOnly = false;
         var expectVersionFromSelf = false;
         for (var i = 1; i < args.Length; i++)
         {
@@ -52,6 +53,10 @@ internal static class Verify
                 // an operator reads as clean; and the acceptance suite, which
                 // can only stand its fake edge on loopback.
                 case "--expect-access": expectAccess = true; break;
+                // "This deployment runs Mcp:ReadOnly." Explicit, never
+                // inferred from what tools/list returns: a partially
+                // registered server would otherwise pass as read-only.
+                case "--expect-read-only": expectReadOnly = true; break;
                 // The version this very binary was built from. The upgrade
                 // case in one flag: unpack a tarball, run its own knapper
                 // against the URL, and the check is "is the service running
@@ -93,7 +98,7 @@ internal static class Verify
         {
             Console.Error.WriteLine(
                 "usage: knapper verify --url <https://mcp.example.com/> [--client-id ID] [--monitor-client-id ID] " +
-                "[--expect-version X.Y.Z | --expect-this-version] [--expect-access]\n" +
+                "[--expect-version X.Y.Z | --expect-this-version] [--expect-access] [--expect-read-only]\n" +
                 "  Service-token secrets are read ONLY from CF_ACCESS_CLIENT_SECRET and CF_MONITOR_CLIENT_SECRET " +
                 "(ids also from CF_ACCESS_CLIENT_ID / CF_MONITOR_CLIENT_ID).");
             return 2;
@@ -113,7 +118,7 @@ internal static class Verify
 
         return new Checker(
                 endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret),
-                expectVersion, expectVersionFromSelf, expectAccess)
+                expectVersion, expectVersionFromSelf, expectAccess, expectReadOnly)
             .RunAsync().GetAwaiter().GetResult();
 
         static (string Id, string Secret)? Token(string? id, string? secret) =>
@@ -126,8 +131,11 @@ internal static class Verify
         (string Id, string Secret)? monitor,
         string? expectVersion,
         bool expectVersionFromSelf,
-        bool expectAccess)
+        bool expectAccess,
+        bool expectReadOnly)
     {
+        private IReadOnlyList<string> ExpectedTools => expectReadOnly ? ToolNames.ReadOnly : ToolNames.All;
+
         private int _failures;
         private int _passed;
         private int _skipped;
@@ -571,11 +579,13 @@ internal static class Verify
                 // printed here that number has to be fetched from a second
                 // tools/list call by hand — a check re-derived by the operator
                 // is a check that can be re-derived wrong.
-                await CheckAsync("tools/list is EXACTLY the locked surface", async () =>
+                await CheckAsync(expectReadOnly
+                    ? "tools/list is EXACTLY the locked read-only surface"
+                    : "tools/list is EXACTLY the locked surface", async () =>
                 {
                     var names = (await client.ListToolsAsync().ConfigureAwait(false)).Select(t => t.Name).ToList();
-                    var missing = ToolNames.All.Except(names, StringComparer.Ordinal).ToList();
-                    var unexpected = names.Except(ToolNames.All, StringComparer.Ordinal).ToList();
+                    var missing = ExpectedTools.Except(names, StringComparer.Ordinal).ToList();
+                    var unexpected = names.Except(ExpectedTools, StringComparer.Ordinal).ToList();
                     if (missing.Count > 0 || unexpected.Count > 0)
                     {
                         throw new InvalidOperationException(
@@ -686,6 +696,32 @@ internal static class Verify
                     }).ConfigureAwait(false);
                 }
 
+                if (expectReadOnly)
+                {
+                    // The read-only profile's own claim: the write tools are
+                    // not merely unlisted but UNCALLABLE. Any tool response at
+                    // all — even an error — means the tool exists; only the
+                    // protocol's unknown-tool refusal passes.
+                    await CheckAsync("the mutation surface is ABSENT (read-only profile)", async () =>
+                    {
+                        try
+                        {
+                            var result = await client.CallToolAsync("vault_edit", new Dictionary<string, object?>
+                            {
+                                ["path"] = $"{ProbePrefix}{Environment.ProcessId}.md",
+                                ["expectSha256"] = new string('0', 64),
+                                ["edits"] = new[] { new { old = "x", @new = "y" } },
+                            }).ConfigureAwait(false);
+                            throw new InvalidOperationException(
+                                "vault_edit ANSWERED on a deployment expected to be read-only: " + ErrorText(result));
+                        }
+                        catch (ModelContextProtocol.McpException e) when (e.Message.Contains("vault_edit", StringComparison.Ordinal))
+                        {
+                            // Refused as an unknown tool: absent from call, not just from list.
+                        }
+                    }).ConfigureAwait(false);
+                }
+                else
                 await CheckAsync("the mutation surface is wired and answers with typed codes", async () =>
                 {
                     // Aimed at a path that cannot exist: the fresh read inside

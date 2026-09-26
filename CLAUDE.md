@@ -372,7 +372,8 @@ format by default.
   attributes, and `Knapper.Core.ToolNames.All` are held in lockstep by
   tests.** Tool names are a client-facing contract; renames are version
   bumps, not refactors. There is no unconditional-write tool in the table
-  and never will be. The third list exists because `knapper verify --url`
+  and never will be. `ToolNames.ReadOnly` joins the lockstep against the
+  attributes' `ReadOnly` flags, for `verify --expect-read-only`. The third list exists because `knapper verify --url`
   asserts a DEPLOYED server's surface against it from another assembly — if
   it drifted, the one check standing between a partially-registered server
   and production would assert the wrong contract, in the green.

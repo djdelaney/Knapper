@@ -32,4 +32,23 @@ public static class ToolNames
         "vault_delete",
         "vault_batch",
     ];
+
+    /// <summary>
+    /// The subset a read-only deployment (<c>Mcp:ReadOnly</c>) serves: the
+    /// tools whose <c>[McpServerTool]</c> declares <c>ReadOnly = true</c>.
+    /// The server DERIVES its set from those attributes; this list exists for
+    /// the same reason <see cref="All"/> does — <c>knapper verify
+    /// --expect-read-only</c> asserts a deployed surface from another
+    /// assembly — and a test holds the two in lockstep.
+    /// </summary>
+    public static readonly IReadOnlyList<string> ReadOnly =
+    [
+        "vault_files",
+        "vault_search",
+        "vault_search_frontmatter",
+        "vault_lint",
+        "vault_read",
+        "vault_batch_read",
+        "vault_stat",
+    ];
 }
