@@ -396,7 +396,7 @@ is only as good as the unit being finished when it is taken:
   (wikilinks-only, no-new-frontmatter, no-new-tags, style text, new notes in
   Quicknotes/)`. A Style value with spaces needs the whole assignment quoted:
   `Environment="Conventions__Style=…"`.
-- `Mcp__VaultName=<name>` — what the server instructions call the vault
+- `Mcp__VaultName` — the vault's display name in the server instructions
   (Helios: `Helios`). Unset, they name none: harmless, but agents lose the
   name the operator's own notes use. Since 0.11.0; before that the name was
   compiled in.
@@ -444,7 +444,7 @@ systemctl enable --now knapper-heartbeat.timer knapper.service
 # of truth that drifts silently: doctor then passes against a configuration
 # nothing runs.
 #
-# ⛔ Read it from /proc/<MainPID>/environ, NOT from `systemctl show -p
+# ⛔ Read it from /proc/<pid>/environ (the unit's MainPID), NOT from `systemctl show -p
 # Environment --value`. That property is one space-separated string, and the
 # old recipe expanded it UNQUOTED on the assumption that no value contains a
 # space. `Conventions__Style` does (0.10.0), so the word-split handed `env` a
