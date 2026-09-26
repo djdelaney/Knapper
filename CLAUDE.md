@@ -649,7 +649,7 @@ format by default.
   re-open trigger in `docs/extending.md`.
 - **A vault walk that could not COMPLETE is a third state, and every health
   surface must carry it.** `OversizedFiles.Scan` throws — unreadable
-  directory, or the `DefaultBudget` wall clock expiring — rather than
+  directory, or the `Vault:HealthScanBudgetMs` wall clock expiring — rather than
   returning the short list, so "could not tell" can never arrive looking like
   "scanned, none found". `/health` reports the incomplete state
   (`oversized.scanned` / `vault.conflictScanComplete`, plus a `scanError`
@@ -701,7 +701,10 @@ format by default.
   are fsynced and live OUTSIDE the vault; vault content must never reach the
   audit path — which is why the audit `Detail` field never carries an
   exception message: anchor/guard failure text IS note content (the error
-  CODE is the audit signal; rich diagnostics stay on the MCP response).
+  CODE is the audit signal; rich diagnostics stay on the MCP response). The
+  same rule governs the `Warnings` field: it carries convention rule CODES,
+  never the warning messages, which quote the offending link or tag
+  (`The_audit_trail_names_the_rules_a_write_broke_and_never_its_content`).
 - **Conflict gate: agents never resolve conflict files, and there are TWO
   families.** A Sync `* (Conflicted copy ...)*` sibling and a Knapper
   `* (Knapper displaced ...)*` sibling (a raced replace's displaced external

@@ -54,6 +54,25 @@ public sealed class HealthServiceTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Both health-path walks take their wall clock from ONE setting
+    /// (Vault:HealthScanBudgetMs) — it was a compiled-in 5 s, and a vault that
+    /// outgrew it degraded health in a way no operator could clear.
+    /// </summary>
+    [Fact]
+    public void Both_health_walks_use_the_configured_budget()
+    {
+        var resolver = new VaultPathResolver(_vaultDir);
+        var service = new HealthService(
+            resolver, _generation, new ConflictDetector(resolver), StaticSyncGate.Open,
+            Options.Create(new VaultOptions { RootPath = _vaultDir, HealthScanBudgetMs = 1234 }),
+            Options.Create(new SyncOptions { Mode = "open" }), NullLogger<HealthService>.Instance);
+
+        service.ConflictScanBudget.ShouldBe(TimeSpan.FromMilliseconds(1234));
+        service.OversizedBudget.ShouldBe(TimeSpan.FromMilliseconds(1234));
+        new VaultOptions().HealthScanBudgetMs.ShouldBe(5000); // the default did not move
+    }
+
     [Fact]
     public void Ripgrep_breaking_after_a_successful_probe_degrades_health()
     {

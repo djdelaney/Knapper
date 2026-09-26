@@ -32,6 +32,14 @@ Environment=Vault__LockDirectory=/var/lib/knapper/locks
 Environment=Vault__AuditLogPath=/var/lib/knapper/audit.jsonl
 # Bounded counters snapshot the external monitor reads (rates as deltas).
 Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
+# ASP.NET Core Data Protection key ring. Under ProtectHome there is no user
+# profile, so without this the framework logs three warnings on every start.
+# Owner-only, outside the vault; the keys protect nothing today (see the
+# DataProtectionKeysPath notes in docs/usage.md before that changes).
+Environment=Mcp__DataProtectionKeysPath=/var/lib/knapper/dataprotection-keys
+# Wall clock for each health-path vault walk (conflict + oversized scans).
+# 500-7000 ms; raise it only if /health reports a `timeout:` scanError.
+#Environment=Vault__HealthScanBudgetMs=5000
 # Subtrees holding superseded copies. Queries skip them unless a caller names
 # one (and every response says which it skipped, in excludedPrefixes); edits,
 # appends, deletes and a move's SOURCE are refused [PathArchived], while
@@ -63,6 +71,10 @@ Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 Environment=Sync__MaxAgeSeconds=300
 Environment=Mcp__BindAddress=127.0.0.1
 Environment=Mcp__Port=3535
+# Read-only deployment: serve only the tools that declare ReadOnly (derived,
+# never listed). `knapper verify` expects the full surface and will fail its
+# tool-surface check against such a deployment.
+#Environment=Mcp__ReadOnly=true
 # Access origin validation AND the public hostname: set these when the
 # Cloudflare Access apps exist — BOTH of them, in one edit. Runbook §6.2
 # creates both before §6.3 edits this file, so this block is filled in once

@@ -38,6 +38,32 @@ public sealed class VaultOptions
     public int LockTimeoutMs { get; set; } = 10_000;
 
     /// <summary>
+    /// Wall-clock budget for EACH vault walk on the health path — the
+    /// conflict-file scan (uncached, every /health and /up) and the
+    /// oversized-file scan — and for doctor's oversized scan. A walk that
+    /// exceeds it reports "could not tell" and degrades health; that state
+    /// does not clear while the vault stays that large, so this is the lever
+    /// (it was a compiled-in 5 s until 0.11.1).
+    ///
+    /// <para>Capped at <see cref="MaxHealthScanBudgetMs"/> because a single
+    /// /up can run BOTH walks plus the 5 s ripgrep probe, and the external
+    /// monitor gives /up 20 s (CURL_TIMEOUT): 2 × 7 s + 5 s stays under it. A
+    /// larger budget would turn a slow walk into a monitor timeout instead of
+    /// a reported degradation. Validated at startup.</para>
+    /// </summary>
+    public int HealthScanBudgetMs { get; set; } = 5_000;
+
+    public const int MinHealthScanBudgetMs = 500;
+    public const int MaxHealthScanBudgetMs = 7_000;
+
+    /// <summary>Null when valid; otherwise the reason startup refuses it.</summary>
+    public static string? ValidateHealthScanBudget(int ms) =>
+        ms is >= MinHealthScanBudgetMs and <= MaxHealthScanBudgetMs
+            ? null
+            : $"Vault:HealthScanBudgetMs is {ms}; it must be {MinHealthScanBudgetMs}–{MaxHealthScanBudgetMs} " +
+              "(each /up may run two walks plus a 5 s ripgrep probe inside the monitor's 20 s timeout)";
+
+    /// <summary>
     /// Vault subtrees holding superseded copies: skipped by every query
     /// unless the caller names one, and immutable once written (create and
     /// move-in stay legal — that is how an archive is filled). Vault-relative,

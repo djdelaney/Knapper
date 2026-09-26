@@ -49,10 +49,10 @@ public sealed class HealthService(
     internal TimeSpan OversizedTtl = TimeSpan.FromSeconds(60);
 
     /// <summary>Walk bound. A walk that will not finish must degrade health, not hang /up.</summary>
-    internal TimeSpan OversizedBudget = OversizedFiles.DefaultBudget;
+    internal TimeSpan OversizedBudget = TimeSpan.FromMilliseconds(vaultOptions.Value.HealthScanBudgetMs);
 
     /// <summary>Test seam for the conflict walk's wall clock (see <see cref="OversizedBudget"/>).</summary>
-    internal TimeSpan ConflictScanBudget = ConflictDetector.DefaultBudget;
+    internal TimeSpan ConflictScanBudget = TimeSpan.FromMilliseconds(vaultOptions.Value.HealthScanBudgetMs);
 
     public sealed record Report(
         string Status,
@@ -228,8 +228,8 @@ public sealed class HealthService(
             {
                 logger.LogWarning(e,
                     "Conflict-file walk exceeded its {Budget}s budget — /health reports it as unknown, " +
-                    "not clean. This does not clear on its own: the vault has outgrown the budget.",
-                    ConflictScanBudget.TotalSeconds);
+                    "not clean. This does not clear on its own: raise Vault:HealthScanBudgetMs (max {Max} ms).",
+                    ConflictScanBudget.TotalSeconds, VaultOptions.MaxHealthScanBudgetMs);
             }
             else
             {
@@ -322,13 +322,13 @@ public sealed class HealthService(
             // is usually transient and often fixes itself, while `timeout`
             // means the walk cannot finish in the budget and will keep not
             // finishing — the vault has outgrown a design assumption, and the
-            // lever is OversizedFiles.DefaultBudget, not patience.
+            // lever is Vault:HealthScanBudgetMs, not patience.
             if (e is TimeoutException)
             {
                 logger.LogWarning(e,
                     "Oversized-file walk exceeded its {Budget}s budget — the backstop is reporting nothing. " +
-                    "This does not clear on its own: the vault has outgrown the budget.",
-                    OversizedBudget.TotalSeconds);
+                    "This does not clear on its own: raise Vault:HealthScanBudgetMs (max {Max} ms).",
+                    OversizedBudget.TotalSeconds, VaultOptions.MaxHealthScanBudgetMs);
             }
             else
             {

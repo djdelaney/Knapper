@@ -7,6 +7,7 @@ using Knapper.Core.Options;
 using Knapper.Core.Query;
 using Knapper.Core.Vault;
 using Knapper.Mcp;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 
@@ -133,6 +134,27 @@ builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
 // The vault's display name for the instructions (Mcp:VaultName). Read at
 // builder time like DisabledTools, because the instructions are composed when
 // the server options are; refused here, before Build, if malformed.
+// Data Protection's key ring (Mcp:DataProtectionKeysPath). Registered at
+// builder time because the framework resolves its repository while the host
+// starts; validated BEFORE anything is created, so a bad value never leaves a
+// directory behind — least of all inside the vault.
+var dpKeysPath = builder.Configuration[$"{McpOptions.SectionName}:{nameof(McpOptions.DataProtectionKeysPath)}"];
+if (!string.IsNullOrWhiteSpace(dpKeysPath))
+{
+    if (!Path.IsPathRooted(dpKeysPath))
+        throw new InvalidOperationException($"Mcp:DataProtectionKeysPath must be absolute, got '{dpKeysPath}'");
+    var configuredRoot = builder.Configuration[$"{VaultOptions.SectionName}:{nameof(VaultOptions.RootPath)}"];
+    if (!string.IsNullOrWhiteSpace(configuredRoot) && PathContainment.IsInsideOrEqual(dpKeysPath, configuredRoot))
+        throw new InvalidOperationException(
+            $"Mcp:DataProtectionKeysPath '{dpKeysPath}' is inside the vault — key material would sync to every device. Refusing to start.");
+    Directory.CreateDirectory(dpKeysPath);
+    // Owner-only whether we just made it or it already existed wider.
+    File.SetUnixFileMode(dpKeysPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    builder.Services.AddDataProtection()
+        .SetApplicationName("knapper")
+        .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
+}
+
 var vaultName = builder.Configuration[$"{McpOptions.SectionName}:{nameof(McpOptions.VaultName)}"];
 if (McpOptions.ValidateVaultName(vaultName) is { } vaultNameError)
     throw new InvalidOperationException(vaultNameError);
@@ -142,7 +164,8 @@ builder.Services
     .WithHttpTransport()
     .WithTools(
         ToolSurface.Resolve(
-            builder.Configuration.GetSection($"{McpOptions.SectionName}:{nameof(McpOptions.DisabledTools)}").Get<string[]>()),
+            builder.Configuration.GetSection($"{McpOptions.SectionName}:{nameof(McpOptions.DisabledTools)}").Get<string[]>(),
+            builder.Configuration.GetValue<bool>($"{McpOptions.SectionName}:{nameof(McpOptions.ReadOnly)}")),
         ToolSerialization.Options)
     // The ONE place the calling client APPLICATION is captured. It is read
     // from the filter's request-scoped server and parked for the tool body,
@@ -211,6 +234,8 @@ _ = app.Services.GetRequiredService<IOptions<ModelContextProtocol.Server.McpServ
 var resolvedMcpOpts = app.Services.GetRequiredService<IOptions<McpOptions>>().Value;
 var resolvedSyncOpts = app.Services.GetRequiredService<IOptions<SyncOptions>>().Value;
 
+if (VaultOptions.ValidateHealthScanBudget(app.Services.GetRequiredService<VaultOptions>().HealthScanBudgetMs) is { } budgetError)
+    throw new InvalidOperationException(budgetError);
 if (resolvedMcpOpts.Access.Validate() is { } accessConfigError)
     throw new InvalidOperationException(accessConfigError);
 if (HostGuard.UnauthenticatedExposureError(resolvedMcpOpts) is { } exposureError)

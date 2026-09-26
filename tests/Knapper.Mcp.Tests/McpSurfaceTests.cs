@@ -79,6 +79,20 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
             "Knapper is the single authoritative interface to the user's Obsidian vault (\"Test Vault\"). ");
     }
 
+    /// <summary>
+    /// The upper bound is the monitor's: one /up may run both walks plus the
+    /// 5 s ripgrep probe inside the monitor's 20 s timeout.
+    /// </summary>
+    [Theory]
+    [InlineData("499")]
+    [InlineData("7001")]
+    public void An_out_of_range_health_scan_budget_refuses_startup(string ms)
+    {
+        using var factory = new KnapperMcpFactory(new() { ["Vault:HealthScanBudgetMs"] = ms });
+        var ex = Should.Throw<Exception>(() => factory.CreateClient());
+        ex.ToString().ShouldContain("Vault:HealthScanBudgetMs");
+    }
+
     [Theory]
     [InlineData("Quote\"d")]
     [InlineData("Line\nbreak")]
@@ -201,6 +215,46 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
             ["expectSha256"] = new string('0', 64),
             ["edits"] = new[] { new { old = "TODO", @new = "DONE" } },
         })).ShouldContain("[PreconditionFailed]");
+    }
+
+    /// <summary>
+    /// Mcp:ReadOnly derives the write set from the tools' own attributes: the
+    /// surface that remains must be EXACTLY the tools the full manifest marks
+    /// readOnlyHint=true — compared against the manifest, not a list, so a
+    /// write tool added later cannot slip through.
+    /// </summary>
+    [Fact]
+    public async Task The_read_only_profile_serves_exactly_the_read_only_tools()
+    {
+        await using var full = await ConnectAsync(_factory);
+        var readOnlyNames = (await full.ListToolsAsync())
+            .Where(t => t.ProtocolTool.Annotations?.ReadOnlyHint == true)
+            .Select(t => t.Name).ToList();
+        readOnlyNames.ShouldContain("vault_read"); // a derived set that came back empty proves nothing
+
+        using var profile = new KnapperMcpFactory(new() { ["Mcp:ReadOnly"] = "true" });
+        await using var client = await ConnectAsync(profile);
+        (await client.ListToolsAsync()).Select(t => t.Name).ShouldBe(readOnlyNames, ignoreOrder: true);
+
+        var ex = await Should.ThrowAsync<ModelContextProtocol.McpException>(async () =>
+            await client.CallToolAsync("vault_create", new Dictionary<string, object?>
+            {
+                ["path"] = "x.md",
+                ["text"] = "must not land",
+            }));
+        ex.Message.ShouldContain("vault_create");
+        File.Exists(Path.Combine(profile.VaultDir, "x.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_tool_that_never_declares_ReadOnly_counts_as_a_writer() =>
+        ToolSurface.DeclaresReadOnly(typeof(UndeclaredTool)).ShouldBeFalse();
+
+    [ModelContextProtocol.Server.McpServerToolType]
+    internal sealed class UndeclaredTool
+    {
+        [ModelContextProtocol.Server.McpServerTool(Name = "undeclared")]
+        public string Run() => "";
     }
 
     [Fact]

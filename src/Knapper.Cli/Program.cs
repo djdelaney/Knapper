@@ -213,9 +213,17 @@ int Doctor()
             : parts.Count == 0 ? "none" : string.Join(", ", parts);
         Check($"Conventions parse ({label})", () => problems.Count == 0);
     }
+    Check($"Vault:HealthScanBudgetMs within {VaultOptions.MinHealthScanBudgetMs}–{VaultOptions.MaxHealthScanBudgetMs} ({vaultOptions.HealthScanBudgetMs} ms)",
+        () => VaultOptions.ValidateHealthScanBudget(vaultOptions.HealthScanBudgetMs) is null);
     Check("Vault:CommitStampPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.CommitStampPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.CommitStampPath, vaultOptions.RootPath));
+    {
+        var dpKeys = configuration[$"{McpOptions.SectionName}:{nameof(McpOptions.DataProtectionKeysPath)}"];
+        Check("Mcp:DataProtectionKeysPath absolute and outside the vault (or unset)",
+            () => string.IsNullOrWhiteSpace(dpKeys)
+                  || (Path.IsPathRooted(dpKeys) && !PathContainment.IsInsideOrEqual(dpKeys, vaultOptions.RootPath)));
+    }
     Check("Vault:MetricsPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)
               || !PathContainment.IsInsideOrEqual(vaultOptions.MetricsPath, vaultOptions.RootPath));
@@ -283,7 +291,8 @@ int Doctor()
     {
         try
         {
-            var oversized = OversizedFiles.Scan(vaultOptions.RootPath, syncOptions.MaxFileBytes);
+            var oversized = OversizedFiles.Scan(vaultOptions.RootPath, syncOptions.MaxFileBytes,
+                TimeSpan.FromMilliseconds(vaultOptions.HealthScanBudgetMs));
             if (oversized.Count > 0)
             {
                 Console.WriteLine(

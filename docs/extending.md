@@ -370,17 +370,23 @@ Directory.Build.props <Version>          the one carrier
   disposable-vault session instead; automating them there against a
   deployed URL is the remaining piece, and it must never be folded into
   `verify`.
-- **Read-only deployment profile**: `Mcp:DisabledTools` with the seven
-  mutation tools listed, as a documented one-liner.
-- **A config knob for `OversizedFiles.DefaultBudget`** (5s). Deliberately NOT
-  built yet: a budget expiry degrades `/health` to 503, and unlike an
-  unreadable directory an operator cannot clear it without a code change —
-  so if one is ever observed, the knob is the escape hatch to add. It is not
-  speculative to leave out, because the condition is now self-announcing:
-  `oversized.scanError` carries a `timeout:` prefix and the walk logs a
-  warning saying it does not clear on its own. Helios is ~250 files against
-  a 5s budget, so the headroom is enormous; the reason this is written down
-  is that the headroom is not the argument.
+- **Read-only deployment profile** — BUILT in 0.11.1 as `Mcp:ReadOnly`, not
+  as the documented `DisabledTools` list this entry proposed: the set is
+  DERIVED from each tool's `[McpServerTool(ReadOnly = …)]`, so a write tool
+  added later cannot be missed, and a tool that never declares the flag
+  counts as a writer (`McpSurfaceTests.The_read_only_profile_serves_exactly_the_read_only_tools`,
+  which compares against the full manifest's readOnlyHint, not a list).
+  Open: `knapper verify` asserts the full 14-tool surface, so it fails
+  against a read-only deployment; teaching it the profile is the next step
+  if one is ever run.
+- **A config knob for the health-walk budget** — BUILT in 0.11.1 as
+  `Vault:HealthScanBudgetMs`, and wider than this entry proposed: it covers
+  BOTH health-path walks (the oversized scan and the uncached conflict scan,
+  whose expiry is the one that turns `/up` into a 503) and doctor's scan.
+  Bounded 500–7000 ms because one `/up` can run both walks plus the 5 s
+  ripgrep probe inside the monitor's 20 s `CURL_TIMEOUT`; a larger budget
+  would trade a reported degradation for a monitor timeout. The timeout log
+  lines now name the setting instead of saying only that it will not clear.
 - **Per-client credentials** (brief §8 "where practical"): Access already
   distinguishes identities in the audit log; separate Access apps per agent
   surface would let Cloudflare policy differ per client.
@@ -496,10 +502,10 @@ Directory.Build.props <Version>          the one carrier
      case a flag CAN judge ("clearly fits" is a judgement; the root is never
      a folder, so it never fits), driven by `NewNoteFolder` and also applied
      to a move's destination; and a `ConventionWarnings` counter in
-     `metrics.json`, a trend rather than a monitor threshold. Still open: the
-     per-write rule codes in the audit trail, which would say WHICH client
-     keeps breaking a convention (codes only — the audit never carries note
-     content).
+     `metrics.json`, a trend rather than a monitor threshold. And each write's
+     "ok" audit entry names the rule codes it broke (`Warnings`), which is
+     what attributes a convention break to a CLIENT — codes only, never the
+     messages, since those quote note content and the audit never carries it.
 
   Rejected: an MCP **resource** with `annotations: {audience, priority}`.
   Claude Code is the primary surface and does not auto-load them, so it would
@@ -545,7 +551,13 @@ Directory.Build.props <Version>          the one carrier
   mutation loop closed for files `vault_read` refuses. Note that for a
   graphic Claude AUTHORS the answer is not a tool at all: emit SVG or a
   mermaid fence, which is text, renders in Obsidian, and diffs in git.
-- **Data Protection's three startup warnings** (observed CT 106,
+- **Data Protection's three startup warnings** — option (1) BUILT in 0.11.1
+  as `Mcp:DataProtectionKeysPath` (`DataProtectionStartupTests` reproduces
+  the warnings with an unwritable HOME, then proves a persisted ring removes
+  them). One correction to the measurement below: EventId 35 does not fire
+  "once, then never again" — it fires once per key CREATION, i.e. the first
+  start and then at the framework's ~90-day rotation. The history, kept for
+  the reasoning and the ⚠️ at its end, which still stands (observed CT 106,
   2026-08-13): ASP.NET Core finds nowhere to persist a key ring under
   `ProtectHome=true` with no user profile, and logs in-memory repository /
   ephemeral keys / no XML encryptor on every start. Harmless here — no

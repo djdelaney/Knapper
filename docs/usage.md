@@ -65,6 +65,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `MaxReadBytes` | 4000000 | Whole-file read cap; beyond it reads fail `TooLarge` explicitly. |
 | `MaxBatchItems` | 50 | Cap for batch read and batch mutation. |
 | `LockTimeoutMs` | 10000 | How long a mutation waits for its locks. |
+| `HealthScanBudgetMs` | 5000 | Wall clock for EACH vault walk on the health path — the conflict scan (every `/health` and `/up`) and the oversized scan — and doctor's oversized scan. A walk over budget reports "could not tell" (`scanError: timeout:…`) and degrades health until the vault shrinks or this rises. 500–7000; the cap exists because one `/up` can run both walks plus the 5 s ripgrep probe inside the monitor's 20 s `CURL_TIMEOUT`. Startup refuses a value outside it; doctor prints what it parsed. |
 | `ArchivedPrefixes` | *(empty)* | Vault subtrees holding superseded copies, vault-relative and rooted (`Archive`, `Notes/Old`). Two effects, deliberately different. **Queries** skip them unless the caller names one as its scope, and every response declares which it skipped in `excludedPrefixes` — so `truncated: false` keeps meaning "exhaustive over a scope you can see". **Mutations** refuse `[PathArchived]` for anything that would CHANGE what is already there (edit, append, delete, a move's source), while `vault_create`, `vault_mkdir` and a move's DESTINATION stay legal — filing a superseded copy is the workflow this protects, so banning it would ban archiving. Matching is ordinal and boundary-aware: `Archive` does not claim `Archived Recipes/`, and does not claim `archive/`. Validated at boot; a malformed entry refuses startup. Set it with `Vault__ArchivedPrefixes__0=Archive`. |
 
 ### `Mcp:*` — the HTTP surface
@@ -74,7 +75,9 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `BindAddress` | `127.0.0.1` | IP literal (never "localhost"). Loopback in production too — cloudflared is the only ingress. |
 | `Port` | 3535 | |
 | `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. A public name with `Access:Enabled` false **refuses startup** — see `Access:AllowPublicHostsWithoutAccess`. |
-| `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. E.g. disable the mutation tools for a read-only deployment. |
+| `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. |
+| `ReadOnly` | false | Read-only deployment: removes (from list AND call) every tool whose `[McpServerTool]` does not declare `ReadOnly = true` — today the seven mutation tools. DERIVED from the attributes, so a write tool added later is covered automatically, and a tool that forgets the flag counts as a writer. Combines with `DisabledTools`. `knapper verify` expects the full surface, so it fails its tool-surface check against a read-only deployment. |
+| `DataProtectionKeysPath` | — | Where ASP.NET Core Data Protection keeps its key ring. Unset on a host with no writable user profile (systemd `ProtectHome`), the framework falls back to an in-memory ring and logs three warnings (EventIds 50, 59, 35) on EVERY start. Set, those stop; EventId 35 ("no XML encryptor") still appears once each time a key is CREATED — the first start, then at the framework's ~90-day rotation. Absolute and outside the vault (startup refuses otherwise); created owner-only. ⚠️ The keys are stored unencrypted because nothing here uses Data Protection for anything that matters; the change that gives it a real consumer (cookies, antiforgery, `IDataProtector`) owes an at-rest decision in the same commit. |
 | `RestrictHealthToLoopback` | true | `/health` (detailed) 404s for non-loopback callers. |
 | `VaultName` | — | The vault's display name in the server instructions (`… Obsidian vault ("Name").`). Unset, they name no vault — the build ships nobody's. ≤ 64 chars, no control characters or `"`; startup refuses otherwise. |
 | `LogToolCalls` | true | One Information log line per tool call, reads included — to **stdout**, i.e. the service journal (`journalctl -u knapper`), never to `Vault:AuditLogPath`. The two settings sit next to each other in the unit file and write to different places: audit log = mutations only, on disk; this = every call, in the journal. |
@@ -119,7 +122,10 @@ the receipt's `warnings` (per item for `vault_batch`) says what to fix with a
 follow-up edit. Every warning returned is also counted in `metrics.json`
 (`ConventionWarnings`) — a trend showing whether agents keep breaking the
 conventions, deliberately not an alert threshold: it is a steering problem,
-never an outage. The check never fails a write — anything it cannot judge
+never an outage. To see WHO: the write's audit entry carries the rule codes in
+`Warnings` (codes only — never the messages, which quote note content), next
+to its `Client`:
+`jq -c 'select(.Warnings) | {At, Client, Op, Path, Warnings}' audit.jsonl`. The check never fails a write — anything it cannot judge
 (non-Markdown, non-UTF-8, unparseable YAML) yields no warning.
 
 ## Connecting clients

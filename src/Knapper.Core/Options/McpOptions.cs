@@ -25,6 +25,16 @@ public sealed class McpOptions
     /// </summary>
     public string[] DisabledTools { get; set; } = [];
 
+    /// <summary>
+    /// Read-only deployment: every tool whose <c>[McpServerTool]</c> does not
+    /// declare <c>ReadOnly = true</c> is disabled (absent from list AND call),
+    /// on top of <see cref="DisabledTools"/>. DERIVED from the attributes,
+    /// never listed, so a write tool added later is covered without anyone
+    /// remembering this setting exists — and a tool that forgets to declare
+    /// the flag counts as a writer, the safe direction.
+    /// </summary>
+    public bool ReadOnly { get; set; }
+
     /// <summary>Cloudflare Access assertion validation at the origin (the brief's B2 ingress).</summary>
     public AccessOptions Access { get; set; } = new();
 
@@ -46,6 +56,23 @@ public sealed class McpOptions
     /// Validated at startup by <see cref="ValidateVaultName"/>.
     /// </summary>
     public string? VaultName { get; set; }
+
+    /// <summary>
+    /// Where ASP.NET Core Data Protection keeps its key ring (e.g.
+    /// <c>/var/lib/knapper/dataprotection-keys</c>). Unset, a host with no
+    /// writable profile — systemd's ProtectHome — falls back to an in-memory
+    /// ring and logs three warnings on every start. Nothing here uses Data
+    /// Protection for anything that matters, but permanent benign warnings
+    /// train an operator to stop reading the log. Absolute, OUTSIDE the vault
+    /// (refused at startup otherwise), created owner-only.
+    ///
+    /// <para>⚠️ The keys protect nothing TODAY, which is the whole argument for
+    /// keeping them as plain files. The day Data Protection gains a real
+    /// consumer (cookies, antiforgery, an IDataProtector anywhere), they stop
+    /// being inert and an at-rest decision (ProtectKeysWith*) is owed — in
+    /// the same change. See docs/extending.md.</para>
+    /// </summary>
+    public string? DataProtectionKeysPath { get; set; }
 
     /// <summary>Upper bound on <see cref="VaultName"/>: it is a name, spliced into capped prose.</summary>
     public const int MaxVaultNameLength = 64;

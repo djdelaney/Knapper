@@ -40,7 +40,7 @@ internal static class ToolSurface
     // (identity beats implicit reference conversion) — which registers the
     // LIST ITSELF as one tool object with zero [McpServerTool] methods, and
     // the server silently exposes no tools at all.
-    internal static IEnumerable<Type> Resolve(IEnumerable<string>? disabledTools)
+    internal static IEnumerable<Type> Resolve(IEnumerable<string>? disabledTools, bool readOnly = false)
     {
         var disabled = new HashSet<string>(
             (disabledTools ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()),
@@ -53,6 +53,24 @@ internal static class ToolSurface
                 $"Valid names: {string.Join(", ", All.Keys.OrderBy(k => k, StringComparer.Ordinal))}. " +
                 "Refusing to start — a typo here would silently leave the tool it meant to disable exposed.");
         }
+        if (readOnly)
+            disabled.UnionWith(All.Where(kv => !DeclaresReadOnly(kv.Value)).Select(kv => kv.Key));
         return All.Where(kv => !disabled.Contains(kv.Key)).Select(kv => kv.Value).ToList();
+    }
+
+    /// <summary>
+    /// True only when EVERY [McpServerTool] method on the type declares
+    /// ReadOnly = true. Anything else — including a tool that never set the
+    /// flag — is treated as a writer: Mcp:ReadOnly must fail toward
+    /// disabling, never toward exposing.
+    /// </summary>
+    internal static bool DeclaresReadOnly(Type toolType)
+    {
+        var attrs = toolType.GetMethods()
+            .Select(m => m.GetCustomAttributes(typeof(ModelContextProtocol.Server.McpServerToolAttribute), false)
+                .Cast<ModelContextProtocol.Server.McpServerToolAttribute>().SingleOrDefault())
+            .Where(a => a is not null)
+            .ToList();
+        return attrs.Count > 0 && attrs.All(a => a!.ReadOnly);
     }
 }

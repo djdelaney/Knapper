@@ -41,7 +41,16 @@ public sealed class AuditLog
         string? RequestId = null,
         string? BeforeSha256 = null,
         string? AfterSha256 = null,
-        string? Detail = null);
+        string? Detail = null,
+        /// <summary>
+        /// Rule CODES of the Conventions:* warnings the write's receipt
+        /// carried (e.g. <c>markdown_internal_link</c>); omitted when none.
+        /// Codes only — the warning MESSAGES quote note content, and vault
+        /// content never reaches the audit path. This is what attributes a
+        /// broken convention to a client; the metrics counter only says how
+        /// often.
+        /// </summary>
+        IReadOnlyList<string>? Warnings = null);
 
     /// <summary>
     /// Test seam: runs inside Append before the write so a test can fail the

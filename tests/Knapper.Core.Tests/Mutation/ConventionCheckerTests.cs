@@ -186,6 +186,48 @@ public sealed class ConventionCheckerTests
         metrics.Read().ConventionWarnings.ShouldBe(3);
     }
 
+    /// <summary>
+    /// The audit trail is what attributes a broken convention to a CLIENT
+    /// (the metrics counter only says how often). It carries the rule CODES
+    /// on the write's "ok" entry — and never the messages, which quote note
+    /// content: vault content must not reach the audit path.
+    /// </summary>
+    [Fact]
+    public void The_audit_trail_names_the_rules_a_write_broke_and_never_its_content()
+    {
+        using var v = new MutationVault();
+        Directory.CreateDirectory(Path.Combine(v.VaultDir.Path, "Inbox"));
+        var service = v.ServiceWithConventions(new ConventionsOptions
+        {
+            WikilinksOnly = true, NoNewTags = true, NewNoteFolder = "Inbox",
+        });
+        var sha = v.Write("Inbox/a.md", "# A\n");
+        var ctx = new AuditContext("test-client", "req-1");
+
+        service.Edit("Inbox/a.md", sha, [new EditSpec("# A\n", "# A\n[secret-target](Private/Plan.md)\n")], ctx: ctx);
+        var created = service.Create("Inbox/clean.md", "plain\n", ctx);
+        service.Batch([new BatchItem(BatchItemKind.Create, "Stray.md", Text: "#secret-tag\n")], ctx);
+        service.Move("Inbox/clean.md", "Moved.md", created.NewSha256, ctx);
+
+        var ok = File.ReadAllLines(v.AuditPath)
+            .Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement)
+            .Where(e => e.GetProperty("Outcome").GetString() == "ok")
+            .ToDictionary(e => e.GetProperty("Op").GetString()!, e => e);
+        string[] Codes(string op) => ok[op].TryGetProperty("Warnings", out var w)
+            ? [.. w.EnumerateArray().Select(x => x.GetString()!)] : [];
+
+        Codes("edit").ShouldBe(["markdown_internal_link"]);
+        ok["edit"].GetProperty("Client").GetString().ShouldBe("test-client");
+        ok["create"].TryGetProperty("Warnings", out _).ShouldBeFalse("a clean write's entry must keep its old shape");
+        Codes("batch-create").ShouldBe(["note_at_vault_root"]);
+        Codes("move").ShouldBe(["note_at_vault_root"]);
+
+        var raw = File.ReadAllText(v.AuditPath);
+        raw.ShouldNotContain("secret-target");
+        raw.ShouldNotContain("Private/Plan.md");
+        raw.ShouldNotContain("secret-tag");
+    }
+
     [Fact]
     public void Only_the_enabled_rules_are_reported()
     {

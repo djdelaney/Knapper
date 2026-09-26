@@ -396,6 +396,12 @@ is only as good as the unit being finished when it is taken:
   (wikilinks-only, no-new-frontmatter, no-new-tags, style text, new notes in
   Quicknotes/)`. A Style value with spaces needs the whole assignment quoted:
   `Environment="Conventions__Style=…"`.
+- `Mcp__DataProtectionKeysPath=/var/lib/knapper/dataprotection-keys` — the
+  shipped unit carries it live (0.11.1+). Without it, `ProtectHome` leaves the
+  framework no profile and it logs three Data Protection warnings on every
+  start; with it, only EventId 35 remains, once per key creation (first
+  start, then ~every 90 days). Confirm with `journalctl -u knapper -b | grep
+  -c DataProtection` after a SECOND restart: 0.
 - `Mcp__VaultName` — the vault's display name in the server instructions
   (Helios: `Helios`). Unset, they name none: harmless, but agents lose the
   name the operator's own notes use. Since 0.11.0; before that the name was
