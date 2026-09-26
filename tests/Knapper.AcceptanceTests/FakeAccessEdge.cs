@@ -113,18 +113,23 @@ internal sealed class FakeAccessEdge : IDisposable
             Timeout = TimeSpan.FromSeconds(30),
         };
 
-        var port = AcceptanceServer.FreePort();
-        Url = new Uri($"http://127.0.0.1:{port}/");
-
         // Empty builder: no appsettings.json, no logging providers. This
         // project's output directory belongs to the SERVER, and its
         // configuration must not leak into the fixture standing in for
         // Cloudflare.
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
-        builder.WebHost.UseKestrel(options => options.ListenLocalhost(port));
+        // Port 0, bound by the kernel and read back — never a number picked
+        // and released first (see AcceptanceServer.Port). IPv4 loopback only:
+        // ListenLocalhost also binds [::1], which the old pre-check never
+        // looked at.
+        builder.WebHost.UseKestrel(options => options.Listen(System.Net.IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.Run(HandleAsync);
         _app.StartAsync().GetAwaiter().GetResult();
+        var bound = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>(_app.Services)
+            .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()!
+            .Addresses.Single();
+        Url = new Uri(bound.EndsWith('/') ? bound : bound + "/");
     }
 
     /// <summary>

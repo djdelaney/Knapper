@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Client;
@@ -23,13 +22,21 @@ public sealed class AcceptanceServer : IDisposable
     private readonly Process _process;
     private readonly StringBuilder _output = new();
 
-    public int Port { get; }
+    /// <summary>
+    /// The port the server ACTUALLY bound, read back from its own "Now
+    /// listening on" line. It is started with Mcp__Port=0 so the kernel picks
+    /// the port at bind time: pre-picking one (bind :0, read, release, hand
+    /// the number over) left a window in which anything — another test's
+    /// listener, or an outgoing connection's source port from the same
+    /// ephemeral range — could take it, and the bind then failed with
+    /// "address in use" at random under parallel load.
+    /// </summary>
+    public int Port { get; private set; }
     public string VaultDir { get; }
 
     public AcceptanceServer(string vaultDir, string outsideDir, IDictionary<string, string>? extraEnv = null)
     {
         VaultDir = vaultDir;
-        Port = FreePort();
         var dll = Path.Combine(AppContext.BaseDirectory, "Knapper.Mcp.dll");
         File.Exists(dll).ShouldBeTrue($"server binary not found at {dll}");
 
@@ -54,7 +61,9 @@ public sealed class AcceptanceServer : IDisposable
         psi.Environment["Vault__MetricsPath"] = Path.Combine(outsideDir, $"metrics-{n}.json");
         psi.Environment["Sync__Mode"] = "open";
         psi.Environment["Mcp__BindAddress"] = "127.0.0.1";
-        psi.Environment["Mcp__Port"] = Port.ToString();
+        psi.Environment["Mcp__Port"] = "0";
+        // The one Information line the harness needs: where Kestrel bound.
+        psi.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         psi.Environment["Mcp__LogToolCalls"] = "false";
         psi.Environment["Logging__LogLevel__Default"] = "Warning";
         foreach (var (key, value) in extraEnv ?? new Dictionary<string, string>())
@@ -65,7 +74,26 @@ public sealed class AcceptanceServer : IDisposable
         _process.ErrorDataReceived += (_, e) => Collect(e.Data);
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
+        Port = WaitForListening();
         WaitForUp();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex Listening =
+        new(@"Now listening on: http://127\.0\.0\.1:(\d+)");
+
+    private int WaitForListening()
+    {
+        var started = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(30))
+        {
+            var m = Listening.Match(Output);
+            if (m.Success)
+                return int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (_process.HasExited)
+                throw new InvalidOperationException($"server exited during startup:\n{Output}");
+            Thread.Sleep(50);
+        }
+        throw new TimeoutException($"server never reported its listening port:\n{Output}");
     }
 
     public string Output
@@ -121,15 +149,6 @@ public sealed class AcceptanceServer : IDisposable
             Thread.Sleep(100);
         }
         throw new TimeoutException($"server on port {Port} never became healthy:\n{Output}");
-    }
-
-    internal static int FreePort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     public void Dispose()
