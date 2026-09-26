@@ -172,6 +172,24 @@ check_doctor_output() {
   return 0
 }
 
+# The retention plan: which retained tarballs to DROP, given the one now
+# running (keep_a), the rollback target (keep_b) and the full list. Prints one
+# path per line. When keep_a == keep_b — a re-deploy of the running version —
+# the "rollback target" is the build being replaced by ITSELF, so the real
+# previous build is not among the keeps and would be listed for deletion:
+# nothing is dropped then, because the true rollback target is unknown here.
+retention_drops() {
+  local keep_a="$1" keep_b="$2" f b
+  shift 2
+  [ "$keep_a" = "$keep_b" ] && return 0
+  for f in "$@"; do
+    b="${f##*/}"
+    [ "$b" = "$keep_a" ] && continue
+    [ "$b" = "$keep_b" ] && continue
+    printf '%s\n' "$f"
+  done
+}
+
 # Sourced by tests/shell/test_deploy.sh for the functions above; nothing below
 # runs when sourced that way.
 if [ "${KNAPPER_DEPLOY_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
@@ -444,20 +462,19 @@ say "11b. Retention — tarballs in $INSTALL_DIR (keep: running + rollback targe
 KEEP_A="$(basename "$ART")"
 KEEP_B="knapper-$CUR_VER-linux-x64.tar.gz"
 TGZ_ALL="$(ct "ls -1 $INSTALL_DIR/*.tar.gz 2>/dev/null || true")"
-TGZ_DROP=""
-for f in $TGZ_ALL; do
-  b="${f##*/}"
-  [ "$b" = "$KEEP_A" ] && continue
-  [ "$b" = "$KEEP_B" ] && continue
-  TGZ_DROP="$TGZ_DROP $f"
-done
+# shellcheck disable=SC2086
+TGZ_DROP="$(retention_drops "$KEEP_A" "$KEEP_B" $TGZ_ALL | tr '\n' ' ')"
 echo "   KEEP  $KEEP_A   (running, verified this run)"
-if printf '%s\n' "$TGZ_ALL" | grep -q "/$KEEP_B\$"; then
+if [ "$KEEP_A" = "$KEEP_B" ]; then
+  warn "re-deploy of the running version: the previous build's tarball cannot be identified here — nothing is pruned"
+elif printf '%s\n' "$TGZ_ALL" | grep -q "/$KEEP_B\$"; then
   echo "   KEEP  $KEEP_B   (rollback target)"
 else
   warn "rollback tarball $KEEP_B is NOT on the host — keeping only the running build"
 fi
-if [ -z "${TGZ_DROP# }" ]; then
+if [ "$KEEP_A" = "$KEEP_B" ]; then
+  :  # said above: nothing is pruned on a same-version re-deploy
+elif [ -z "${TGZ_DROP// /}" ]; then
   ok "already exactly the keep set — nothing to prune"
 else
   for f in $TGZ_DROP; do echo "   DROP  ${f##*/}"; done

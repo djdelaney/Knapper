@@ -81,6 +81,14 @@ case "$out" in *REFUSED*) ;; *) fail "doctor parsing no archived prefixes must r
 out=$(lib 'REQUIRED_ENV=("Conventions__NoNewTags=true"); check_doctor_output "ok    Conventions parse (no-new-tags)" && echo PASSED')
 case "$out" in *PASSED*) ;; *) fail "a parsed convention must pass: $out" ;; esac
 
+# ── retention never drops the rollback target ───────────────────────────────
+out=$(lib 'retention_drops a.tgz b.tgz /o/a.tgz /o/b.tgz /o/c.tgz')
+[ "$out" = "/o/c.tgz" ] || fail "retention must drop exactly the tarballs outside the keep pair: '$out'"
+# A re-deploy of the running version makes both keeps the SAME file; the real
+# previous build would then be dropped. Nothing may be.
+out=$(lib 'retention_drops a.tgz a.tgz /o/a.tgz /o/prev.tgz')
+[ -z "$out" ] || fail "a re-deploy of the running version must prune nothing (the rollback target is unknown): '$out'"
+
 # ── config loading ──────────────────────────────────────────────────────────
 out=$(KNAPPER_DEPLOY_ENV="$TMPROOT/absent.env" lib 'load_config' || true)
 case "$out" in *"no deploy config"*) ;; *) fail "a missing config file must stop the run: $out" ;; esac
