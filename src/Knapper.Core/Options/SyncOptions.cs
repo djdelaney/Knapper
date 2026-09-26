@@ -46,19 +46,21 @@ public sealed class SyncOptions
     /// is configurable rather than a constant, and why raising it is a
     /// deployment decision. Set it to match your plan's per-file ceiling.
     ///
-    /// The default is DELIBERATELY CONSERVATIVE. `ob` reports "max 5.00 MB",
-    /// and the unit is MiB (measured 2026-09-26: a 6,000,000-byte file was
-    /// reported as "5.72 MB"; 5,100,000 bytes synced), so the ceiling reads as
-    /// 5,242,880 — but the exact boundary byte is unmeasured. The two errors are not
-    /// symmetric: set too low, some writes that would have synced are refused,
-    /// loudly and with a typed error naming the limit; set too high, files in
-    /// the gap pass the guard and are stranded silently — reproducing the exact
-    /// failure the guard exists to prevent, now with a false sense of coverage.
-    /// Do not raise this to 5 * 1024 * 1024 without measuring that byte first.
+    /// The default is the MEASURED boundary of the standard plan's "max 5.00
+    /// MB", which is 5 MiB INCLUSIVE (2026-09-26, synthetic notes dropped into
+    /// the vault on a Mac: 5,242,879 and 5,242,880 bytes uploaded and reached
+    /// CT 106 byte-exact; 5,242,881 was refused "File too large to sync (5.00
+    /// MB, max 5.00 MB)"). The guard's `&lt;=` matches Sync's rule exactly.
+    /// The two errors are not symmetric: set too low, some writes that would
+    /// have synced are refused, loudly and with a typed error naming the limit;
+    /// set too high, files in the gap pass the guard and are stranded silently
+    /// — reproducing the exact failure the guard exists to prevent, now with a
+    /// false sense of coverage. Never raise this without re-measuring: a plan
+    /// change or an obsidian-headless upgrade can move the boundary.
     ///
     /// Applies in every <see cref="Mode"/>, including "open": a guard with a
     /// mode-shaped hole in it is a bypass. A test or dev vault needing larger
     /// files raises the number explicitly, where it is visible.
     /// </summary>
-    public long MaxFileBytes { get; set; } = 5_000_000;
+    public long MaxFileBytes { get; set; } = 5 * 1024 * 1024;
 }

@@ -466,9 +466,9 @@ EOF
     # A FIFO named like a note: any read that does not classify first hangs.
     mkfifo "$VAULT/Hazards/pipe.md"
 
-    # One byte over the default Sync__MaxFileBytes (5,000,000): Obsidian Sync
+    # One byte over the default Sync__MaxFileBytes (5,242,880): Obsidian Sync
     # would silently never deliver it. /health lists it; /up stays 200.
-    head -c 5000001 /dev/zero | tr '\0' 'x' > "$VAULT/Hazards/oversized.md"
+    head -c 5242881 /dev/zero | tr '\0' 'x' > "$VAULT/Hazards/oversized.md"
 fi
 
 # ── env.sh ───────────────────────────────────────────────────────────────────

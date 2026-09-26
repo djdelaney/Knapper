@@ -371,17 +371,19 @@ is only as good as the unit being finished when it is taken:
   `enable --now` below fail;
 - `Sync__MaxAgeSeconds=300` — see the sync-gate bullet below for why it is
   pinned explicitly.
-- `Sync__MaxFileBytes=5000000` — the largest file Obsidian Sync will carry;
+- `Sync__MaxFileBytes=5242880` — the largest file Obsidian Sync will carry;
   a write producing more is refused `[TooLargeToSync]`. Pinned here for the
   same reason as `MaxAgeSeconds`: nobody reading `knapper.service` could
   otherwise see the ceiling that governs what agents may write. It is a
   property of the SYNC PLAN, not of Knapper — if the plan's limit changes,
-  this is the knob. The unit is MiB (measured 2026-09-26: a 6,000,000-byte
-  note was refused as "5.72 MB, max 5.00 MB", and a 5,100,000-byte one synced
-  to CT 106 byte-exact), so the ceiling reads as 5242880 — but do NOT raise
-  the knob to it until the boundary byte itself is measured (drop 5,242,880-
-  and 5,242,881-byte synthetic notes into the vault on a Mac and read the
-  Mac's Sync activity log): too high strands files SILENTLY while too low
+  this is the knob. 5242880 is the standard plan's limit MEASURED, 5 MiB
+  inclusive (2026-09-26: a 5,242,880-byte note synced from a Mac to CT 106
+  byte-exact, 5,242,881 bytes was refused "File too large to sync (5.00 MB,
+  max 5.00 MB)"). After a plan change or an `obsidian-headless` upgrade,
+  re-measure before trusting it: drop synthetic notes of N and N+1 bytes into
+  the vault on a Mac, read the Mac's Sync activity log, confirm arrival here
+  with `vault_files` (`includeSha`), then delete them promptly so the commit
+  timer does not capture them. Too high strands files SILENTLY while too low
   merely refuses them out loud.
 
 - `Vault__ArchivedPrefixes__0=<folder>` — IF this vault keeps superseded

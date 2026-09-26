@@ -138,15 +138,14 @@ public sealed class SyncSizeLimitTests
     }
 
     /// <summary>
-    /// The default is the conservative reading of ob's "max 5.00 MB":
-    /// 5,000,000, not 5,242,880. The unit is measured as MiB (2026-09-26) but
-    /// the exact boundary byte is not. Too low
-    /// refuses writes loudly; too high strands them silently. Pinned so a
-    /// later "tidy up to 5 * 1024 * 1024" has to argue with a test.
+    /// The default is Sync's MEASURED boundary (2026-09-26): 5,242,880 bytes
+    /// synced from a Mac to CT 106, 5,242,881 was refused at upload. Too low
+    /// refuses writes loudly; too high strands them silently — so any change
+    /// to this number has to arrive with a new measurement, not a rounding.
     /// </summary>
     [Fact]
-    public void The_default_ceiling_is_the_conservative_reading()
+    public void The_default_ceiling_is_the_measured_sync_boundary()
     {
-        new Knapper.Core.Options.SyncOptions().MaxFileBytes.ShouldBe(5_000_000);
+        new Knapper.Core.Options.SyncOptions().MaxFileBytes.ShouldBe(5_242_880);
     }
 }

@@ -627,10 +627,9 @@ re-litigated per review.
   Re-measure with the same two-file procedure before relying on this entry.
 
   The same measurement settled the unit: `ob`'s "MB" is MiB (6,000,000 bytes
-  printed as 5.72), so the ceiling reads as 5,242,880. `Sync__MaxFileBytes`
-  stays at 5,000,000 until the exact boundary byte (5,242,880 vs 5,242,881)
-  is measured — too high strands writes silently, too low only refuses them
-  loudly.
+  printed as 5.72). A follow-up the same day pinned the byte — 5,242,879 and
+  5,242,880 synced, 5,242,881 was refused — so the `Sync__MaxFileBytes`
+  default is now 5,242,880 (it was a conservative 5,000,000).
 
 Decided and CLOSED (do not re-open without new evidence): no case-folding
 of paths (ext4 legitimately distinguishes; the requirement is a

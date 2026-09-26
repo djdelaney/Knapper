@@ -41,7 +41,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// <summary>
     /// Text formats scanned at ANY size: the cap above exists for attachment-
     /// class blobs, and applying it to notes left every .md between the cap and
-    /// Sync's 5,000,000-byte ceiling committed unscanned. The extension only
+    /// Sync's 5 MiB ceiling committed unscanned. The extension only
     /// CLASSIFIES; the bytes are still fetched by blob SHA, never by name.
     /// </summary>
     internal static readonly HashSet<string> AlwaysScannedExtensions = new(StringComparer.OrdinalIgnoreCase)

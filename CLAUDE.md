@@ -596,13 +596,13 @@ format by default.
   leaves every health signal green — and reaches no device. Content
   verification is structurally blind to it, because nothing local is wrong.
   Two silent ways to break it: check the INPUT size instead (the real case is
-  a small anchored insert into a note already near the ceiling), or "tidy"
-  the 5,000,000 default up to 5*1024*1024 on the strength of the unit alone.
-  The unit IS measured now — Sync's "MB" is MiB (2026-09-26: a 6,000,000-byte
-  file reported as "5.72 MB, max 5.00 MB"; a 5,100,000-byte one synced
-  byte-exact to CT 106) — but the exact boundary byte is not, and the errors
-  are not symmetric: too low refuses writes loudly, too high strands them
-  silently. Raise it only after measuring 5,242,880 and 5,242,881. Batch checks
+  a small anchored insert into a note already near the ceiling), or move
+  the 5,242,880 default without a new measurement. That number IS the
+  measured boundary, 5 MiB INCLUSIVE (2026-09-26: 5,242,880 bytes synced
+  byte-exact from a Mac to CT 106, 5,242,881 was refused at upload), and the
+  guard's `<=` matches Sync's rule; the errors are not symmetric — too low
+  refuses writes loudly, too high strands them silently — and a plan change
+  or an `ob` upgrade can move it. Batch checks
   during VALIDATE, so an oversized item fails the batch untouched. Pinned by
   `SyncSizeLimitTests`. `/health` and `knapper doctor` are the backstop for
   oversized files PRESENT on the box (a shell wrote one, or it predates the

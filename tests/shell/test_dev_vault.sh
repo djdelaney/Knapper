@@ -83,7 +83,7 @@ case "$(cd "$(dirname "$H/Hazards/outside-link.md")" && cd "$(dirname "$(readlin
     "$(cd "$H" && pwd -P)"*) fail "symlink target is inside the vault; it must leave it" ;;
 esac
 [ -p "$H/Hazards/pipe.md" ] || fail "no FIFO"
-[ "$(wc -c < "$H/Hazards/oversized.md" | tr -d ' ')" = "5000001" ] || fail "oversized.md is not 5,000,001 bytes"
+[ "$(wc -c < "$H/Hazards/oversized.md" | tr -d ' ')" = "5242881" ] || fail "oversized.md is not 5,242,881 bytes"
 
 [ "$FAILURES" -eq 0 ] || exit 1
 echo "   dev vault: guards, determinism, byte-exact files, hazards"
