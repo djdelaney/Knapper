@@ -58,10 +58,15 @@ public sealed class ConventionsOptions
 
     /// <summary>
     /// Vault-relative folder new notes default to (e.g. <c>Quicknotes</c>),
-    /// stated on the tools that choose a path. Stated, never checked: "unless
-    /// a more specific folder clearly fits" is a judgement, not a rule.
+    /// stated on the tools that choose a path. "Unless a more specific folder
+    /// clearly fits" is a judgement, not a rule, so only the one case it can
+    /// never cover is CHECKED: a note created, or moved, at the vault ROOT —
+    /// which is no folder at all — warns <c>note_at_vault_root</c>.
     /// </summary>
     public string? NewNoteFolder { get; set; }
+
+    /// <summary>True when a default folder is set, so root-level placement is checked.</summary>
+    public bool ChecksPlacement => !string.IsNullOrWhiteSpace(NewNoteFolder);
 
     /// <summary>True when any rule is checked on write — the descriptions then say so.</summary>
     public bool AnyChecked => WikilinksOnly || NoNewFrontmatter || NoNewTags;

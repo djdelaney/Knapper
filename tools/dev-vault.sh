@@ -489,6 +489,7 @@ export Sync__Mode=open
 # markdown_internal_link:
 # export Conventions__WikilinksOnly=true Conventions__NoNewFrontmatter=true Conventions__NoNewTags=true
 # export Conventions__NewNoteFolder=Notes
+# export Mcp__VaultName=Dev
 EOF
 
 count=$(find "$VAULT" -type f -not -path '*/.*' | wc -l | tr -d ' ')

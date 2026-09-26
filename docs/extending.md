@@ -492,9 +492,14 @@ Directory.Build.props <Version>          the one carrier
      Why configuration and not the vault's `CLAUDE.md`: prose cannot be turned
      into mechanical checks reliably, and a rule read from the vault could be
      switched off by the agents it constrains — the `ArchivedPrefixes`
-     argument. Scoped next, if wanted: a folder-placement check (it needs a
-     notion of "clearly fits" that a flag cannot carry), and counting
-     warnings in metrics.
+     argument. Added in 0.11.0: `note_at_vault_root`, the one placement
+     case a flag CAN judge ("clearly fits" is a judgement; the root is never
+     a folder, so it never fits), driven by `NewNoteFolder` and also applied
+     to a move's destination; and a `ConventionWarnings` counter in
+     `metrics.json`, a trend rather than a monitor threshold. Still open: the
+     per-write rule codes in the audit trail, which would say WHICH client
+     keeps breaking a convention (codes only — the audit never carries note
+     content).
 
   Rejected: an MCP **resource** with `annotations: {audience, priority}`.
   Claude Code is the primary surface and does not auto-load them, so it would

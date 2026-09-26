@@ -321,8 +321,9 @@ public sealed class VaultMutationService(
                 var sha = VaultHash.Sha256Hex(data);
                 TryAudit("move", source.Relative, "ok", ctx, before: sha, after: sha,
                     detail: "→ " + destination.Relative);
-                // A move changes no bytes, so it adds nothing a convention could judge.
-                return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen, []);
+                // A move changes no bytes: only where the note now lives can be judged.
+                return new MutationResult(destination.Relative, sha, sha, data.Length, data.Length, true, gen,
+                    conventionChecker.CheckPlacement(destination.Relative));
             }
         }
         catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)

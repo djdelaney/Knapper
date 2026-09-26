@@ -396,6 +396,10 @@ is only as good as the unit being finished when it is taken:
   (wikilinks-only, no-new-frontmatter, no-new-tags, style text, new notes in
   Quicknotes/)`. A Style value with spaces needs the whole assignment quoted:
   `Environment="Conventions__Style=…"`.
+- `Mcp__VaultName=<name>` — what the server instructions call the vault
+  (Helios: `Helios`). Unset, they name none: harmless, but agents lose the
+  name the operator's own notes use. Since 0.11.0; before that the name was
+  compiled in.
 - `Vault__ArchivedPrefixes__0=<folder>` — IF this vault keeps superseded
   copies in a folder agents should leave alone (Helios: `Archive`). Set it
   here, in the same edit as everything else, because the failure is silent in

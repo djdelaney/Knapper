@@ -25,13 +25,14 @@ namespace Knapper.Core.Mutation;
 /// <para>Pure over bytes, like <see cref="WikiLink"/>, and shares its fence
 /// and inline-code rules so the lint and this agree about what is code.</para>
 /// </summary>
-public sealed class ConventionChecker(ConventionsOptions options)
+public sealed class ConventionChecker(ConventionsOptions options, KnapperMetrics? metrics = null)
 {
     public static readonly ConventionChecker Off = new(new ConventionsOptions());
 
     internal const string MarkdownInternalLink = "markdown_internal_link";
     internal const string FrontmatterAdded = "frontmatter_added";
     internal const string TagsAdded = "tags_added";
+    internal const string NoteAtVaultRoot = "note_at_vault_root";
 
     private const int MaxExamples = 3;
     private static readonly IReadOnlyList<ConventionWarning> None = [];
@@ -55,22 +56,44 @@ public sealed class ConventionChecker(ConventionsOptions options)
 
     /// <summary>
     /// Warnings for one committed write. <paramref name="before"/> is null for
-    /// a created file; frontmatter and tag checks then do not apply.
+    /// a created file: frontmatter and tag checks then do not apply, and
+    /// placement does.
     /// </summary>
-    public IReadOnlyList<ConventionWarning> Check(string relativePath, byte[]? before, byte[] after)
+    public IReadOnlyList<ConventionWarning> Check(string relativePath, byte[]? before, byte[] after) =>
+        Counted(Compute(relativePath, before, after));
+
+    /// <summary>
+    /// Warnings for a MOVE's destination. A move changes no bytes, so only
+    /// placement can be judged.
+    /// </summary>
+    public IReadOnlyList<ConventionWarning> CheckPlacement(string relativePath)
     {
-        if (!options.AnyChecked || !relativePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        if (!IsNote(relativePath) || !options.ChecksPlacement)
             return None;
+        var warnings = new List<ConventionWarning>();
+        AddPlacement(relativePath, warnings);
+        return Counted(warnings);
+    }
+
+    private IReadOnlyList<ConventionWarning> Compute(string relativePath, byte[]? before, byte[] after)
+    {
+        if (!IsNote(relativePath) || !(options.AnyChecked || options.ChecksPlacement))
+            return None;
+        var warnings = new List<ConventionWarning>();
         try
         {
+            if (before is null && options.ChecksPlacement)
+                AddPlacement(relativePath, warnings);
+            if (!options.AnyChecked)
+                return warnings;
+
             var afterText = Decode(after);
             if (afterText is null)
-                return None;
+                return warnings;
             var beforeText = before is null ? null : Decode(before);
             if (before is not null && beforeText is null)
-                return None; // the old bytes were not text: nothing to compare against
+                return warnings; // the old bytes were not text: nothing to compare against
 
-            var warnings = new List<ConventionWarning>();
             if (options.WikilinksOnly)
                 CheckLinks(beforeText ?? "", afterText, warnings);
             if (beforeText is not null && options.NoNewFrontmatter)
@@ -82,8 +105,27 @@ public sealed class ConventionChecker(ConventionsOptions options)
         catch (Exception)
         {
             // Deliberately total — see the class remarks. The write has landed.
-            return None;
+            return warnings;
         }
+    }
+
+    private IReadOnlyList<ConventionWarning> Counted(IReadOnlyList<ConventionWarning> warnings)
+    {
+        metrics?.RecordConventionWarnings(warnings.Count);
+        return warnings;
+    }
+
+    private static bool IsNote(string relativePath) =>
+        relativePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+
+    private void AddPlacement(string relativePath, List<ConventionWarning> warnings)
+    {
+        if (relativePath.Contains('/'))
+            return;
+        var folder = options.NewNoteFolder!.Trim().Trim('/');
+        warnings.Add(new ConventionWarning(NoteAtVaultRoot,
+            $"this note is at the vault root, which is no folder at all; new notes go in {folder}/ here unless " +
+            "a more specific folder fits — move it with vault_move."));
     }
 
     private static void CheckLinks(string before, string after, List<ConventionWarning> warnings)

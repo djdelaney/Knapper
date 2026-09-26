@@ -52,6 +52,8 @@ Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
 #Environment=Conventions__NoNewTags=true
 #Environment="Conventions__Style=match the vault's terse, information-dense style"
 #Environment=Conventions__NewNoteFolder=Quicknotes
+# The vault's display name in the server instructions; unset names none.
+#Environment=Mcp__VaultName=Notes
 Environment=Sync__Mode=heartbeat
 Environment=Sync__HeartbeatPath=/var/lib/knapper/sync-heartbeat
 # The fail-closed budget, stated here even though it is the default: with the

@@ -346,7 +346,8 @@ format by default.
   layer, both off the wire).
 - **Convention text and convention checks both come from `Conventions:*`,
   never from vault content, and ONE flag drives both.** The build ships
-  nobody's conventions: until 0.10.0 they were compile-time constants, so one
+  nobody's conventions (nor vault name — `Mcp:VaultName` feeds the
+  instructions, which named one particular vault until 0.11.0): until 0.10.0 they were compile-time constants, so one
   vault's rules (its `Quicknotes/` folder included) reached every deployment
   of this public repo. They are composed onto the write tools' descriptions
   at startup (`VaultConventions.Apply`, a `PostConfigure` on the SDK's

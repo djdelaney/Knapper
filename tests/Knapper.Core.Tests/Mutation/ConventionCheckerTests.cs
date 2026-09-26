@@ -134,6 +134,58 @@ public sealed class ConventionCheckerTests
         moved.Warnings.ShouldBeEmpty();
     }
 
+    private static readonly ConventionChecker Placement = new(new ConventionsOptions { NewNoteFolder = "Inbox" });
+
+    [Theory]
+    [InlineData("Stray.md", true)]
+    [InlineData("Inbox/Filed.md", false)]
+    [InlineData("Projects/Deep/Filed.md", false)]
+    [InlineData("stray.txt", false)]
+    public void A_new_note_at_the_vault_root_is_flagged(string path, bool flagged) =>
+        Rules(null, "x\n", path, Placement).ShouldBe(flagged ? ["note_at_vault_root"] : []);
+
+    [Fact]
+    public void Editing_a_note_that_already_lives_at_the_root_is_not_a_placement() =>
+        Rules("x\n", "x y\n", "Home.md", Placement).ShouldBeEmpty();
+
+    [Fact]
+    public void Placement_is_judged_even_when_the_bytes_cannot_be() =>
+        Placement.Check("Stray.md", null, [0xff, 0xfe]).Select(w => w.Rule).ShouldBe(["note_at_vault_root"]);
+
+    [Fact]
+    public void Placement_is_unchecked_without_a_default_folder() =>
+        Rules(null, "x\n", "Stray.md", All).ShouldBeEmpty();
+
+    [Fact]
+    public void A_move_to_the_root_is_flagged_and_a_move_into_a_folder_is_not()
+    {
+        using var v = new MutationVault();
+        Directory.CreateDirectory(Path.Combine(v.VaultDir.Path, "Inbox"));
+        var service = v.ServiceWithConventions(new ConventionsOptions { NewNoteFolder = "Inbox" });
+        var sha = v.Write("Inbox/a.md", "a\n");
+
+        service.Move("Inbox/a.md", "a.md", sha).Warnings.Select(w => w.Rule).ShouldBe(["note_at_vault_root"]);
+        service.Move("a.md", "Inbox/b.md", sha).Warnings.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The counter is how an operator sees whether agents KEEP breaking the
+    /// conventions — per warning, not per write, and zero-warning writes add
+    /// nothing.
+    /// </summary>
+    [Fact]
+    public void Every_warning_returned_is_counted_in_metrics()
+    {
+        var metrics = new KnapperMetrics();
+        var checker = new ConventionChecker(new ConventionsOptions { WikilinksOnly = true, NewNoteFolder = "Inbox" }, metrics);
+
+        checker.Check("Stray.md", null, System.Text.Encoding.UTF8.GetBytes("[x](y.md)\n")).Count.ShouldBe(2);
+        checker.Check("Inbox/ok.md", null, System.Text.Encoding.UTF8.GetBytes("fine\n")).ShouldBeEmpty();
+        checker.CheckPlacement("Moved.md").Count.ShouldBe(1);
+
+        metrics.Read().ConventionWarnings.ShouldBe(3);
+    }
+
     [Fact]
     public void Only_the_enabled_rules_are_reported()
     {

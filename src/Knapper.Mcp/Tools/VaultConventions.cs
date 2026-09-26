@@ -103,7 +103,7 @@ internal static class VaultConventions
         return string.IsNullOrEmpty(folder)
             ? null
             : $" New notes default to {folder}/ unless a more specific folder clearly fits; the folder hierarchy " +
-              "is not yours to reorganize.";
+              "is not yours to reorganize. A note placed at the vault root comes back in the response's warnings.";
     }
 
     /// <summary>

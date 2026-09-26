@@ -60,6 +60,7 @@ public class ConventionsWireTests : IClassFixture<ConventionsWireTests.Configure
         writers["vault_edit"].ShouldContain("terse, information-dense style");
         writers["vault_edit"].ShouldContain("warnings name any checked convention");
         writers["vault_create"].ShouldContain("New notes default to Quicknotes/");
+        writers["vault_create"].ShouldContain("vault root comes back in the response's warnings");
         writers["vault_mkdir"].ShouldNotContain("CONVENTIONS:"); // chooses a path, writes no content
     }
 
@@ -95,6 +96,19 @@ public class ConventionsWireTests : IClassFixture<ConventionsWireTests.Configure
             .EnumerateArray().Select(w => w.GetProperty("rule").GetString()).ToList();
         warnings.ShouldBe(["markdown_internal_link", "tags_added"], ignoreOrder: true);
         _factory.ReadVaultFile("Notes/Plain.md").ShouldContain("[the plan](Projects/plan.md)"); // advisory: it landed
+    }
+
+    [Fact]
+    public async Task A_note_created_at_the_vault_root_is_flagged_and_one_in_a_folder_is_not()
+    {
+        var session = await RawMcp.OpenAsync(_factory.CreateClient());
+
+        var stray = await session.CallToolAsync("vault_create", new { path = "Stray.md", text = "plain\n" });
+        stray.GetProperty("structuredContent").GetProperty("warnings").EnumerateArray()
+            .Select(x => x.GetProperty("rule").GetString()).ShouldBe(["note_at_vault_root"]);
+
+        var filed = await session.CallToolAsync("vault_create", new { path = "Notes/Filed.md", text = "plain\n" });
+        filed.GetProperty("structuredContent").GetProperty("warnings").GetArrayLength().ShouldBe(0);
     }
 
     [Fact]

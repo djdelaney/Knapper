@@ -104,7 +104,7 @@ UNCLASSIFIED=0
 # the hand-maintained-list failure this script exists to close — that one is a
 # list of FILES that must agree with what ships, where an omission means a file
 # is never looked at. Here an omission means a line is looked at harder.
-SITE_KEYS='Mcp__AllowedHosts__|Mcp__Access__|Sync__MaxAgeSeconds|Sync__MaxFileBytes|Vault__RootPath|Vault__LockDirectory|Vault__AuditLogPath|Vault__MetricsPath|Vault__CommitStampPath|Vault__ArchivedPrefixes__|Conventions__'
+SITE_KEYS='Mcp__AllowedHosts__|Mcp__Access__|Sync__MaxAgeSeconds|Sync__MaxFileBytes|Vault__RootPath|Vault__LockDirectory|Vault__AuditLogPath|Vault__MetricsPath|Vault__CommitStampPath|Vault__ArchivedPrefixes__|Conventions__|Mcp__VaultName'
 
 # Compare one shipped file against its installed counterpart. Reports every
 # file, including the identical ones: the value of this script is the claim

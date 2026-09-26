@@ -26,7 +26,14 @@ public sealed class KnapperMetrics : IDisposable
         long IoErrors,
         long TruncatedResponses,
         long GenerationChangedResponses,
-        long AuditAppendFailures);
+        long AuditAppendFailures,
+        /// <summary>
+        /// Conventions:* warnings returned on write receipts. A TREND to read,
+        /// not an alarm: it rises when agents keep breaking the vault's
+        /// conventions, which is a steering problem (descriptions, the vault's
+        /// CLAUDE.md), never an outage.
+        /// </summary>
+        long ConventionWarnings);
 
     private readonly string? _path;
     private readonly Lock _flushLock = new();
@@ -39,6 +46,7 @@ public sealed class KnapperMetrics : IDisposable
     private long _truncatedResponses;
     private long _generationChangedResponses;
     private long _auditAppendFailures;
+    private long _conventionWarnings;
     private long _lastFlush; // Stopwatch timestamp; 0 = never
 
     /// <summary>Throttle for routine counter flushes. Internal so tests can collapse it.</summary>
@@ -102,6 +110,15 @@ public sealed class KnapperMetrics : IDisposable
         TryFlush();
     }
 
+    /// <summary>Warnings attached to one committed write's receipt.</summary>
+    public void RecordConventionWarnings(int count)
+    {
+        if (count <= 0)
+            return;
+        Interlocked.Add(ref _conventionWarnings, count);
+        FlushIfDue();
+    }
+
     public Snapshot Read() => new(
         _startedAt, DateTimeOffset.UtcNow,
         Interlocked.Read(ref _toolCalls),
@@ -111,7 +128,8 @@ public sealed class KnapperMetrics : IDisposable
         Interlocked.Read(ref _ioErrors),
         Interlocked.Read(ref _truncatedResponses),
         Interlocked.Read(ref _generationChangedResponses),
-        Interlocked.Read(ref _auditAppendFailures));
+        Interlocked.Read(ref _auditAppendFailures),
+        Interlocked.Read(ref _conventionWarnings));
 
     public void Dispose() => TryFlush();
 

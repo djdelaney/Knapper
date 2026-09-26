@@ -63,6 +63,33 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
     }
 
     /// <summary>
+    /// The build ships nobody's vault name: until 0.11.0 the instructions
+    /// named one particular vault on every deployment. Unset, they name none;
+    /// Mcp:VaultName supplies it.
+    /// </summary>
+    [Fact]
+    public async Task The_instructions_name_the_vault_only_when_configured()
+    {
+        await using (var client = await ConnectAsync(_factory))
+            client.ServerInstructions!.ShouldStartWith("Knapper is the single authoritative interface to the user's Obsidian vault. ");
+
+        using var named = new KnapperMcpFactory(new() { ["Mcp:VaultName"] = "Test Vault" });
+        await using var namedClient = await ConnectAsync(named);
+        namedClient.ServerInstructions!.ShouldStartWith(
+            "Knapper is the single authoritative interface to the user's Obsidian vault (\"Test Vault\"). ");
+    }
+
+    [Theory]
+    [InlineData("Quote\"d")]
+    [InlineData("Line\nbreak")]
+    public void A_malformed_vault_name_refuses_startup(string name)
+    {
+        using var factory = new KnapperMcpFactory(new() { ["Mcp:VaultName"] = name });
+        var ex = Should.Throw<Exception>(() => factory.CreateClient());
+        ex.ToString().ShouldContain("Mcp:VaultName");
+    }
+
+    /// <summary>
     /// A cut always takes the TAIL, so the order of the sections is what
     /// decides which of them survives one. TRUST MODEL leads — its absence is
     /// a security property, and it is what a 2048-character delivery actually

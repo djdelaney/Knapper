@@ -57,7 +57,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `LockDirectory` | — (required) | flock lock files. MUST be outside the vault (enforced at startup). |
 | `AuditLogPath` | — (required by Mcp) | Append-only JSONL, one line per **mutation** attempt (including rejected ones). Reads are never audited — no vault object changed, so there is nothing for the entry to be about; for read activity use `Mcp:LogToolCalls` below, which writes somewhere else entirely. Created mode 0600. MUST be outside the vault (enforced). |
 | `CommitStampPath` | "" (off) | Fsync-touched by every successful `knapper commit` run, including "nothing to commit" — the external monitor's git-freshness signal. Outside the vault (enforced). |
-| `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). **Eventually consistent, and per-process** — see below. |
+| `MetricsPath` | "" (memory-only) | Bounded cumulative counters (tool outcomes, timeouts, stale rejections, truncation, generation-changed, audit-append failures, convention warnings) snapshotted as one JSON line for the external monitor. Outside the vault (enforced). **Eventually consistent, and per-process** — see below. |
 | `RipgrepPath` | `rg` | The search engine binary. **Must be ripgrep 15+** — older builds report `"searches": 0` for a query with no matches, emptying the `scanned_files` evidence behind every "no match". `knapper doctor` fails on anything older and names the absolute path it resolved (or, on a miss, the `PATH` it searched — the service's `PATH` is systemd's, not the operator's shell's); Debian's apt package is still 14.x. |
 | `QueryTimeoutMs` | 10000 | Wall-clock budget per query. |
 | `MaxResultsPerPage` | 200 | Hard page-size ceiling (per-query `maxResults` is clamped to it). |
@@ -76,6 +76,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. A public name with `Access:Enabled` false **refuses startup** — see `Access:AllowPublicHostsWithoutAccess`. |
 | `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. E.g. disable the mutation tools for a read-only deployment. |
 | `RestrictHealthToLoopback` | true | `/health` (detailed) 404s for non-loopback callers. |
+| `VaultName` | — | The vault's display name in the server instructions (`… Obsidian vault ("Name").`). Unset, they name no vault — the build ships nobody's. ≤ 64 chars, no control characters or `"`; startup refuses otherwise. |
 | `LogToolCalls` | true | One Information log line per tool call, reads included — to **stdout**, i.e. the service journal (`journalctl -u knapper`), never to `Vault:AuditLogPath`. The two settings sit next to each other in the unit file and write to different places: audit log = mutations only, on disk; this = every call, in the journal. |
 | `Access:Enabled` | false | Cloudflare Access assertion validation at the origin. |
 | `Access:AllowPublicHostsWithoutAccess` | false | Boot with a public `AllowedHosts` entry while `Access:Enabled` is false. Refused by default because the pair serves the whole vault, unauthenticated, to anything reaching the hostname. For test rigs with their own fake edge in front; never production. |
@@ -111,11 +112,14 @@ pushes any description past the client's 2048-character delivery cap.
 | `NoNewFrontmatter` | false | "Do not add frontmatter to a note that lacks it." Warns `frontmatter_added` when an edit/append gives an existing note its first frontmatter block. New notes are not checked — which note types carry frontmatter is a per-vault rule a flag cannot express. |
 | `NoNewTags` | false | "Do not add tags to a note that does not use them." Warns `tags_added` when an edit/append gives an existing tagless note its first tag (inline `#tag` or frontmatter `tags`). New notes are not checked. Broken YAML reads as "could not tell", never "had none". |
 | `Style` | — | Free-text style guidance appended to the writing clause. Stated, never checked. ≤ 400 chars, one line. |
-| `NewNoteFolder` | — | Vault-relative default folder for new notes, stated on `vault_create`/`vault_mkdir`/`vault_move`. Stated, never checked. |
+| `NewNoteFolder` | — | Vault-relative default folder for new notes, stated on `vault_create`/`vault_mkdir`/`vault_move`. "Unless a more specific folder clearly fits" is a judgement, so only the case it never covers is checked: a note created or moved to the vault ROOT warns `note_at_vault_root`. |
 
 Warnings are **advisory**: the write has already committed and verified, and
 the receipt's `warnings` (per item for `vault_batch`) says what to fix with a
-follow-up edit. The check never fails a write — anything it cannot judge
+follow-up edit. Every warning returned is also counted in `metrics.json`
+(`ConventionWarnings`) — a trend showing whether agents keep breaking the
+conventions, deliberately not an alert threshold: it is a steering problem,
+never an outage. The check never fails a write — anything it cannot judge
 (non-Markdown, non-UTF-8, unparseable YAML) yields no warning.
 
 ## Connecting clients

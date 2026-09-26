@@ -37,4 +37,30 @@ public sealed class McpOptions
 
     /// <summary>Log every tool call (name, caller, duration, outcome) at Information.</summary>
     public bool LogToolCalls { get; set; } = true;
+
+    /// <summary>
+    /// The vault's display name, as the server instructions tell agents to
+    /// call it (e.g. the name the operator's own notes use). Unset, the
+    /// instructions name no vault. Deployment config for the reason
+    /// <see cref="ConventionsOptions"/> is: the build ships nobody's vault.
+    /// Validated at startup by <see cref="ValidateVaultName"/>.
+    /// </summary>
+    public string? VaultName { get; set; }
+
+    /// <summary>Upper bound on <see cref="VaultName"/>: it is a name, spliced into capped prose.</summary>
+    public const int MaxVaultNameLength = 64;
+
+    /// <summary>Null when valid (or unset); otherwise the reason startup refuses it.</summary>
+    public static string? ValidateVaultName(string? name)
+    {
+        if (name is null || name.Length == 0)
+            return null;
+        if (name.Trim().Length == 0)
+            return "Mcp:VaultName is whitespace; unset it instead";
+        if (name.Length > MaxVaultNameLength)
+            return $"Mcp:VaultName is {name.Length} characters; the cap is {MaxVaultNameLength}";
+        if (name.Any(char.IsControl) || name.Contains('"'))
+            return "Mcp:VaultName may not contain control characters or a double quote (it is quoted in the instructions)";
+        return null;
+    }
 }
