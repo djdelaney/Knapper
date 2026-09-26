@@ -56,7 +56,16 @@ public static partial class SecretScanner
     // the separator, because the likeliest place for a key in this vault is a
     // plugin's JSON settings file — `"apiKey": "…"` — and the separator used
     // to have to follow the name directly, so every JSON key walked past.
-    [GeneratedRegex("""(?i)(api[_-]?key|secret|token|passwd|password)["']?\s*[:=]\s*["']?[A-Za-z0-9_\-/+]{20,}""")]
+    //
+    // The separator is NOT a bare `\s*[:=]\s*`. In shell and env syntax,
+    // whitespace AFTER `=` ends the assignment: `-e DB_PASSWORD= name` sets
+    // an EMPTY variable and `name` is the next argument. A trailing `\s*`
+    // skipped that space and read the next token as the value — a docker
+    // container name refused every vault commit for hours (2026-09-26). So
+    // whitespace follows `=` only when it also precedes it (INI:
+    // `key = value`) or a quote opens the value (`KEY= "value"`); `:` keeps
+    // its free spacing (YAML, JSON).
+    [GeneratedRegex("""(?i)(api[_-]?key|secret|token|passwd|password)["']?(?:\s*:\s*["']?|=["']?|\s+=\s*["']?|=\s+["'])[A-Za-z0-9_\-/+]{20,}""")]
     private static partial Regex ApiKeyLike();
 
     [GeneratedRegex(@"\b(sk-[A-Za-z0-9_\-]{20,}|Bearer\s+[A-Za-z0-9_\-\.=]{30,})")]

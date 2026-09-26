@@ -427,6 +427,11 @@ public sealed class GitCommitJobTests : IDisposable
     [InlineData("stripe: sk_live_0123456789abcdefABCD", "stripe-key")]
     [InlineData("AIzaSyA0123456789abcdefghijklmnopqrstuv", "google-api-key")]
     [InlineData("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLWJ5dGVz", "jwt")]
+    // The compound-name case the 0.9.0 widening was for, and the two
+    // spellings of whitespace-after-= that DO carry a value.
+    [InlineData("DB_PASSWORD=abcdefghij0123456789xyz", "api-key-like")]
+    [InlineData("DB_PASSWORD= \"abcdefghij0123456789xyz\"", "api-key-like")]
+    [InlineData("password = abcdefghij0123456789xyz", "api-key-like")]
     public void Secret_scanner_catches_common_shapes(string line, string kind) =>
         SecretScanner.Scan("f.md", line).ShouldContain(f => f.Kind == kind);
 
@@ -437,6 +442,12 @@ public sealed class GitCommitJobTests : IDisposable
     [InlineData("tokenizer = SentencePieceTokenizerWithDefaults")]
     [InlineData("\"secretary\": \"Jane Smith-Wellington-Harrington\"")]
     [InlineData("\"apiKey\": \"\"")]
+    // An EMPTY shell/env assignment followed by the next argument. The value
+    // is nothing; the long token after the space is a container or program
+    // name. Refused every commit for hours on 2026-09-26 (a docker exec line
+    // blanking its password variable and passing it as -password $P).
+    [InlineData("docker exec -e SERVICE_TOKEN= -e SERVICE_PASSWORD= some_addon_container_name influx -password $P")]
+    [InlineData("env API_KEY= another_long_program_argument_x cmd")]
     public void Secret_scanner_leaves_ordinary_prose_alone(string line) =>
         SecretScanner.Scan("f.md", line).ShouldBeEmpty();
 }
