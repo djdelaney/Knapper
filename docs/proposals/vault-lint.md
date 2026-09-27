@@ -469,7 +469,7 @@ off), and require an explicit ordinary path.
   is not this tool's job, per `runbook-lint.sh`'s boundary.
 - **A second suppression mechanism.** Inline `<!-- knapper-lint: ignore -->`
   comments are attractive and would overlap the baseline almost entirely. One
-  mechanism or the other; see open decisions.
+  mechanism or the other — decided 2026-09-27 for the baseline alone (§13).
 
 ## 11. Known blind spot
 
@@ -497,11 +497,12 @@ Not free, and worth stating so the decision is priced:
 
 ## 13. Open decisions
 
-- **Tier 1 default-on, or off until measured?** Recommendation: on, with the
-  baseline. The precision case is strong and the baseline removes the
-  first-run flood. Dan's call. Measured 2026-08-30 (§2): 68 findings
-  vault-wide, all link-family, so the first-run flood is real and the
-  baseline is what removes it.
+- ~~Tier 1 default-on, or off until measured?~~ **DECIDED 2026-09-27
+  (Dan): on.** The precision case is strong and the baseline removes the
+  first-run flood. Measured 2026-08-30 (§2): 68 findings vault-wide, all
+  link-family, so the first-run flood is real and the baseline is what
+  removes it — which makes default-on a reason for the baseline to land
+  before `knapper lint` and the timer, not after.
 - **What ships first?** The measurement rules out a cheap structural-only
   first slice — it would find zero. The live question is whether slice one is
   `vault_lint` alone (MCP tool, explicit path scope, no baseline, no CLI, no
@@ -509,15 +510,37 @@ Not free, and worth stating so the decision is priced:
   slice two, or whether the baseline lands with the first ship. Deferring it
   is defensible only while there is no timer to keep alive, and at ~13 new
   unresolved links a month that deferral has a shelf life. Dan's call.
-- **Expose the link graph as a query capability** (`vault_backlinks` or
-  similar) or keep it internal to lint? Building lint answers the
-  "do agents demonstrably need it?" question that entry is gated on, so decide
-  it then, not now.
-- **Baseline only, or baseline plus inline suppression?** Recommendation:
-  baseline only, until a real case appears that it cannot express.
-- **Assertions file format** — YAML file versus a structured note with the
-  rules in frontmatter. The note is more Obsidian-native and editable in the
-  app; YAML is simpler to validate and harder to break by accident.
+- ~~Expose the link graph as a query capability or keep it internal to
+  lint?~~ **DECIDED 2026-09-27 (Dan): its own query capability**
+  (`vault_backlinks` or similar — the name is not chosen, and it is a locked
+  contract from first ship). It is a new tool, so a minor bump, the
+  `ToolNames`/`ToolSurface.All` lockstep, and the `verify` tool count move
+  with it; the graph stays ONE implementation that lint and the query both
+  read, never a second index to disagree with the first.
+- ~~Baseline only, or baseline plus inline suppression?~~ **DECIDED
+  2026-09-27 (Dan): baseline only.** The deciding argument is who can write
+  the suppression. An inline `<!-- knapper-lint: ignore -->` is vault
+  content, so any agent can add one — and "clear the lint findings" is most
+  cheaply satisfied by silencing them, the `ArchivedPrefixes` argument
+  again. Advancing the baseline is `knapper lint --accept`, an operator
+  command that is deliberately NOT on the tool surface. The accepted costs:
+  `--accept` is all-or-nothing, a moved or renamed note re-reports its
+  findings (the key includes the path), and `--all` keeps showing
+  deliberate red links. If that last one becomes real clutter, answer it
+  with a narrow configured rule, never a general in-vault ignore.
+- ~~Assertions file format~~ **DECIDED 2026-09-27 (Dan): a note** (`.md`,
+  at an explicitly configured ordinary path, per §9). The YAML-file option
+  lost on visibility more than on validation: Obsidian's file explorer hides
+  `.yml` by default and Sync's "other file types" is opt-in, so the file
+  risked being uneditable in the app and never leaving the CT. Leaning
+  (implementation's call): rules in a fenced `yaml` block with prose beside
+  each one, rather than frontmatter — the Properties panel cannot edit a list
+  of objects anyway, and the prose is where "stale here, current there"
+  reasoning lives. Two requirements whatever the layout: a file that fails to
+  parse is a LOUD error, never tier 3 silently reporting nothing (which reads
+  as "no stale values"); and the file excludes itself from tier 3, since it
+  contains every stale pattern verbatim. Parse through `FrontmatterYaml` for
+  its depth guard.
 - ~~What does `\|` mean inside a wikilink?~~ **CLOSED, measured in Obsidian
   2026-08-30.** It is always the alias separator: a probe note rendered the
   unescaped form, the escaped form, and the escaped form inside a table row,
