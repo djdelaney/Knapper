@@ -28,7 +28,7 @@ Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + m
 |---|---|---|
 | `Knapper.Core` | library | Everything that touches vault bytes: path containment, hashing, atomic commits, locks, query services, mutation service, gates, audit, git job. No ASP.NET, no MCP types. |
 | `Knapper.Mcp` | web app | The MCP host: 14 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`. Thin — tools map wire shapes to Core calls. The write tools' convention clauses are composed at startup from `Conventions:*` (`Tools/VaultConventions.cs`) and budget-checked there. |
-| `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`. Shares Core, so the commit job uses the *same* lock implementation as mutations. |
+| `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`, `lint --accept` (records the lint baseline — the only thing that moves it). Shares Core, so the commit job uses the *same* lock implementation as mutations. |
 | `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
 | `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |
 | `tests/Knapper.Core.Tests` | tests | Unit + differential + multi-process race tests. |
@@ -71,7 +71,8 @@ Core/
     QueryCursor.cs         fingerprint-bound continuation cursors
     QueryModels.cs         QueryEnvelope<T> + all query/response records
     WikiLink.cs            THE wikilink/note-shape parser (fences, inline code, tables) — lint and the convention checks share it
-    VaultLintService.cs    vault_lint: link-graph + table checks over a whole-vault index
+    VaultLintService.cs    vault_lint: link-graph + table checks over a whole-vault index, diffed against the accepted baseline commit
+    LintBaselineStore.cs   the accepted baseline's record (Lint:BaselinePath, outside the vault)
   Mutation/
     VaultMutationService.cs  THE mutation surface: edit/append/create/mkdir/move/delete/batch
     ConflictDetector.cs      Sync conflict-file gate
@@ -80,7 +81,9 @@ Core/
     MutationModels.cs        EditSpec, BatchItem, results (with convention warnings), AuditContext
     ConventionChecker.cs     Conventions:* write warnings — what a committed write ADDED; advisory, never throws
   Git/
+    GitProcess.cs          THE git launcher: neutralized config (no hooks/fsmonitor/signing programs), bounded waits
     GitCommitJob.cs        the vault's only committer (vault-wide lock, staged secret scan)
+    GitTreeReader.cs       read-only committed trees for lint's baseline (rev-parse, ls-tree, one cat-file --batch)
     SecretScanner.cs       credential-shaped-content tripwire
 ```
 

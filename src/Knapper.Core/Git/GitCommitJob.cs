@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Knapper.Core.Locking;
 using Knapper.Core.Vault;
@@ -61,19 +60,6 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// commit cycle and the cost of never expiring is a wedged vault.
     /// </summary>
     public const int GitTimeoutMs = 120_000;
-
-    /// <summary>
-    /// Per-invocation overrides for every config key the commands this job
-    /// runs would EXECUTE: hooks (pre-commit, commit-msg, post-commit…),
-    /// the fsmonitor daemon command `add` consults, and a commit-signing
-    /// program. See <see cref="Run"/>.
-    /// </summary>
-    internal static readonly string[] NeutralizedConfig =
-    [
-        "core.hooksPath=/dev/null",
-        "core.fsmonitor=false",
-        "commit.gpgSign=false",
-    ];
 
     /// <summary>Test seams: a stand-in git, and a bound short enough to assert.</summary>
     internal string GitExecutable = "git";
@@ -275,89 +261,14 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         return findings;
     }
 
-    /// <summary>git with structured args against the vault; never a shell.</summary>
-    private string Run(params string[] args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = GitExecutable,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-        };
-        // Nothing on disk may choose code for git to run. This job holds the
-        // commit lock and writes /var/lib/knapper, but `.git/` is writable by
-        // whatever else runs as the service account — obsidian-headless, a
-        // networked npm program confined to /vault and /home/knapper. A hook,
-        // an fsmonitor command or a signing program it planted there would run
-        // HERE, outside its own sandbox. System and global config are cut off
-        // entirely; the repo's own config is needed (identity), so the keys
-        // that name a program are overridden per call, and filter drivers —
-        // which have arbitrary names and cannot be overridden that way — are
-        // refused before `add` could run one (RequireNoFilterDrivers).
-        psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        psi.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
-        foreach (var setting in NeutralizedConfig)
-        {
-            psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add(setting);
-        }
-        psi.ArgumentList.Add("-C");
-        psi.ArgumentList.Add(resolver.Root);
-        foreach (var a in args)
-            psi.ArgumentList.Add(a);
-
-        using var process = Process.Start(psi)
-            ?? throw new KnapperException(VaultErrorCode.IoError, "failed to start git");
-        // Both pipes drained CONCURRENTLY, and the wait is BOUNDED. This runs
-        // under the vault-wide commit lock, which every mutation needs in
-        // shared mode, so anything that blocks here blocks all writes until
-        // the process restarts — there is no caller to time it out.
-        //
-        // Draining one pipe to EOF before starting the other deadlocks the
-        // moment git emits more than a pipe buffer on the stream nobody is
-        // reading: the child blocks writing stderr, the parent blocks reading
-        // stdout, and neither ever moves. The bound covers the rest — a git
-        // that hangs without filling a pipe at all (a stalled filesystem, an
-        // index.lock it decides to wait on) wedges the lock just as hard, and
-        // a commit is a background job: failing it loudly costs one cycle,
-        // and the next tick picks the work up.
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(TimeoutMs))
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (Exception e) when (e is InvalidOperationException or NotSupportedException
-                or System.ComponentModel.Win32Exception)
-            {
-                // Already gone between the timeout and the kill, or unkillable.
-                // Either way the throw below is the answer.
-            }
-            throw new KnapperException(VaultErrorCode.IoError,
-                $"git {args[0]} did not exit within {TimeoutMs} ms and was killed — " +
-                "the commit is abandoned and will be retried on the next tick");
-        }
-        // WaitForExit(int) does not itself await the redirected streams, and
-        // this wait is bounded for the same reason the one above is: a
-        // grandchild inheriting the pipe holds it open past git's own exit,
-        // and an unbounded wait here would hand back the wedge the timeout
-        // just removed.
-        if (!Task.WaitAll([stdoutTask, stderrTask], TimeoutMs))
-        {
-            throw new KnapperException(VaultErrorCode.IoError,
-                $"git {args[0]} exited but its output pipes stayed open past {TimeoutMs} ms — " +
-                "the commit is abandoned and will be retried on the next tick");
-        }
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
-        if (process.ExitCode != 0)
-        {
-            throw new KnapperException(VaultErrorCode.IoError,
-                $"git {args[0]} failed ({process.ExitCode}): {stderr.Trim()}");
-        }
-        return stdout;
-    }
+    /// <summary>
+    /// git against the vault, via the one neutralized, bounded runner
+    /// (<see cref="GitProcess"/>). The bound matters most HERE: every call in
+    /// this class runs under the vault-wide commit lock, which every mutation
+    /// needs in shared mode, and a commit is a background job — failing it
+    /// loudly costs one cycle, and the next tick picks the work up.
+    /// </summary>
+    private string Run(params string[] args) =>
+        GitProcess.Run(GitExecutable, resolver.Root, TimeoutMs,
+            "the commit is abandoned and will be retried on the next tick", args);
 }

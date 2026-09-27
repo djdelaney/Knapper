@@ -99,7 +99,7 @@ public sealed class VaultPathResolver
     /// forged list under <c>truncated: false</c>. Bidi overrides make a path
     /// display as a different one to the human reading an agent's receipt.
     /// </summary>
-    private static char? FirstUnsafeChar(string path)
+    internal static char? FirstUnsafeChar(string path)
     {
         foreach (var c in path)
         {

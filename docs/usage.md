@@ -128,6 +128,33 @@ to its `Client`:
 `jq -c 'select(.Warnings) | {At, Client, Op, Path, Warnings}' audit.jsonl`. The check never fails a write — anything it cannot judge
 (non-Markdown, non-UTF-8, unparseable YAML) yields no warning.
 
+### `Lint:*` — `vault_lint`'s baseline
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BaselinePath` | *(empty)* | Absolute path of the accepted lint baseline record, OUTSIDE the vault (e.g. `/var/lib/knapper/lint-baseline.json`). Set it for BOTH the server and the CLI. Empty = no baseline: `vault_lint` reports every finding and says so (`baselineCommit: null`). |
+
+A baseline is a vault commit whose findings are the accepted backlog;
+`vault_lint` then reports only findings ABSENT from it, re-linting that commit's
+tree with the same engine (so a check added later judges both sides alike).
+A finding's identity is `(check, path, subject)`, never its line, so moving
+text does not re-report it; a moved or RENAMED note does re-report its
+findings (the path is part of the identity). Counted, not a set: a second
+identical broken link in a note that already had one is new.
+
+- **`knapper lint --accept`** is the only thing that moves it: it runs
+  `knapper commit`, lints HEAD, records it, and prints what it accepted. No
+  run ever advances it — a monitor that absorbed its own findings would
+  report each exactly once and forgive it after.
+- The server reads the record on every call, so an accept takes effect
+  without a restart.
+- A record that exists but cannot be used (unparseable, or naming a commit
+  the repository lacks) fails `vault_lint` loudly rather than reporting the
+  backlog or nothing; `all=true` still answers, `knapper status` shows the
+  record and `knapper doctor` checks it. Outside the vault is enforced at
+  boot: the baseline decides what is silenced, so nothing lint reports on
+  may be able to write it.
+
 ## Connecting clients
 
 - **Claude Code (local dev)**: `claude mcp add --transport http knapper http://127.0.0.1:3535/`
@@ -171,7 +198,7 @@ manifest.
 | `vault_files` | `pathPrefix`, `glob`, `extensions`, `kind`, `mtimeAfter/Before`, `minSize/maxSize`, `includeSha`, paging. |
 | `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. Every mode returns the same item shape — `path` always, plus `line`/`column`/`text` (+`contextBefore`/`contextAfter`) in matches mode and `count` in counts mode; fields a mode does not fill are omitted. |
 | `vault_search_frontmatter` | `field`, `op` exists/equals/contains, `value`, `pathPrefix`. Response lists `unparseableFiles` — check it before trusting "no match". |
-| `vault_lint` | `pathPrefix`, `checks` (`unresolved_link`, `ambiguous_link`, `broken_anchor`, `table_pipe`, `table_needs_blank_line`), paging. Read-only link-graph checks, plus one structural one: a table with no blank line above its header row is absorbed into the paragraph — or the bullet — above it and renders as literal pipes (a table under a heading is fine and is not reported, nor is one inside a code fence or an indented code block). `pathPrefix` scopes what is REPORTED; the index is always whole-vault, since a link inside the scope can point anywhere. Embeds are not checked. Response lists `unexaminedFiles` — unreadable notes are valid link targets but their headings are unknown, so anchor findings against them are suppressed. Findings are observations, not a work list; there is no git baseline yet, so a whole-vault run reports the standing backlog rather than what changed. |
+| `vault_lint` | `pathPrefix`, `checks` (`unresolved_link`, `ambiguous_link`, `broken_anchor`, `table_pipe`, `table_needs_blank_line`), paging. Read-only link-graph checks, plus one structural one: a table with no blank line above its header row is absorbed into the paragraph — or the bullet — above it and renders as literal pipes (a table under a heading is fine and is not reported, nor is one inside a code fence or an indented code block). `pathPrefix` scopes what is REPORTED; the index is always whole-vault, since a link inside the scope can point anywhere. Embeds are not checked. Response lists `unexaminedFiles` — unreadable notes are valid link targets but their headings are unknown, so anchor findings against them are suppressed. Findings are observations, not a work list. With a `Lint:BaselinePath` baseline accepted, only findings absent from it are returned — `baselineCommit` names it, `suppressedByBaseline` counts the backlog, `all: true` includes it; `baselineCommit: null` means nothing was suppressed. |
 
 ### Mutations (all conditional; no unconditional write exists)
 

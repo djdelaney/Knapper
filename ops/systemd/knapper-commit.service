@@ -19,6 +19,10 @@ Environment=Vault__LockDirectory=/var/lib/knapper/locks
 # successful run including "nothing to commit" — last-commit age can't tell
 # a quiet vault from a dead timer.
 Environment=Vault__CommitStampPath=/var/lib/knapper/commit-stamp
+# Not read by `knapper commit`. It is here because the runbook runs the CLI
+# with THIS unit's environment (§7), and `knapper lint --accept` must write
+# the same record knapper.service reads. The two values must match.
+Environment=Lint__BaselinePath=/var/lib/knapper/lint-baseline.json
 
 # Hardening, mirroring knapper.service: this unit runs git with WRITE access
 # to the vault — it gets no more filesystem than that.

@@ -417,6 +417,11 @@ is only as good as the unit being finished when it is taken:
   name against the vault itself (`ls /vault`), ordinally: the match is
   case-sensitive and boundary-aware, so `Archive` protects neither `archive/`
   nor `Archived Recipes/`.
+- `Lint__BaselinePath=/var/lib/knapper/lint-baseline.json` — shipped live in
+  BOTH knapper.service and knapper-commit.service, and the two must match: the
+  CLI writes the record with the commit unit's environment (§7) and the server
+  reads it. Nothing to do until §7's first accept; with no record, `vault_lint`
+  reports every finding and says so (`baselineCommit: null`).
 
 The ONE edit that genuinely cannot happen yet is §6.3's Access block (and
 the public hostname that rides in it): the AUD does not exist until the
@@ -868,6 +873,26 @@ runuser -u knapper -- env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
     $CLI_ENV /opt/knapper/cli/knapper commit
 systemctl enable --now knapper-commit.timer
 ```
+
+**Lint baseline** (optional, and a decision, not a formality). An
+accept declares every finding in the vault TODAY to be the accepted backlog,
+after which `vault_lint` reports only what is new. Look at what you are
+accepting first — `vault_lint` with `all: true` from any client — then:
+
+```sh
+# Commits first, so the baseline is the vault as it stands, then prints the
+# commit it recorded and the per-check counts it accepted.
+# shellcheck disable=SC2086
+runuser -u knapper -- env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin \
+    $CLI_ENV /opt/knapper/cli/knapper lint --accept
+```
+
+Verify: `knapper status` prints `lint: baseline <ref> accepted …`, `knapper
+doctor` prints `ok lint baseline commit <ref> is in the vault repository`,
+and a default `vault_lint` answers with that `baselineCommit` and a
+`suppressedByBaseline` equal to the accepted count. Re-run the accept whenever
+the backlog has been reviewed again; nothing else ever moves it.
+
 
 **Take a FRESH backup, then run §1's restore drill a second time.** The only
 archive that exists so far predates the OS baseline, the runtimes, Sync and

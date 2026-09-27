@@ -1,7 +1,8 @@
 # Proposal: vault lint
 
-**Status: proposed, not built. Written 2026-08-24.** Nothing here describes
-shipped behavior; if you are looking for what Knapper does today, read
+**Status: partly built. Written 2026-08-24.** `vault_lint` (the tier-1 link
+checks) shipped in 0.6.0, and the §5 baseline was built 2026-09-27; the rest is still a
+proposal. For what Knapper does today, read
 [architecture.md](../architecture.md) and [usage.md](../usage.md). This
 document exists so the shape is decided before anyone touches
 `ToolSurface.All`, because a tool name is a locked contract from the moment

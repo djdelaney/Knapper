@@ -37,6 +37,10 @@ Environment=Vault__MetricsPath=/var/lib/knapper/metrics.json
 # Owner-only, outside the vault; the keys protect nothing today (see the
 # DataProtectionKeysPath notes in docs/usage.md before that changes).
 Environment=Mcp__DataProtectionKeysPath=/var/lib/knapper/dataprotection-keys
+# The accepted lint baseline (`knapper lint --accept` writes it; the server
+# only reads it, on every vault_lint call). Outside the vault — boot refuses
+# otherwise. Harmless before the first accept: no record = every finding.
+Environment=Lint__BaselinePath=/var/lib/knapper/lint-baseline.json
 # Wall clock for each health-path vault walk (conflict + oversized scans).
 # 500-7000 ms; raise it only if /health reports a `timeout:` scanError.
 #Environment=Vault__HealthScanBudgetMs=5000

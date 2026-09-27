@@ -6,6 +6,7 @@
 //   knapper status              one-screen operational summary
 //   knapper doctor              config/dependency checks; exit 1 on any failure
 //   knapper audit-tail [n]      last n audit entries (default 20)
+//   knapper lint --accept       commit, then accept HEAD's findings as the lint baseline
 //   knapper version             the build identity of THIS binary
 //   knapper verify --url …      READ-ONLY checks against a DEPLOYED server
 //
@@ -31,6 +32,7 @@ var configuration = new ConfigurationBuilder()
 var vaultOptions = configuration.GetSection(VaultOptions.SectionName).Get<VaultOptions>() ?? new VaultOptions();
 var syncOptions = configuration.GetSection(SyncOptions.SectionName).Get<SyncOptions>() ?? new SyncOptions();
 var conventionsOptions = configuration.GetSection(ConventionsOptions.SectionName).Get<ConventionsOptions>() ?? new ConventionsOptions();
+var lintOptions = configuration.GetSection(LintOptions.SectionName).Get<LintOptions>() ?? new LintOptions();
 
 try
 {
@@ -41,6 +43,7 @@ try
         "status" => Status(),
         "doctor" => Doctor(),
         "audit-tail" => AuditTail(args.Length > 1 && int.TryParse(args[1], out var n) ? n : 20),
+        "lint" => Lint(args),
         "version" or "--version" or "-v" => Version(),
         "verify" => Knapper.Cli.Verify.Run(args),
         _ => Usage(),
@@ -55,7 +58,7 @@ catch (KnapperException e)
 int Usage()
 {
     Console.Error.WriteLine(
-        "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|version|" +
+        "usage: knapper <git-init|commit|status|doctor|audit-tail [n]|lint --accept|version|" +
         "verify --url <url> [--expect-version X.Y.Z] [--client-id ID]  (secrets: CF_ACCESS_CLIENT_SECRET env only)>");
     return 2;
 }
@@ -97,6 +100,70 @@ int Commit()
     return 0;
 }
 
+// Accepting a baseline is the ONE way it moves (proposal §5): no run ever
+// advances it, because a run that absorbed its own findings would report each
+// exactly once and forgive it forever after. It commits first so the baseline
+// is the vault as it stands now, not as it stood at the last timer tick —
+// otherwise edits since then would stay "new" after the operator accepted
+// them, and the operator would not know why.
+int Lint(string[] args)
+{
+    if (args.Length != 2 || args[1] != "--accept")
+    {
+        Console.Error.WriteLine(
+            "usage: knapper lint --accept   (commit, then accept HEAD's findings as the lint baseline). " +
+            "Reporting from the CLI arrives with the monitor timer; agents lint through vault_lint.");
+        return 2;
+    }
+    var (resolver, locks) = Open();
+    if (string.IsNullOrWhiteSpace(lintOptions.BaselinePath))
+    {
+        throw new KnapperException(VaultErrorCode.InvalidArgument,
+            "Lint:BaselinePath is not configured — set it (outside the vault, e.g. /var/lib/knapper/lint-baseline.json) " +
+            "for both this CLI and the server");
+    }
+    if (LintBaselineStore.ValidatePath(lintOptions.BaselinePath, resolver.Root) is { } pathError)
+        throw new KnapperException(VaultErrorCode.InvalidArgument, pathError);
+
+    var commit = new GitCommitJob(resolver, locks).Commit(
+        TimeSpan.FromMilliseconds(vaultOptions.LockTimeoutMs),
+        vaultOptions.CommitStampPath);
+    Console.WriteLine(commit.Committed ? $"committed {commit.CommitSha}: {commit.Message}" : $"commit: {commit.Message}");
+
+    var accepted = LintService(resolver).Accept(DateTimeOffset.UtcNow);
+    Console.WriteLine($"accepted {accepted.Commit} as the lint baseline " +
+                      (accepted.PreviousCommit is { } previous ? $"(replacing {previous})" : "(the first one)"));
+    Console.WriteLine($"{accepted.AcceptedFindings} finding(s) are now the accepted backlog" +
+                      (accepted.ByCheck.Count == 0
+                          ? ""
+                          : ": " + string.Join(", ", accepted.ByCheck.OrderBy(c => c.Key, StringComparer.Ordinal)
+                              .Select(c => $"{c.Key} {c.Value}"))));
+    if (accepted.UnexaminedFiles.Count > 0)
+    {
+        Console.WriteLine($"warn  {accepted.UnexaminedFiles.Count} note(s) could not be examined at this commit, so " +
+                          "their findings are not in the baseline and will report as new once readable:");
+        foreach (var f in accepted.UnexaminedFiles.Take(20))
+            Console.WriteLine($"      {f}");
+    }
+    Console.WriteLine("vault_lint now reports only findings absent from this baseline (all=true shows the backlog). " +
+                      "Nothing advances it but this command.");
+    return 0;
+}
+
+VaultLintService LintService(VaultPathResolver resolver)
+{
+    var archived = new ArchivedPrefixes(vaultOptions.ArchivedPrefixes);
+    var generation = new Knapper.Core.Generation.VaultGenerationCounter();
+    return new VaultLintService(
+        resolver,
+        new VaultFileLister(resolver, generation, vaultOptions, archived),
+        new VaultReadService(resolver, vaultOptions, generation),
+        generation,
+        vaultOptions,
+        archived,
+        new LintBaselineStore(lintOptions.BaselinePath));
+}
+
 int Status()
 {
     var (resolver, locks) = Open();
@@ -122,6 +189,7 @@ int Status()
         ? $"UNKNOWN — the walk could not complete: {conflictScanError}"
         : conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
     Console.WriteLine($"git:        {(job.RepoExists ? $"repo present, last commit {Describe(job.LastCommitAgeSeconds())}" : "NO repo (knapper git-init)")}");
+    Console.WriteLine($"lint:       {DescribeBaseline()}");
     Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (syncOptions.Mode == "heartbeat"
         ? string.IsNullOrWhiteSpace(syncOptions.HeartbeatPath)
             ? " — NO heartbeat path configured (mutations would be blocked; set Sync__HeartbeatPath)"
@@ -131,6 +199,22 @@ int Status()
 
     static string Describe(double? ageSeconds) =>
         ageSeconds is { } age ? $"{age:F0}s ago" : "never/missing";
+
+    string DescribeBaseline()
+    {
+        if (string.IsNullOrWhiteSpace(lintOptions.BaselinePath))
+            return "no baseline (Lint:BaselinePath unset) — vault_lint reports every finding";
+        try
+        {
+            return new LintBaselineStore(lintOptions.BaselinePath).Read() is { } baseline
+                ? $"baseline {baseline.Commit} accepted {baseline.AcceptedAt:yyyy-MM-dd HH:mm}Z"
+                : "no baseline accepted yet (knapper lint --accept) — vault_lint reports every finding";
+        }
+        catch (KnapperException e)
+        {
+            return $"UNUSABLE — {e.Message}";
+        }
+    }
 }
 
 int Doctor()
@@ -223,6 +307,33 @@ int Doctor()
         Check("Mcp:DataProtectionKeysPath absolute and outside the vault (or unset)",
             () => string.IsNullOrWhiteSpace(dpKeys)
                   || (Path.IsPathRooted(dpKeys) && !PathContainment.IsInsideOrEqual(dpKeys, vaultOptions.RootPath)));
+    }
+    Check("Lint:BaselinePath absolute and outside the vault (or unset)",
+        () => string.IsNullOrWhiteSpace(vaultOptions.RootPath)
+              || LintBaselineStore.ValidatePath(lintOptions.BaselinePath, vaultOptions.RootPath) is null);
+    // An accepted baseline that no longer resolves fails every default
+    // vault_lint call, loudly — this is where the operator finds out why
+    // BEFORE an agent does. Absent is fine: it means "no baseline yet".
+    if (!string.IsNullOrWhiteSpace(lintOptions.BaselinePath) && !string.IsNullOrWhiteSpace(vaultOptions.RootPath)
+        && Directory.Exists(vaultOptions.RootPath))
+    {
+        LintBaseline? baseline = null;
+        string? unreadable = null;
+        try
+        {
+            baseline = new LintBaselineStore(lintOptions.BaselinePath).Read();
+        }
+        catch (KnapperException e)
+        {
+            unreadable = e.Message;
+        }
+        if (unreadable is not null)
+            Check("lint baseline record is usable", () => throw new InvalidOperationException(unreadable));
+        else if (baseline is not null)
+        {
+            Check($"lint baseline commit {baseline.Commit} is in the vault repository",
+                () => new Knapper.Core.Git.GitTreeReader(new VaultPathResolver(vaultOptions.RootPath).Root).CommitExists(baseline.Commit));
+        }
     }
     Check("Vault:MetricsPath outside the vault (or unset)",
         () => string.IsNullOrWhiteSpace(vaultOptions.MetricsPath)

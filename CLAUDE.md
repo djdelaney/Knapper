@@ -765,11 +765,13 @@ format by default.
   writable by everything running as the service account — including
   obsidian-headless, a networked npm program sandboxed AWAY from
   /var/lib/knapper — so a hook, `core.fsmonitor` or `gpg.program` planted
-  there would run inside the commit job with its wider access. `Run` cuts off
-  system/global config and overrides every executing key it can name
+  there would run inside the commit job with its wider access. `GitProcess`
+  — the ONE launcher, shared by the committer and lint's baseline reader —
+  cuts off system/global config and overrides every executing key it can name
   (`NeutralizedConfig`); filter drivers have attacker-chosen names, so any
   `filter.*` key refuses the commit before `add` could run it. A new git
-  invocation or a new executing config key joins that list
+  invocation goes through `GitProcess`, and a new executing config key joins
+  that list
   (`Planted_hooks_fsmonitor_and_signing_programs_never_run`). The scanner's
   size cap is for ATTACHMENTS: text formats are scanned at any size, or every
   note between the cap and Sync's ceiling enters history unscanned.
@@ -934,6 +936,24 @@ format by default.
   whole-vault lint and frontmatter search with [Internal] until the method
   translated every foreign type by exclusion (`FrontmatterParseFailureTests`
   fuzzes it). Narrowing that catch to the types seen so far reopens it.
+- **The lint baseline is RE-LINTED, keyed without lines, and moved only by
+  an operator.** `vault_lint` reports `findings(working tree) −
+  findings(accepted commit)`, and three ways to break it all produce a
+  plausible, quiet answer. Key a finding by LINE and one inserted paragraph
+  re-reports everything below it — a flood indistinguishable from real drift;
+  identity is `(check, path, subject)`, COUNTED so a second identical broken
+  link in one note is still new. Advance the baseline from a RUN and every
+  finding is reported once and forgiven forever — a monitor that forgives
+  everything the first time nobody acts; only `knapper lint --accept` writes
+  it. Store the baseline as a findings LIST instead of re-linting the commit's
+  tree and every check added later reports its whole first run as new. The
+  committed tree must be read under the live walk's visibility rules
+  (dot-segments hidden, symlinks not files, the same unexamined cases) or the
+  diff compares two different vaults. The record lives OUTSIDE the vault
+  (boot refuses otherwise) because it decides what is SILENCED, and a record
+  that exists but cannot be used fails the call loudly — never "no baseline"
+  (the backlog, for the wrong reason) and never "nothing new". Pinned by
+  `LintBaselineTests` and `LintBaselineAcceptanceTests`.
 - **Frontmatter search reports what it could not examine.** Broken YAML and
   non-UTF-8 .md files land in `UnparseableFiles` — a skipped file could be
   hiding a match, and "no match" must mean the scope was exhaustively
