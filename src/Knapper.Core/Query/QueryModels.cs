@@ -429,12 +429,22 @@ public sealed record LintResult(
 
 /// <summary>
 /// What <c>knapper lint --accept</c> recorded: the commit, the one it replaced
-/// (null for a first accept, or when the old record was unusable), and the
-/// findings that are now the accepted backlog.
+/// (null for a first accept, or when the old record was unusable), the
+/// findings that are now the accepted backlog, and the visible files the
+/// commit does NOT hold (<see cref="NotInCommit"/>).
 /// </summary>
 public sealed record LintAcceptance(
     string Commit,
     string? PreviousCommit,
     int AcceptedFindings,
     IReadOnlyDictionary<string, int> ByCheck,
-    IReadOnlyList<string> UnexaminedFiles);
+    IReadOnlyList<string> UnexaminedFiles,
+    /// <summary>
+    /// Files the live lint sees that the accepted commit lacks — gitignored,
+    /// since the accept committed just before. No baseline can ever hold
+    /// them, so findings in them, or links they make ambiguous, report as new
+    /// after every accept. Named here rather than "fixed" by honoring
+    /// .gitignore on the live side: .gitignore is writable by things lint
+    /// reports on, and honoring it would let them hide notes from lint.
+    /// </summary>
+    IReadOnlyList<string> NotInCommit);

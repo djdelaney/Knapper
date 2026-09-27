@@ -27,7 +27,46 @@ public sealed class VaultPathResolver
         Root = Posix.RealPath(vaultRoot);
     }
 
+    /// <summary>
+    /// True when <see cref="Resolve"/>'s path-STRING rules accept
+    /// <paramref name="relativePath"/> — every rule that does not consult the
+    /// filesystem. For a path that is not on disk (a committed git tree): lint's
+    /// baseline must refuse exactly what the working tree refuses, or a note is
+    /// examined on one side of the diff only.
+    /// </summary>
+    internal static bool IsAddressable(string relativePath)
+    {
+        try
+        {
+            LexicalSegments(relativePath);
+            return true;
+        }
+        catch (KnapperException)
+        {
+            return false;
+        }
+    }
+
     public VaultPath Resolve(string relativePath)
+    {
+        var segments = LexicalSegments(relativePath);
+        var relative = string.Join('/', segments);
+        var absolute = Root + Path.DirectorySeparatorChar + relative;
+
+        // Belt and suspenders: the segment rules already make escape
+        // impossible, but the containment property is the one we never want
+        // to depend on a single check for.
+        var full = Path.GetFullPath(absolute);
+        if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new KnapperException(VaultErrorCode.PathOutsideVault, $"path escapes the vault: {relativePath}");
+
+        RejectSymlinkComponents(segments, relativePath);
+
+        return new VaultPath { Relative = relative, Absolute = full };
+    }
+
+    /// <summary>The path-string rules: the normalized segments, or the typed refusal.</summary>
+    private static List<string> LexicalSegments(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
             throw Invalid("path is empty");
@@ -74,20 +113,7 @@ public sealed class VaultPathResolver
 
         if (segments.Count == 0)
             throw Invalid($"path resolves to the vault root itself: {relativePath}");
-
-        var relative = string.Join('/', segments);
-        var absolute = Root + Path.DirectorySeparatorChar + relative;
-
-        // Belt and suspenders: the segment rules above already make escape
-        // impossible, but the containment property is the one we never want
-        // to depend on a single check for.
-        var full = Path.GetFullPath(absolute);
-        if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new KnapperException(VaultErrorCode.PathOutsideVault, $"path escapes the vault: {relativePath}");
-
-        RejectSymlinkComponents(segments, relativePath);
-
-        return new VaultPath { Relative = relative, Absolute = full };
+        return segments;
     }
 
     /// <summary>
@@ -99,7 +125,7 @@ public sealed class VaultPathResolver
     /// forged list under <c>truncated: false</c>. Bidi overrides make a path
     /// display as a different one to the human reading an agent's receipt.
     /// </summary>
-    internal static char? FirstUnsafeChar(string path)
+    private static char? FirstUnsafeChar(string path)
     {
         foreach (var c in path)
         {

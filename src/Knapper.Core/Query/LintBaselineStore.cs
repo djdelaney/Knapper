@@ -57,15 +57,24 @@ public sealed class LintBaselineStore
         byte[] bytes;
         try
         {
-            bytes = File.ReadAllBytes(_path);
+            // No-follow, regular files only. Containment is proved at boot,
+            // but a DANGLING symlink canonicalizes lexically and passes it —
+            // and one aimed at a vault path an agent later creates would hand
+            // the record that decides what is silenced to the agents lint
+            // reports on. A symlink here is refused, never followed.
+            using var handle = Posix.OpenRegularForRead(_path, _path);
+            using var stream = new FileStream(handle, FileAccess.Read);
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            bytes = buffer.ToArray();
         }
-        catch (FileNotFoundException)
+        catch (KnapperException e) when (e.Code == VaultErrorCode.NotFound)
         {
             return null;
         }
-        catch (DirectoryNotFoundException)
+        catch (KnapperException e)
         {
-            return null;
+            throw Unusable($"it could not be read: {e.Message}");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

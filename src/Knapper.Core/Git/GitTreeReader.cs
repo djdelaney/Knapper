@@ -27,19 +27,23 @@ public sealed class GitTreeReader(string vaultRoot)
 
     public bool RepoExists => Directory.Exists(Path.Combine(vaultRoot, ".git"));
 
-    /// <summary>The full commit name HEAD points at. Throws NotFound on a repo with no commit yet.</summary>
+    /// <summary>
+    /// The full commit name HEAD points at. Throws NotFound on a repo with no
+    /// commit yet — ONLY when rev-parse answers "no such revision"; a git that
+    /// timed out or could not start throws its own IoError, never "no commit".
+    /// </summary>
     public string ResolveHead()
     {
         RequireRepo();
-        try
-        {
-            return Run("rev-parse", "--verify", "HEAD^{commit}").Trim();
-        }
-        catch (KnapperException e) when (e.Code == VaultErrorCode.IoError)
+        var (exitCode, stdout, stderr) = GitProcess.Execute(GitExecutable, vaultRoot, TimeoutMs, Consequence,
+            "rev-parse", "--verify", "--quiet", "HEAD^{commit}");
+        if (exitCode != 0)
         {
             throw new KnapperException(VaultErrorCode.NotFound,
-                "the vault repository has no commit yet — run `knapper commit` first", e);
+                "the vault repository has no commit yet — run `knapper commit` first" +
+                (stderr.Trim() is { Length: > 0 } detail ? $" ({detail})" : ""));
         }
+        return stdout.Trim();
     }
 
     /// <summary>True when <paramref name="commit"/> names a commit present in the vault repository.</summary>

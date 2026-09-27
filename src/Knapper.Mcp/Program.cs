@@ -421,6 +421,23 @@ else
         resolvedMcpOpts.BindAddress);
 }
 
+// Warm the accepted lint baseline in the background, so a restart does not
+// charge a whole-tree lint of the baseline commit to an agent's first
+// vault_lint (it would otherwise run up to twice the query budget). Never
+// gates startup: a failure caches nothing, and the first call retries loudly.
+_ = Task.Run(() =>
+{
+    try
+    {
+        app.Services.GetRequiredService<VaultLintService>().WarmBaseline(app.Lifetime.ApplicationStopping);
+    }
+    catch (Exception e)
+    {
+        startupLogger.LogWarning("lint baseline could not be precomputed; the first vault_lint will retry: {Error}",
+            e.Message);
+    }
+});
+
 await app.RunAsync().ConfigureAwait(false);
 
 static void ConfigureServerInfo(ModelContextProtocol.Server.McpServerOptions opts, string? vaultName)

@@ -67,6 +67,14 @@ public sealed class VaultLintService(
     private volatile BaselineSnapshot? _baselineCache;
 
     /// <summary>
+    /// Single-flight for the baseline computation: concurrent cold callers
+    /// wait for ONE whole-tree lint instead of each spawning its own
+    /// `cat-file --batch` over the vault. A waiter still honors its own
+    /// cancellation token.
+    /// </summary>
+    private readonly SemaphoreSlim _baselineGate = new(1, 1);
+
+    /// <summary>
     /// Reads committed trees for the baseline. Internal so tests can point it
     /// at a stand-in git. Bounded by the QUERY budget, not the committer's:
     /// these calls answer a tool request, and a git that hangs here must cost
@@ -176,7 +184,29 @@ public sealed class VaultLintService(
         var head = Git.ResolveHead();
         var snapshot = BaselineFor(head, ct);
         _baselines.Write(new LintBaseline(head, acceptedAt));
-        return new LintAcceptance(head, previous?.Commit, snapshot.Total, snapshot.ByCheck, snapshot.Unexamined);
+
+        // The baseline sees git's file set; the live lint sees the lister's,
+        // which .gitignore does not filter. Whatever the commit lacks can
+        // never be accepted, so say which files those are.
+        var committed = Git.ListFiles(head).Select(e => e.Path).ToHashSet(StringComparer.Ordinal);
+        var notInCommit = lister.CollectFilesSorted(null, static _ => true, ct)
+            .Select(f => f.Relative)
+            .Where(relative => !committed.Contains(relative))
+            .ToList();
+        return new LintAcceptance(
+            head, previous?.Commit, snapshot.Total, snapshot.ByCheck, snapshot.Unexamined, notInCommit);
+    }
+
+    /// <summary>
+    /// Compute the accepted baseline's snapshot ahead of the first call that
+    /// needs it, so a restarted server does not charge the whole-tree lint to
+    /// an agent's request (up to twice the query budget). No record: nothing
+    /// to do. A failure caches nothing, so the next call simply retries.
+    /// </summary>
+    public void WarmBaseline(CancellationToken ct = default)
+    {
+        if (_baselines.Read() is { } baseline)
+            BaselineFor(baseline.Commit, ct);
     }
 
     /// <summary>
@@ -189,9 +219,7 @@ public sealed class VaultLintService(
     /// </summary>
     private static List<LintFinding> NewSince(List<LintFinding> findings, IReadOnlyDictionary<FindingKey, int> accepted)
     {
-        var now = new Dictionary<FindingKey, int>();
-        foreach (var f in findings)
-            now[FindingKey.Of(f)] = now.GetValueOrDefault(FindingKey.Of(f)) + 1;
+        var now = CountKeys(findings);
         return [.. findings.Where(f =>
         {
             var key = FindingKey.Of(f);
@@ -199,11 +227,41 @@ public sealed class VaultLintService(
         })];
     }
 
+    /// <summary>How often each finding identity occurs — the ONE count both sides of the diff use.</summary>
+    private static Dictionary<FindingKey, int> CountKeys(IEnumerable<LintFinding> findings)
+    {
+        var counts = new Dictionary<FindingKey, int>();
+        foreach (var f in findings)
+        {
+            var key = FindingKey.Of(f);
+            counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+        return counts;
+    }
+
     private BaselineSnapshot BaselineFor(string commit, CancellationToken ct)
     {
         if (_baselineCache is { } cached && cached.Commit == commit)
             return cached;
 
+        _baselineGate.Wait(ct);
+        try
+        {
+            // Whoever held the gate may have just computed this very commit.
+            if (_baselineCache is { } computed && computed.Commit == commit)
+                return computed;
+            var snapshot = ComputeBaseline(commit, ct);
+            _baselineCache = snapshot;
+            return snapshot;
+        }
+        finally
+        {
+            _baselineGate.Release();
+        }
+    }
+
+    private BaselineSnapshot ComputeBaseline(string commit, CancellationToken ct)
+    {
         if (!Git.RepoExists)
         {
             throw new KnapperException(VaultErrorCode.IoError,
@@ -232,18 +290,13 @@ public sealed class VaultLintService(
         var findings = FindingsOver(
             index, entries.Select(e => e.Path).Where(IsMarkdown), [.. LintChecks.All], ct);
 
-        var counts = new Dictionary<FindingKey, int>();
-        foreach (var f in findings)
-            counts[FindingKey.Of(f)] = counts.GetValueOrDefault(FindingKey.Of(f)) + 1;
-        var snapshot = new BaselineSnapshot(
+        return new BaselineSnapshot(
             commit,
-            counts,
+            CountKeys(findings),
             findings.Count,
             findings.GroupBy(f => f.Check, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal),
             index.Unexamined);
-        _baselineCache = snapshot;
-        return snapshot;
     }
 
     /// <summary>
@@ -403,8 +456,9 @@ public sealed class VaultLintService(
                 // The working tree's refusals, mirrored: a name the resolver
                 // would reject, or a note over the read cap, is unexamined
                 // there, so it must be unexamined here too — otherwise its
-                // findings exist on one side of the diff only.
-                if (VaultPathResolver.FirstUnsafeChar(relative) is not null || relative.Contains('\\'))
+                // findings exist on one side of the diff only. The resolver's
+                // OWN string rules, not a copy of some of them.
+                if (!VaultPathResolver.IsAddressable(relative))
                     return null;
                 if (entry.Size > options.MaxReadBytes)
                     return null;
