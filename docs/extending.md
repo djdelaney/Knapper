@@ -412,10 +412,19 @@ Directory.Build.props <Version>          the one carrier
   unbuilt is the rest of
   [proposals/vault-lint.md](proposals/vault-lint.md): a `paths` argument (the
   agent case is "lint the three notes I just wrote", which a directory prefix
-  cannot express), the §5 git BASELINE so findings mean "what changed under
-  you" rather than the standing backlog, `knapper lint` + the monitor timer
-  (which the baseline gates — a monitor that fires on a backlog forever is
-  dead while still running), and the opt-in heuristic and assertion tiers.
+  cannot express), `knapper lint` reporting + the monitor timer, and the
+  opt-in heuristic and assertion tiers. The §5 git BASELINE is BUILT
+  (2026-09-27; `Lint:BaselinePath`, `knapper lint --accept`,
+  `LintBaselineTests`) — which was the gate on the timer, since a monitor that
+  fires on a backlog forever is dead while still running. Built as specified,
+  with three choices the proposal left open: the baseline is a commit in a
+  state file OUTSIDE the vault, not a git ref (obsidian-headless can write
+  `.git/`, and the baseline decides what is silenced); the baseline side is
+  re-linted from the commit's tree on first use and cached per commit, never
+  stored as a findings list (so a check added later does not report its
+  whole first run as new); and identity is counted, not a set (a second
+  identical broken link in one note is new). Accept COMMITS first, so the
+  baseline is the vault as the operator sees it, not as of the last tick.
   Decided 2026-09-27 (Dan; detail in the proposal's §13): tier 1 on by
   default, suppression by baseline only (no in-vault ignore comments), and
   the assertions file is a note, not a `.yml`.

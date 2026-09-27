@@ -52,6 +52,21 @@ public class StartupContainmentTests
         }, "lock files must never sync");
 
     /// <summary>
+    /// The lint baseline decides which findings are SILENCED, so a baseline
+    /// file an agent could write through the tools is a way to switch the
+    /// check off. Inside the vault — including through a symlinked ancestor —
+    /// refuses boot.
+    /// </summary>
+    [Fact]
+    public void Lint_baseline_inside_the_vault_via_a_symlinked_ancestor_refuses_startup() =>
+        ShouldRefuseStartup(f =>
+        {
+            var link = Path.Combine(f.OutsideDir, "state");
+            File.CreateSymbolicLink(link, f.VaultDir);
+            return new() { ["Lint:BaselinePath"] = Path.Combine(link, "lint-baseline.json") };
+        }, "nothing lint reports on may be able to write it");
+
+    /// <summary>
     /// Pins that AccessOptions.Validate is actually WIRED into boot, which the
     /// unit tests over Validate itself cannot show.
     /// </summary>

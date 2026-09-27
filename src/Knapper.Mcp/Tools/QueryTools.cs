@@ -191,24 +191,26 @@ public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
         "WORK LIST: fixing them is not implied by finding them, and a cluster usually means ONE decision about " +
         "intent rather than a series of edits — an unresolved [[Some Brand Name]] is usually plain text that was " +
         "accidentally bracketed, and a stale #heading is often one renamed heading with many inbound links. Report " +
-        "what you find and ask; never bulk-fix. Findings have no baseline yet, so a whole-vault run reports " +
-        "the standing backlog, not what changed recently. " +
+        "what you find and ask; never bulk-fix. Findings are diffed against an operator-accepted git baseline: only " +
+        "findings ABSENT from it are returned (new since baselineCommit, not necessarily yours); " +
+        "suppressedByBaseline counts the backlog, all=true includes it, and a null baselineCommit means no baseline. " +
         "Checks: 'unresolved_link' (a [[link]] matching no vault file), 'ambiguous_link' (a bare basename matching " +
         "two or more notes where neither exact case nor proximity settles it — Obsidian silently picks one), " +
         "'broken_anchor' (a #heading or #^block that does not exist in the resolved target), 'table_pipe' (an " +
         "unescaped '|' inside a wikilink inside a table row, which opens a column the author did not intend), " +
-        "'table_needs_blank_line' (a table whose header row has no blank line above it — Obsidian absorbs it into " +
-        "the paragraph or bullet above, at any indent, and renders every row as literal text; the fix is one blank " +
-        "line at the table's own indent. A table under a HEADING, or inside a code block, is fine). " +
+        "'table_needs_blank_line' (no blank line above a table's header row, so the paragraph or bullet above " +
+        "absorbs it and it renders as literal text; the fix is one blank line at the table's indent. A table under " +
+        "a heading or in a code block is fine). " +
         "Scope: pathPrefix limits which files are REPORTED on; the link index is always whole-vault, because a " +
         "link inside the scope can point anywhere. Embeds (![[...]]) are not checked. " +
-        "Responses wear the completeness envelope; unexaminedFiles lists notes that could not be read — still " +
-        "valid link TARGETS with unknown headings, so anchor findings against them are suppressed rather than " +
-        "guessed, and 'no findings' is exhaustive only once that list is empty. line/column locate a finding but " +
-        "are not its identity." + VaultConventions.ArchivedScope)]
+        "Responses wear the completeness envelope; unexaminedFiles lists unreadable notes — valid link TARGETS " +
+        "with unknown headings, so anchor findings into them are withheld, and 'no findings' is exhaustive only " +
+        "once that list is empty. line/column locate a finding but are not its identity." +
+        VaultConventions.ArchivedScope)]
     public LintResult Lint(
         [Description("Directory whose files are reported on (vault-relative); omit for the whole vault")] string? pathPrefix = null,
         [Description("Checks to run, e.g. [\"broken_anchor\"]; omit to run them all")] string[]? checks = null,
+        [Description("true: also report findings the accepted baseline already holds (the standing backlog)")] bool all = false,
         [Description("Page size (server-capped)")] int? maxResults = null,
         [Description("Continuation cursor from a previous truncated response")] string? cursor = null,
         CancellationToken ct = default) =>
@@ -218,5 +220,6 @@ public sealed class VaultLintTool(VaultLintService lint, ToolSupport support)
             Checks = checks,
             MaxResults = maxResults,
             Cursor = cursor,
+            All = all,
         }, ct));
 }

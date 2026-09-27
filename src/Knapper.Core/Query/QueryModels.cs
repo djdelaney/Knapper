@@ -360,6 +360,11 @@ public sealed record LintQuery
     public IReadOnlyList<string>? Checks { get; init; }
     public int? MaxResults { get; init; }
     public string? Cursor { get; init; }
+    /// <summary>
+    /// Report findings the accepted baseline already holds too — the standing
+    /// backlog. False (the default) reports only what is absent from it.
+    /// </summary>
+    public bool All { get; init; }
 }
 
 /// <summary>
@@ -402,7 +407,34 @@ public sealed record LintResult(
     long GenerationEnd,
     bool ChangedDuringQuery,
     IReadOnlyList<string> UnexaminedFiles,
-    IReadOnlyList<string> ExcludedPrefixes)
+    IReadOnlyList<string> ExcludedPrefixes,
+    /// <summary>
+    /// The accepted baseline commit this run was diffed against, or null when
+    /// NOTHING was suppressed — no baseline accepted, or <c>all</c> asked for
+    /// the backlog. Never omitted: "no findings" means "nothing new since this
+    /// commit" when it is set, and "none at all" only when it is null.
+    /// </summary>
+    string? BaselineCommit,
+    /// <summary>When the operator accepted <see cref="BaselineCommit"/>; null with it.</summary>
+    DateTimeOffset? BaselineAcceptedAt,
+    /// <summary>
+    /// Findings in scope that the baseline already held and this run did not
+    /// report. The backlog is hidden by design, never by accident: this count
+    /// is what keeps it visible.
+    /// </summary>
+    int SuppressedByBaseline)
     : QueryEnvelope<LintFinding>(
         Items, Truncated, NextCursor, ScannedFiles, ReturnedItems, TotalMatches,
         GenerationStart, GenerationEnd, ChangedDuringQuery, ExcludedPrefixes);
+
+/// <summary>
+/// What <c>knapper lint --accept</c> recorded: the commit, the one it replaced
+/// (null for a first accept, or when the old record was unusable), and the
+/// findings that are now the accepted backlog.
+/// </summary>
+public sealed record LintAcceptance(
+    string Commit,
+    string? PreviousCommit,
+    int AcceptedFindings,
+    IReadOnlyDictionary<string, int> ByCheck,
+    IReadOnlyList<string> UnexaminedFiles);

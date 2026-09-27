@@ -32,6 +32,7 @@ builder.Services.Configure<VaultOptions>(builder.Configuration.GetSection(VaultO
 builder.Services.Configure<McpOptions>(builder.Configuration.GetSection(McpOptions.SectionName));
 builder.Services.Configure<SyncOptions>(builder.Configuration.GetSection(SyncOptions.SectionName));
 builder.Services.Configure<ConventionsOptions>(builder.Configuration.GetSection(ConventionsOptions.SectionName));
+builder.Services.Configure<LintOptions>(builder.Configuration.GetSection(LintOptions.SectionName));
 
 // The deployment's note-writing conventions. Validated in the factory (forced
 // at boot below) so a malformed value refuses startup rather than being
@@ -116,6 +117,15 @@ builder.Services.AddSingleton<VaultFileLister>();
 builder.Services.AddSingleton<VaultSearchService>();
 builder.Services.AddSingleton<VaultReadService>();
 builder.Services.AddSingleton<FrontmatterSearchService>();
+// Outside the vault, refused at boot: the baseline decides which findings
+// are SILENCED, so nothing lint reports on may be able to write it.
+builder.Services.AddSingleton(sp =>
+{
+    var lint = sp.GetRequiredService<IOptions<LintOptions>>().Value;
+    if (LintBaselineStore.ValidatePath(lint.BaselinePath, sp.GetRequiredService<VaultPathResolver>().Root) is { } error)
+        throw new InvalidOperationException(error);
+    return new LintBaselineStore(lint.BaselinePath);
+});
 builder.Services.AddSingleton<VaultLintService>();
 builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<VaultPathResolver>(),
@@ -226,6 +236,7 @@ _ = app.Services.GetRequiredService<VaultLockManager>();
 _ = app.Services.GetRequiredService<KnapperMetrics>();
 _ = app.Services.GetRequiredService<AuditLog>();
 _ = app.Services.GetRequiredService<VaultMutationService>();
+_ = app.Services.GetRequiredService<LintBaselineStore>();
 _ = app.Services.GetRequiredService<IOptions<ModelContextProtocol.Server.McpServerOptions>>().Value;
 
 // The DI-resolved options — authoritative, reflecting env vars and every
