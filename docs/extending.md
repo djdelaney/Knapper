@@ -416,9 +416,14 @@ Directory.Build.props <Version>          the one carrier
   you" rather than the standing backlog, `knapper lint` + the monitor timer
   (which the baseline gates — a monitor that fires on a backlog forever is
   dead while still running), and the opt-in heuristic and assertion tiers.
-  The link graph the next entry wants now exists, internal to lint.
-- **Obsidian-flavored queries** (backlinks, tags-as-index) — worth doing
-  only if agents demonstrably need more than frontmatter + full-text.
+  Decided 2026-09-27 (Dan; detail in the proposal's §13): tier 1 on by
+  default, suppression by baseline only (no in-vault ignore comments), and
+  the assertions file is a note, not a `.yml`.
+- **Obsidian-flavored queries** (backlinks, tags-as-index) — backlinks
+  DECIDED 2026-09-27 (Dan): the link graph lint already builds becomes its
+  own query tool, one graph shared by both, never a second index. Tags-as-index
+  stays gated on agents demonstrably needing more than frontmatter +
+  full-text.
 - **Archived subtrees** — BUILT 2026-09-05 (`Vault:ArchivedPrefixes`). Grew
   out of the entry below: instructing agents to leave `Archive/` alone only
   works if they read the instruction, and the whole point of that entry is
