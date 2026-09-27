@@ -145,6 +145,14 @@ int Lint(string[] args)
         foreach (var f in accepted.UnexaminedFiles.Take(20))
             Console.WriteLine($"      {f}");
     }
+    if (accepted.NotInCommit.Count > 0)
+    {
+        Console.WriteLine($"warn  {accepted.NotInCommit.Count} visible file(s) are not in {accepted.Commit} (gitignored, " +
+                          "or created since the commit). No baseline can hold them: findings IN them, and links they " +
+                          "make ambiguous, will report as new after every accept. Un-ignore them to accept them:");
+        foreach (var f in accepted.NotInCommit.Take(20))
+            Console.WriteLine($"      {f}");
+    }
     Console.WriteLine("vault_lint now reports only findings absent from this baseline (all=true shows the backlog). " +
                       "Nothing advances it but this command.");
     return 0;

@@ -140,7 +140,11 @@ tree with the same engine (so a check added later judges both sides alike).
 A finding's identity is `(check, path, subject)`, never its line, so moving
 text does not re-report it; a moved or RENAMED note does re-report its
 findings (the path is part of the identity). Counted, not a set: a second
-identical broken link in a note that already had one is new.
+identical broken link in a note that already had one is new. The baseline
+holds only what git COMMITTED, while the live lint ignores `.gitignore`
+(honoring it would let anything that can write `.gitignore` hide notes from
+lint) — so a gitignored file's findings, and links it makes ambiguous, report
+as new after every accept. `knapper lint --accept` lists such files.
 
 - **`knapper lint --accept`** is the only thing that moves it: it runs
   `knapper commit`, lints HEAD, records it, and prints what it accepted. No

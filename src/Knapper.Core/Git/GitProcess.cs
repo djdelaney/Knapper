@@ -45,6 +45,14 @@ internal static class GitProcess
         // refused before `add` could run one (GitCommitJob.RequireNoFilterDrivers).
         psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         psi.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        // Replace refs (`.git/refs/replace/<sha>`) silently substitute one
+        // object for another on READ, and `.git/` is writable by that same
+        // account. Lint's baseline pins a commit OUTSIDE the vault precisely so
+        // nothing lint reports on can move it; honoring a planted replacement
+        // would let the tree it names be swapped anyway, absorbing every live
+        // finding into the "accepted" backlog. (Rewriting loose objects in
+        // place is the residual: cat-file does not re-hash what it reads.)
+        psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
         foreach (var setting in NeutralizedConfig)
         {
             psi.ArgumentList.Add("-c");

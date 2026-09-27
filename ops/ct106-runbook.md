@@ -877,7 +877,9 @@ systemctl enable --now knapper-commit.timer
 **Lint baseline** (optional, and a decision, not a formality). An
 accept declares every finding in the vault TODAY to be the accepted backlog,
 after which `vault_lint` reports only what is new. Look at what you are
-accepting first — `vault_lint` with `all: true` from any client — then:
+accepting first — `vault_lint` with `all: true` from any client, plus one
+call per `Vault__ArchivedPrefixes` entry with that prefix as `pathPrefix`
+(an accept covers archived notes too, and a default call skips them) — then:
 
 ```sh
 # Commits first, so the baseline is the vault as it stands, then prints the
@@ -890,7 +892,11 @@ runuser -u knapper -- env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Verify: `knapper status` prints `lint: baseline <ref> accepted …`, `knapper
 doctor` prints `ok lint baseline commit <ref> is in the vault repository`,
 and a default `vault_lint` answers with that `baselineCommit` and a
-`suppressedByBaseline` equal to the accepted count. Re-run the accept whenever
+`suppressedByBaseline` equal to the accepted count MINUS the findings in
+archived notes: the accept counts every note, a default call reports (and so
+suppresses) none under an archived prefix. The archived calls above, now
+answering with the same `baselineCommit`, account for the difference.
+Re-run the accept whenever
 the backlog has been reviewed again; nothing else ever moves it.
 
 

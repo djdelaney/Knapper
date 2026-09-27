@@ -207,6 +207,33 @@ public sealed class LintBaselineTests : IDisposable
     }
 
     [Fact]
+    public void Accept_names_the_visible_files_no_baseline_can_hold()
+    {
+        // The live lint does not honor .gitignore (anything that can write it
+        // could hide notes from lint), so an ignored note's findings can never
+        // be accepted. The accept must say so rather than leave it a mystery.
+        File.AppendAllText(_v.Absolute(".gitignore"), "Private/\n");
+        _v.Write("Private/Ignored.md", "[[Nowhere]]\n");
+
+        var accepted = CommitAndAccept();
+        accepted.NotInCommit.ShouldBe(["Private/Ignored.md"]);
+        Subjects(Service().Lint(new LintQuery()))
+            .ShouldBe([$"{LintChecks.UnresolvedLink}:Private/Ignored.md:Nowhere"]);
+    }
+
+    [Fact]
+    public void A_symlinked_baseline_record_is_refused_never_followed()
+    {
+        var real = CommitAndAccept();
+        var link = Path.Combine(_v.Outside.Path, "state", "linked-baseline.json");
+        File.CreateSymbolicLink(link, _baselinePath);
+
+        Should.Throw<KnapperException>(() => new LintBaselineStore(link).Read())
+            .Message.ShouldContain("unusable");
+        new LintBaselineStore(_baselinePath).Read()!.Commit.ShouldBe(real.Commit);
+    }
+
+    [Fact]
     public void An_unusable_baseline_fails_loud_and_all_still_answers()
     {
         // Neither silent option is acceptable: "absent" floods the caller with
