@@ -33,7 +33,8 @@ public sealed class LintFixtureVault : IDisposable
             "Fine: [[Mailvec Stack]] and [[Mailvec Stack#Step 8 — Backups (VM)]].",
             "Stale anchor: [[Mailvec Stack#Backups]].",
             "Renamed heading: [[Windows Utility VM#Measured throughput — 2026-08-11]].",
-            "Incomplete path: [[Home Assistant/InfluxDB Migration Plan]].",
+            "Path suffix: [[Home Assistant/InfluxDB Migration Plan]]; wrong parent: " +
+                "[[Wrong Parent/InfluxDB Migration Plan]]; mid-name: [[Assistant/InfluxDB Migration Plan]].",
             "Ambiguous: [[Cabinets]].",
             "Bracketed plain text: [[La-Z-Boy]].",
             "Attachment: [[pg-dump-backup.sh]].",
@@ -95,6 +96,10 @@ public sealed class LintFixtureVault : IDisposable
         Dir.File("Tech/Home Assistant/InfluxDB Migration Plan.md", "# Plan\nbody\n");
         Dir.File("Kitchen/Cabinets.md", "# Kitchen cabinets\n");
         Dir.File("Laundry/Cabinets.md", "# Laundry cabinets\n");
+        // A THIRD Cabinets, nested, linked by naming its own folder from
+        // inside it — the Helios spelling Obsidian follows.
+        Dir.File("Home/Laundry and Mudroom/Cabinets.md", "# Mudroom cabinets\n");
+        Dir.File("Home/Laundry and Mudroom/Moving Mat.md", "For the [[Laundry and Mudroom/Cabinets]] install.\n");
         Dir.File("scripts/pg-dump-backup.sh", "#!/bin/sh\necho backup\n");
         Dir.File("Aliased/Weather Station.md", "---\naliases: [Tempest, Sky]\n---\n# Weather Station\n");
         // Out of scope for a "Notes" run, and carrying its own broken link.

@@ -16,9 +16,12 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     {
         Findings(LintChecks.UnresolvedLink, "Notes").Select(f => f.Subject).ShouldBe(
         [
-            // An incomplete path is NOT resolved by suffix: the file is under
-            // Tech/, and the pass that measured this vault called it broken.
-            "Home Assistant/InfluxDB Migration Plan",
+            // [[Home Assistant/InfluxDB Migration Plan]] resolves: its segments
+            // are a suffix of Tech/Home Assistant/…. A suffix is matched on
+            // whole segments only, so a link naming the WRONG parent, or
+            // starting mid-way through a folder name, is still broken.
+            "Wrong Parent/InfluxDB Migration Plan",
+            "Assistant/InfluxDB Migration Plan",
             "La-Z-Boy",
         ]);
     }
@@ -199,6 +202,17 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
         // Tech/Homelab/Relative Path.md -> [[Proxmox/Monthly Maintenance]].
         // Root-only matching calls this broken; Obsidian follows it.
         Findings(LintChecks.UnresolvedLink, "Tech/Homelab").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_path_naming_the_targets_own_folder_from_inside_it_resolves()
+    {
+        // The Helios case, confirmed in Obsidian 2026-09-27: a note inside
+        // Laundry and Mudroom/ links [[Laundry and Mudroom/Cabinets]] to tell
+        // it apart from Kitchen/Cabinets. Neither root nor relative matches;
+        // the segment suffix does, and it names the right note.
+        Findings(LintChecks.UnresolvedLink, "Home/Laundry and Mudroom").ShouldBeEmpty();
+        Findings(LintChecks.AmbiguousLink, "Home/Laundry and Mudroom").ShouldBeEmpty();
     }
 
     [Fact]
