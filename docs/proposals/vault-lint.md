@@ -437,8 +437,14 @@ first run produced 11 findings and 10 were junk:
   means "Obsidian's choice here is a coin flip".
 - **A path can be relative to the LINKING note's folder**, not just the vault
   root: `[[Proxmox/Homelab Monthly Maintenance]]` from `Tech/Homelab/`.
-  Root-only matching calls it broken. It still must not match an arbitrary
-  path SUFFIX, which would bless a path naming the wrong parent.
+  Root-only matching calls it broken.
+- **A path can also be a trailing run of whole SEGMENTS.** Confirmed in
+  Obsidian 2026-09-27: `[[Laundry and Mudroom/Cabinets]]`, from a note inside
+  that very folder, is neither root- nor note-relative, and Obsidian follows
+  it. This overturns an earlier line here that ruled suffixes out, which rested
+  on an agent's read of the files rather than on Obsidian. The match stays
+  bounded at `/`, so the parent a link names must be the real one:
+  `Wrong/Cabinets` and `udroom/Cabinets` remain unresolved.
 
 ## 9. Configuration
 

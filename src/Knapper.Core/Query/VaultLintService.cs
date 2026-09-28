@@ -620,20 +620,24 @@ public sealed class VaultLintService(
             var folder = FolderOf(from);
 
             // A target containing '/' is a path: from the vault ROOT first,
-            // then RELATIVE to the linking note's folder. The relative form
-            // is not a nicety — Helios links to
-            // 'Proxmox/Homelab Monthly Maintenance' from Tech/Homelab/, and
-            // root-only matching calls that broken while Obsidian follows it.
-            // It is still not matched as an arbitrary path SUFFIX: that would
-            // resolve a path naming the wrong parent, which is the defect the
-            // 2026-08-30 pass reported for the InfluxDB notes.
+            // then RELATIVE to the linking note's folder, then as a trailing
+            // run of whole path SEGMENTS. The relative form is not a nicety —
+            // Helios links to 'Proxmox/Homelab Monthly Maintenance' from
+            // Tech/Homelab/. Nor is the suffix: 'Laundry and Mudroom/Cabinets'
+            // from inside Home/Mayapple/Projects/Laundry and Mudroom/ is
+            // neither, and Obsidian follows it (confirmed in Obsidian,
+            // 2026-09-27). The suffix is segment-bounded, so the parent a link
+            // NAMES must be the file's real parent: 'Wrong/Cabinets' and
+            // 'udroom/Cabinets' stay unresolved.
             if (key.Contains('/', StringComparison.Ordinal))
             {
                 if (_byPath.TryGetValue(key, out var byPath))
                     return Narrow(byPath, key, folder);
                 var relative = folder.Length == 0 ? key : folder + '/' + key;
-                return _byPath.TryGetValue(relative, out var byRelative)
-                    ? Narrow(byRelative, relative, folder)
+                if (_byPath.TryGetValue(relative, out var byRelative))
+                    return Narrow(byRelative, relative, folder);
+                return _byName.TryGetValue(NameOf(key), out var sameName)
+                    ? Narrow([.. sameName.Where(c => EndsWithSegments(c, key))], key, folder)
                     : [];
             }
 
@@ -668,6 +672,15 @@ public sealed class VaultLintService(
             var nearest = pool.Where(c => FolderOf(c) == folder).ToList();
             return nearest.Count == 1 ? nearest : pool;
         }
+
+        /// <summary>
+        /// <paramref name="relative"/> (with or without its .md) ends in the
+        /// whole segments of <paramref name="key"/> — case-insensitive, like
+        /// every other lookup here.
+        /// </summary>
+        private static bool EndsWithSegments(string relative, string key) =>
+            relative.EndsWith('/' + key, StringComparison.OrdinalIgnoreCase)
+            || StripMarkdown(relative).EndsWith('/' + key, StringComparison.OrdinalIgnoreCase);
 
         private static string FolderOf(string relative)
         {
