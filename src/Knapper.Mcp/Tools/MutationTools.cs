@@ -18,9 +18,10 @@ public sealed class VaultEditTool(VaultMutationService mutations, ToolSupport su
         "Anchored conditional edit. Requires expectSha256 from a FRESH vault_read; under the vault's cross-process " +
         "lock the file is re-read, the hash compared, each edit's 'old' matched exactly 'count' times, guards " +
         "checked before and after, and the write verified by reopening and byte-comparing. On " +
-        "[PreconditionFailed] the file changed since your read: re-read and rebuild the edit against current " +
-        "content — NEVER retry with the old base. Edits apply sequentially (later anchors see earlier " +
-        "results)." + VaultConventions.ArchivedWrites)]
+        "[PreconditionFailed] the file changed since your read (or the hash was mis-copied): re-read and " +
+        "rebuild the edit against current content — NEVER retry with the old base. Put every change to one " +
+        "file in ONE call's edits array, not one call each: edits apply sequentially, so a later anchor may " +
+        "match text an earlier edit wrote." + VaultConventions.ArchivedWrites)]
     public MutationResult Edit(
         [Description("Vault-relative path")] string path,
         [Description("SHA-256 from your fresh read")] string expectSha256,
