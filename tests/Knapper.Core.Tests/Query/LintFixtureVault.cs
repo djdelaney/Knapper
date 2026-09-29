@@ -9,9 +9,11 @@ namespace Knapper.Core.Tests.Query;
 /// A fixture built from the findings the 2026-08-30 pass over Helios actually
 /// produced, not from invented ones: a heading that gained a parenthetical
 /// and broke five inbound links, a link to '#Backups' where the heading is
-/// 'Step 8 — Backups (VM)', an incomplete path under the wrong root, two
-/// notes sharing the basename 'Cabinets', a script attachment used as a link
-/// target, and plain-text names accidentally bracketed.
+/// 'Step 8 — Backups (VM)', a partial path that pass called broken and that
+/// Obsidian in fact follows by its trailing segments (beside wrong-parent and
+/// mid-name spellings that stay broken), notes sharing the basename
+/// 'Cabinets', a script attachment used as a link target, and plain-text names
+/// accidentally bracketed.
 /// </summary>
 public sealed class LintFixtureVault : IDisposable
 {

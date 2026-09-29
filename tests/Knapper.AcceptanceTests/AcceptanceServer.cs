@@ -90,10 +90,26 @@ public sealed class AcceptanceServer : IDisposable
             if (m.Success)
                 return int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
             if (_process.HasExited)
-                throw new InvalidOperationException($"server exited during startup:\n{Output}");
+                throw ExitedDuringStartup();
             Thread.Sleep(50);
         }
         throw new TimeoutException($"server never reported its listening port:\n{Output}");
+    }
+
+    /// <summary>
+    /// The server's refusal, with its reason. HasExited turns true before the
+    /// async stdout/stderr readers have necessarily delivered the last lines —
+    /// and a refused startup's LAST line is the reason. Reading Output at that
+    /// instant lost it about three runs in four under parallel load, so tests
+    /// asserting on the refusal text failed on "server exited during startup:"
+    /// with nothing after it. The parameterless WaitForExit is the one that
+    /// waits for both redirected streams to reach EOF; the process is already
+    /// gone, so it returns as soon as they drain.
+    /// </summary>
+    private InvalidOperationException ExitedDuringStartup()
+    {
+        _process.WaitForExit();
+        return new InvalidOperationException($"server exited during startup:\n{Output}");
     }
 
     public string Output
@@ -137,7 +153,7 @@ public sealed class AcceptanceServer : IDisposable
         while (Stopwatch.GetElapsedTime(deadline) < TimeSpan.FromSeconds(30))
         {
             if (_process.HasExited)
-                throw new InvalidOperationException($"server exited during startup:\n{Output}");
+                throw ExitedDuringStartup();
             try
             {
                 using var response = http.GetAsync($"http://127.0.0.1:{Port}/up").GetAwaiter().GetResult();
