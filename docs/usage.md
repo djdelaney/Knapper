@@ -227,14 +227,14 @@ either way; fix a warning with a follow-up edit.
 ## Error codes
 
 Tool errors are structured MCP errors whose message leads with the code:
-`[PreconditionFailed] precondition failed: Notes/x.md changed since your read…`
+`[PreconditionFailed] precondition failed: Notes/x.md does not match the hash you sent…`
 
 | Code | Meaning / agent action |
 |---|---|
 | `InvalidPath`, `PathOutsideVault`, `SymlinkRejected`, `BannedPath` | Bad path argument. Fix the path; ALL dot-entries (`.git`, `.obsidian`, `.trash`, `.env`, any hidden segment at any depth) are unaddressable — hidden means invisible on both surfaces. From `vault_delete` or `vault_move` these two can also mean the DESTINATION's directory chain is symlinked or resolves outside the vault (a human's doing — no tool can create one): nothing was moved or removed, and it needs a person, not a retry. |
-| `NotFound` | Missing file, or missing parent for create/move. |
+| `NotFound` | Missing file, or missing parent for create/move. From a query, a path prefix that is missing or names a FILE — prefixes scope to directories; the message says how to target one file. |
 | `AlreadyExists` | No-clobber create/move found the target present. |
-| `PreconditionFailed` | Stale `expect_sha256`. Re-read, rebuild, retry with the new hash. |
+| `PreconditionFailed` | Stale or mis-copied `expect_sha256`. Re-read, rebuild, retry with the new hash. The message echoes the hash you SENT, never the current one — the new hash comes from the re-read. |
 | `AnchorMismatch` | An edit's `old` matched ≠ `count` times. File untouched. Re-read and re-anchor. |
 | `GuardViolation` | Guard absent before, or wouldn't survive after. File untouched. |
 | `NotUtf8` | Binary/non-UTF-8 file; text operations refuse it (`vault_stat` still works). |

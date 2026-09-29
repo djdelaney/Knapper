@@ -1239,10 +1239,17 @@ public sealed class VaultMutationService(
         }
         if (!VaultHash.Matches(expected, data))
         {
+            // The CURRENT hash is deliberately not echoed. A message carrying
+            // it hands the agent the one value that lets it resend the same
+            // edit without looking at what changed — observed 2026-09 on
+            // claude.ai: a batch failed on a mis-copied hash and the very next
+            // call was the identical batch with the hash lifted from this
+            // message. Echoing the EXPECTED hash stays: it is the caller's own
+            // input, and seeing it is how an agent spots a mis-copy.
             throw new KnapperException(VaultErrorCode.PreconditionFailed,
-                $"precondition failed: {vp.Relative} changed since your read — re-read and rebuild " +
-                $"against current content; NEVER retry with the old base " +
-                $"(expected {expected.Trim().ToLowerInvariant()}, current {VaultHash.Sha256Hex(data)})");
+                $"precondition failed: {vp.Relative} does not match the hash you sent " +
+                $"({expected.Trim().ToLowerInvariant()}) — it changed since your read, or the hash was " +
+                "mis-copied. Re-read it and rebuild against current content; NEVER retry with the old base");
         }
     }
 

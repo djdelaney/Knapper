@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Knapper.Core.Vault;
 
 namespace Knapper.Core.Query;
 
@@ -59,6 +60,47 @@ internal static class Globbing
                 "exclude_globs (pass the pattern WITHOUT the '!'), and vault_files has no exclusion " +
                 "filter, so narrow it positively with glob, extensions or path_prefix");
         }
+    }
+
+    /// <summary>
+    /// The refusal for a path prefix that is not a directory, shared by every
+    /// query surface. Agents scope to one note by passing ITS path as a
+    /// prefix; a bare "does not exist or is not a directory" sent them
+    /// guessing — 33 such refusals in 2026-09's transcripts, nearly all
+    /// followed by a retry with <c>**/name.md</c>, which matches every note
+    /// of that name in any folder. So when the prefix is a file, the message
+    /// names the one glob that matches exactly it, and only when one exists
+    /// on BOTH surfaces: the path must contain '/' (a glob without one
+    /// matches the basename at every depth) and no glob metacharacter (the
+    /// native translator has no escape syntax, so a literal '[' cannot be
+    /// spelled identically for rg and for the lister). Otherwise it points
+    /// at the parent directory rather than suggest a glob that over-matches.
+    /// </summary>
+    /// <param name="globArgument">How the surface's glob parameter is
+    /// written with <c>{0}</c> for the path, or null when it has none.</param>
+    internal static KnapperException PrefixNotADirectory(VaultPath prefix, string? globArgument)
+    {
+        var relative = prefix.Relative;
+        if (!File.Exists(prefix.Absolute))
+        {
+            return new KnapperException(VaultErrorCode.NotFound,
+                $"path prefix does not exist: {relative}");
+        }
+        var head = $"path prefix is a file, not a directory: {relative} — prefixes scope to directories; ";
+        var rootLevel = !relative.Contains('/');
+        var hasMeta = relative.AsSpan().IndexOfAny("*?[]{}\\") >= 0;
+        if (globArgument is not null && !rootLevel && !hasMeta)
+        {
+            return new KnapperException(VaultErrorCode.NotFound,
+                head + "to target this one file, pass " + string.Format(globArgument, relative) +
+                " instead (a glob containing '/' matches the whole vault-relative path)");
+        }
+        var why = globArgument is null ? ""
+            : rootLevel ? "a glob without '/' matches its name at every depth, so "
+            : "its name holds glob metacharacters, so no glob names it exactly; ";
+        var parent = rootLevel ? "the whole vault (omit the prefix)" : $"\"{relative[..relative.LastIndexOf('/')]}\"";
+        return new KnapperException(VaultErrorCode.NotFound,
+            head + why + $"scope to {parent} instead, or read the file with vault_read");
     }
 
     internal static Regex Translate(string glob)

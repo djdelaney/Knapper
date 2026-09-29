@@ -402,10 +402,7 @@ public sealed class VaultSearchService(
         }
         var resolved = prefixes.Select(p => resolver.Resolve(p)).ToList();
         foreach (var vp in resolved.Where(vp => !Directory.Exists(vp.Absolute)))
-        {
-            throw new KnapperException(VaultErrorCode.NotFound,
-                $"path prefix does not exist or is not a directory: {vp.Relative}");
-        }
+            throw Globbing.PrefixNotADirectory(vp, "includeGlobs: [\"{0}\"]");
         // UTF-8 byte order, NOT StringComparer.Ordinal (UTF-16 code units) —
         // QueryCursor.ComparePathUtf8 is THE path order of the query surface
         // and this list IS a path order: rg does not sort globally across

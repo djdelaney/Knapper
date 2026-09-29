@@ -67,6 +67,20 @@ public sealed class VaultMutationServiceTests : IDisposable
     }
 
     [Fact]
+    public void A_stale_sha_rejection_never_hands_back_the_current_hash()
+    {
+        // The current hash in the message is exactly what a blind retry
+        // needs; the caller's own hash is what diagnoses a mis-copy.
+        var current = _v.Write("n.md", "current\n");
+        var sent = current[..8] + new string('0', 56);
+        var ex = Should.Throw<KnapperException>(() =>
+            _v.Service.Edit("n.md", sent, [new EditSpec("current", "x")]));
+        ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+        ex.Message.ShouldNotContain(current);
+        ex.Message.ShouldContain(sent);
+    }
+
+    [Fact]
     public void Guards_must_exist_before_and_survive_after()
     {
         var sha = _v.Write("n.md", "keep me\nchange me\n");

@@ -61,7 +61,13 @@ cp -R ops/logrotate "$STAGE/ops/logrotate"
 
 mkdir -p artifacts
 TARBALL="artifacts/knapper-$VERSION-linux-x64.tar.gz"
-tar -czf "$TARBALL" -C "$STAGE" .
+# --no-xattrs: macOS bsdtar otherwise records every file's extended attributes
+# (com.apple.provenance and friends) as LIBARCHIVE.xattr.* pax headers, which
+# mean nothing on the CT and make GNU tar print a warning per file on extract.
+# GNU tar (CI) accepts the same flag. It does NOT explain AppleDouble "._*"
+# files: bsdtar here writes xattrs as headers, and no artifact from 0.2.1 on
+# has carried a "._*" entry (checked 2026-09-29).
+tar --no-xattrs -czf "$TARBALL" -C "$STAGE" .
 rm -rf "$STAGE"
 
 # Content gate: every path the runbook installs must exist in the archive.

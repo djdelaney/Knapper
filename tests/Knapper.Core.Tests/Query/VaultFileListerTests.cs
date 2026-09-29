@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Knapper.Core.Query;
+using Knapper.Core.Vault;
 
 namespace Knapper.Core.Tests.Query;
 
@@ -50,6 +51,9 @@ public sealed class VaultFileListerTests : IClassFixture<FixtureVault>
         "many/needles-[0-1-3].md", "many/needles-[0-9-[].md", "many/needles-[1-].md",
         "{Notes,fm}/*.md", "*.{md,sh}",
         "with spaces/*.md", "Projects/pröject.md",
+        // The exact-path globs a file-as-prefix refusal hands out
+        // (Globbing.PrefixNotADirectory): one file, on both surfaces.
+        "Notes/Sub/Deep.md", "with spaces/nöte – ünïcode.md",
         "nope/*.md",
     ];
 
@@ -173,6 +177,52 @@ public sealed class VaultFileListerTests : IClassFixture<FixtureVault>
             .ShouldBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"); // sha256 of empty
         _vault.Lister.List(new VaultFilesQuery { Glob = "empty.md" })
             .Items.ShouldHaveSingleItem().Sha256.ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_file_given_as_prefix_names_the_glob_that_lists_exactly_it()
+    {
+        var ex = Should.Throw<KnapperException>(() =>
+            _vault.Lister.List(new VaultFilesQuery { PathPrefix = "Notes/Sub/Deep.md" }));
+        ex.Code.ShouldBe(VaultErrorCode.NotFound);
+        ex.Message.ShouldContain("is a file, not a directory");
+        var glob = System.Text.RegularExpressions.Regex.Match(ex.Message, "glob: \"([^\"]+)\"").Groups[1].Value;
+        glob.ShouldBe("Notes/Sub/Deep.md");
+        _vault.Lister.List(new VaultFilesQuery { Glob = glob })
+            .Items.ShouldHaveSingleItem().Path.ShouldBe("Notes/Sub/Deep.md");
+    }
+
+    [Fact]
+    public void A_root_level_file_as_prefix_is_never_offered_a_glob_that_matches_at_every_depth()
+    {
+        var ex = Should.Throw<KnapperException>(() =>
+            _vault.Lister.List(new VaultFilesQuery { PathPrefix = "empty.md" }));
+        ex.Message.ShouldNotContain("glob: \"");
+        ex.Message.ShouldContain("omit the prefix");
+    }
+
+    [Fact]
+    public void A_surface_with_no_glob_points_a_file_prefix_at_its_parent()
+    {
+        // Frontmatter search shares the lister's prefix check and has no glob.
+        var ex = Should.Throw<KnapperException>(() =>
+            _vault.Frontmatter.Search(new FrontmatterQuery { Field = "status", PathPrefix = "fm/a.md" }));
+        ex.Code.ShouldBe(VaultErrorCode.NotFound);
+        ex.Message.ShouldContain("scope to \"fm\"");
+        ex.Message.ShouldNotContain("glob");
+    }
+
+    [Fact]
+    public void A_file_prefix_whose_name_holds_glob_metacharacters_is_not_offered_a_glob()
+    {
+        // The native translator has no escape syntax, so no one spelling
+        // matches "[x]" literally on both surfaces.
+        using var dir = new TempDir();
+        dir.File("a/[x].md", "x\n");
+        var vp = new VaultPathResolver(dir.Path).Resolve("a/[x].md");
+        var message = Globbing.PrefixNotADirectory(vp, "glob: \"{0}\"").Message;
+        message.ShouldNotContain("pass glob");
+        message.ShouldContain("scope to \"a\"");
     }
 
     [Fact]

@@ -26,7 +26,7 @@ public sealed class VaultFileLister(
     public QueryEnvelope<VaultFileEntry> List(VaultFilesQuery query, CancellationToken ct = default)
     {
         var generationStart = generation.Current;
-        var (rootAbsolute, prefixRelative) = ResolvePrefix(query.PathPrefix);
+        var (rootAbsolute, prefixRelative) = ResolvePrefix(query.PathPrefix, "glob: \"{0}\"");
         // Computed from the caller's scope, not from the configuration alone:
         // a listing scoped INTO an archived prefix excludes nothing, and must
         // not claim it did.
@@ -124,7 +124,7 @@ public sealed class VaultFileLister(
     internal List<(string Relative, string Absolute)> CollectFilesSorted(
         string? pathPrefix, Func<string, bool> filter, CancellationToken ct)
     {
-        var (rootAbsolute, prefixRelative) = ResolvePrefix(pathPrefix);
+        var (rootAbsolute, prefixRelative) = ResolvePrefix(pathPrefix, globArgument: null);
         var deadline = Environment.TickCount64 + options.QueryTimeoutMs;
         var files = Walk(new DirectoryInfo(rootAbsolute), prefixRelative, ct, deadline)
             .Where(e => e.Info is FileInfo && filter(e.Relative))
@@ -134,16 +134,15 @@ public sealed class VaultFileLister(
         return files;
     }
 
-    private (string Absolute, string Relative) ResolvePrefix(string? pathPrefix)
+    /// <param name="globArgument">vault_files has a glob that can name one
+    /// file; frontmatter search and lint (the other callers) have none.</param>
+    private (string Absolute, string Relative) ResolvePrefix(string? pathPrefix, string? globArgument)
     {
         if (string.IsNullOrEmpty(pathPrefix))
             return (resolver.Root, "");
         var vp = resolver.Resolve(pathPrefix);
         if (!Directory.Exists(vp.Absolute))
-        {
-            throw new KnapperException(VaultErrorCode.NotFound,
-                $"path prefix does not exist or is not a directory: {vp.Relative}");
-        }
+            throw Globbing.PrefixNotADirectory(vp, globArgument);
         return (vp.Absolute, vp.Relative);
     }
 

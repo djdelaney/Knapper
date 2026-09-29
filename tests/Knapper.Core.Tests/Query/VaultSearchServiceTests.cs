@@ -64,6 +64,25 @@ public sealed class VaultSearchServiceTests : IClassFixture<FixtureVault>
     }
 
     [Fact]
+    public void A_file_given_as_prefix_names_the_include_glob_that_searches_exactly_it()
+    {
+        // The single most common search refusal in 2026-09's transcripts;
+        // the fallback agents reached for, "**/Deep.md", matches that name
+        // in every folder. The glob the message offers must scope to the one
+        // file on rg, not just read plausibly.
+        var ex = Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(
+            new VaultSearchQuery { Pattern = "needle", PathPrefixes = ["Notes/Sub/Deep.md"] }));
+        ex.Code.ShouldBe(VaultErrorCode.NotFound);
+        var glob = System.Text.RegularExpressions.Regex
+            .Match(ex.Message, "includeGlobs: \\[\"([^\"]+)\"\\]").Groups[1].Value;
+        glob.ShouldBe("Notes/Sub/Deep.md");
+
+        var paths = _vault.Search.SearchMatches(new VaultSearchQuery { Pattern = "needle", IncludeGlobs = [glob] })
+            .Items.Select(i => i.Path).Distinct().ToArray();
+        paths.ShouldBe(["Notes/Sub/Deep.md"]);
+    }
+
+    [Fact]
     public void Whole_word_excludes_substring_hits()
     {
         _vault.Search.SearchMatches(new VaultSearchQuery { Pattern = "need", WholeWord = true })
