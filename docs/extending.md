@@ -371,6 +371,14 @@ Directory.Build.props <Version>          the one carrier
 
 ## Ideas already scoped (not yet built)
 
+- **Response budget** — [proposals/response-budget.md](proposals/response-budget.md)
+  (2026-09-29). Clients refuse results that are too large while the journal logs
+  them `ok`: 48 such refusals in six weeks of transcripts. Phased cheapest first:
+  log each response's size, stop `\uXXXX`-escaping the text block, lower
+  `MaxOutputBytes`, defer over-budget `vault_batch_read` items. Whether an
+  over-budget whole-file `vault_read` should refuse or return a range waits on
+  the measurement; the partial-read option carries a copy-then-delete data-loss
+  hazard.
 - **Live-server write races**: `knapper verify --url` now covers the
   deployed service READ-ONLY (runbook §5 pre-ingress and §6 through the
   tunnel), and that boundary is deliberate — it runs against Helios, where
