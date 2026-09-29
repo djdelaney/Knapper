@@ -40,10 +40,28 @@ pct exec 106 -- sh /opt/knapper/ops/call-economics.sh [DAYS] [--all-clients]
                                                              [--daily] [--audit PATH]
 ```
 
-The journal is the **only** telemetry covering every client. Cowork, Desktop,
-mobile and claude.ai leave nothing on the operator's disk, so client-side
-transcript mining sees Claude Code and nothing else. `Mcp:LogToolCalls`
-defaults to true and the production unit does not override it.
+The journal is the only **continuous** telemetry covering every client, and
+the only record of cloud Claude Code sessions, which leave no transcript the
+operator can reach. `Mcp:LogToolCalls` defaults to true and the production
+unit does not override it.
+
+Client-side transcript mining reaches every other surface (checked
+2026-09-29), and it sees what the journal cannot: tool arguments, payload
+sizes, and failures that happen in the client and never reach the server.
+One such failure is a result refused as too large, which the journal logs
+as `ok` ([proposals/response-budget.md](proposals/response-budget.md)).
+
+| Surface | Where its tool calls are recorded |
+|---|---|
+| Claude Code (CLI, Desktop Code tab) | `~/.claude/projects/**/*.jsonl` |
+| Cowork | `~/Library/Application Support/Claude/local-agent-mode-sessions/**/*.jsonl` |
+| claude.ai web, desktop and mobile chat | A data export (Settings → Export data; `conversations-000.zip` is enough). The `chat_messages[].content[]` entries hold `Knapper:vault_*` tool_use inputs and tool_result bodies, with timestamps. Manual, one-shot. |
+| Cloud Claude Code sessions | Nothing local. Only the journal sees these. |
+
+Join tool_use to tool_result by id, and deduplicate by tool_use id, because
+resumed sessions repeat their history. Keep the analysis local: transcripts
+and exports contain vault content, and only aggregate counts belong in this
+repository.
 
 Read **WORK PER ROUND TRIP** first — it counts files, not call shapes, and the
 two disagree badly (below). The RATIOS block beneath it is supporting detail,

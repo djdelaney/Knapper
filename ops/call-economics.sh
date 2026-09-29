@@ -5,10 +5,15 @@
 #                                                          [--show-identities]
 #                                                          [--daily] [--audit PATH]
 #
-# Runs INSIDE CT 106 — it reads this unit's journal, which is the only
-# telemetry that covers every client surface. Cowork, Claude Desktop, mobile
-# and claude.ai sessions leave nothing on the operator's disk, so client-side
-# transcript mining can only ever see Claude Code. This can see all of them.
+# Runs INSIDE CT 106 — it reads this unit's journal, the only CONTINUOUS
+# telemetry that covers every client surface, and the only record of any
+# kind for cloud Claude Code sessions, which leave no transcript anywhere
+# the operator can reach. Client-side mining reaches the rest (checked
+# 2026-09-29): Claude Code and Cowork keep local JSONL transcripts, and a
+# claude.ai data export carries every tool_use input and tool_result body
+# for web, desktop and mobile chat, though only on manual request. Mining
+# sees what this cannot — arguments, payload sizes, and failures that
+# happen in the client and never reach the server (docs/call-economics.md).
 #
 # WHY THIS EXISTS. Measured 2026-08-24: server-side work averages 12.2ms while
 # the client-observed round trip is ~2.9-3.6s, so >99% of "the vault feels

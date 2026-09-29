@@ -46,9 +46,9 @@ chmod +x "$STAGE/ops/sync-heartbeat.sh"
 cp ops/check-installed.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/check-installed.sh"
 # Reads THIS unit's journal, so it has to travel with the deployment for the
-# same reason check-installed.sh does. The journal is the only telemetry that
-# covers the client surfaces leaving nothing on an operator's disk — Cowork,
-# Desktop, mobile, claude.ai (docs/call-economics.md).
+# same reason check-installed.sh does. The journal is the only continuous
+# telemetry covering every client surface, and the only record of cloud
+# Claude Code sessions (docs/call-economics.md).
 cp ops/call-economics.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/call-economics.sh"
 # The Proxmox-host monitor installs FROM THIS ARCHIVE (runbook §8) — a
