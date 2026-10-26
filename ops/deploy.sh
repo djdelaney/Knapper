@@ -30,7 +30,9 @@
 #   §1  publish.sh builds the WORKING TREE: a clean tree is what binds the
 #       artifact to the tag, and verify --expect-version refuses a .dirty build.
 #   §2  the running version IS the rollback target, and a rollback path is only
-#       printed once the tarball for it is proven present on the host.
+#       printed once the tarball for it is proven present on the host. It also
+#       REPORTS the tunnel's cloudflared against the host's apt candidate —
+#       upgraded by hand, so nothing else would ever say it is behind.
 #   §5  the extract is the point of no return; there is no snapshot step.
 #       Rollback is the retained tarball, or rolling forward from a git tag.
 #   §6  the unit diff is DERIVED from the artifact's ops/systemd/, never from a
@@ -88,6 +90,8 @@ load_config() {
   INSTALL_DIR="${KNAPPER_INSTALL_DIR:-/opt/knapper}"
   VERIFY_ENV="${KNAPPER_VERIFY_ENV:-/root/.knapper-verify.env}"
   LOGDIR="${KNAPPER_LOGDIR:-$HOME/knapper-deploys}"
+  # Set to empty to skip the §2 tunnel report (tunnel not on the service host).
+  TUNNEL_UNIT="${KNAPPER_TUNNEL_UNIT-cloudflared.service}"
   read -r -a SSH_OPTS <<< "${KNAPPER_SSH_OPTS:-}"
   CLI="$INSTALL_DIR/cli/knapper"
 
@@ -100,6 +104,9 @@ load_config() {
   esac
   local p
   if p=$(required_env_problems); then :; else problems+=("$p"); fi
+  # Interpolated into a remote command, so held to a unit name's shape.
+  [[ -z "$TUNNEL_UNIT" || "$TUNNEL_UNIT" =~ ^[A-Za-z0-9@._-]+$ ]] \
+    || problems+=("KNAPPER_TUNNEL_UNIT '$TUNNEL_UNIT' is not a systemd unit name")
   if [ "${#problems[@]}" -gt 0 ]; then
     printf '   \033[31mconfig\033[0m %s\n' "${problems[@]}" >&2
     die "fix $file and re-run"
@@ -169,6 +176,80 @@ check_doctor_output() {
         fi ;;
     esac
   done
+  return 0
+}
+
+# §2's tunnel report. cloudflared is upgraded BY HAND (Dan's choice,
+# 2026-10-26: the one process holding the tunnel credential does not change
+# unreviewed), and nothing else here looks at it — CT 106 sat on 2026.9.3
+# through four releases, a CA-compromise fix among them, until Cloudflare
+# emailed. So every deploy SAYS where it stands. It reports and never stops a
+# run: the tunnel is not what is being deployed.
+#
+# The yardstick is the host's OWN apt cache (refreshed daily by
+# APT::Periodic), not a vendor URL: this file must stay site-agnostic AND
+# vendor-host-free (test_deploy.sh), and the cache is what an upgrade would
+# actually install. The probe prints key=value lines; tunnel_report judges them.
+tunnel_probe_command() {
+  local unit="$1"
+  printf '%s' "U=$unit"'
+PID=$(systemctl show "$U" -p MainPID --value 2>/dev/null)
+echo "pid=${PID:-0}"
+if [ "${PID:-0}" -gt 0 ]; then
+  echo "exe=$(readlink "/proc/$PID/exe")"
+  echo "running=$("/proc/$PID/exe" --version 2>/dev/null | head -n 1)"
+fi
+echo "installed=$(dpkg-query -W -f="\${Version}" cloudflared 2>/dev/null)"
+echo "candidate=$(apt-cache policy cloudflared 2>/dev/null | awk "/Candidate:/ {print \$2}")"
+NEWEST=$(find /var/lib/apt/lists -maxdepth 1 -name "*cloudflare*Packages*" -printf "%T@\n" 2>/dev/null | sort -n | tail -n 1)
+[ -n "$NEWEST" ] && echo "lists_age_h=$(( ($(date +%s) - ${NEWEST%.*}) / 3600 ))"
+true'
+}
+
+# ver_lt A B — true when dotted-numeric A sorts before B (2026.9.3 < 2026.10.4).
+ver_lt() {
+  local IFS=. i
+  local -a a=($1) b=($2)
+  for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+    (( 10#${a[i]:-0} < 10#${b[i]:-0} )) && return 0
+    (( 10#${a[i]:-0} > 10#${b[i]:-0} )) && return 1
+  done
+  return 1
+}
+
+tunnel_report() {
+  local probe="$1" unit="$2" pid exe running installed candidate age
+  tunnel_field() { printf '%s\n' "$probe" | sed -n "s/^$1=//p" | head -n 1; }
+  pid=$(tunnel_field pid); exe=$(tunnel_field exe); installed=$(tunnel_field installed); candidate=$(tunnel_field candidate); age=$(tunnel_field lists_age_h)
+  # "cloudflared version 2026.10.4 (built …)" → 2026.10.4
+  running=$(tunnel_field running | awk '{print $3}')
+  # A Debian revision ("2026.10.4-1") is not part of the upstream version, and
+  # left on it would trip ver_lt's arithmetic — under set -e, killing the run
+  # this report promises never to stop.
+  installed=${installed%%[!0-9.]*}; candidate=${candidate%%[!0-9.]*}
+  if [ -z "$pid" ] || [ "$pid" = 0 ]; then
+    warn "tunnel: $unit is not running on the service host — nothing reaches knapper through it"
+    return 0
+  fi
+  if ! [[ "$running" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+    warn "tunnel: could not read the running cloudflared's version (pid $pid)"
+    return 0
+  fi
+  if [[ "$exe" == *" (deleted)" ]]; then
+    warn "tunnel: cloudflared $running is running from a binary since REPLACED on disk (${installed:-?} installed) — systemctl restart $unit to load it"
+  elif [ -n "$installed" ] && [ "$installed" != "$running" ]; then
+    warn "tunnel: running cloudflared $running but package $installed is installed — systemctl restart $unit"
+  fi
+  if ! [[ "$candidate" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+    warn "tunnel: cloudflared $running — not installed from apt, so no candidate to compare against; check the release page by hand"
+  elif ver_lt "$running" "$candidate"; then
+    warn "tunnel: cloudflared $running is BEHIND $candidate — upgrade by hand: apt-get install --only-upgrade cloudflared && systemctl restart $unit, then re-run verify"
+  else
+    ok "tunnel: cloudflared $running is the newest the host's apt offers"
+  fi
+  if [ -n "$age" ] && [ "$age" -gt 48 ]; then
+    warn "tunnel: the host's package lists are ${age}h old — that candidate may itself be stale (apt-get update)"
+  fi
   return 0
 }
 
@@ -351,6 +432,10 @@ if ct "test -f '$ROLLBACK_TGZ'"; then
 else
   ROLLBACK_TGZ="(none retained — THERE IS NO ROLLBACK POINT)"
   warn "NO retained tarball for the running build: this run has NO rollback point. Roll forward from a git tag."
+fi
+
+if [ -n "$TUNNEL_UNIT" ]; then
+  tunnel_report "$(ct "$(tunnel_probe_command "$TUNNEL_UNIT")" || true)" "$TUNNEL_UNIT"
 fi
 
 # ───────────────────────── 3. build ───────────────────────────

@@ -202,6 +202,92 @@ case "$out" in *"KNAPPER_CT_SSH is unset"*"must be https://"*) ;; *) fail "every
 out=$(KNAPPER_DEPLOY_ENV="$EXAMPLE" lib 'load_config && echo LOADED' || true)
 case "$out" in *LOADED*) ;; *) fail "ops/deploy.env.example does not load: $out" ;; esac
 
+out=$(KNAPPER_DEPLOY_ENV="$EXAMPLE" KNAPPER_TUNNEL_UNIT='x; rm -rf /' lib 'load_config' || true)
+case "$out" in *"not a systemd unit name"*) ;; *) fail "a tunnel unit that is not a unit name must refuse — it is interpolated into a remote command: $out" ;; esac
+
+# ── §2 tunnel report (cloudflared upgraded by hand; every deploy says where it stands)
+# The probe runs on the host as one remote shell string: quoting mistakes there
+# fail silently into an empty report, so it must at least parse.
+probe_cmd=$(lib 'tunnel_probe_command cloudflared.service')
+printf '%s\n' "$probe_cmd" | sh -n 2>"$TMPROOT/probe.err" || fail "tunnel probe is not valid sh: $(cat "$TMPROOT/probe.err")"
+
+# tunnel <probe-lines> → the report
+tunnel() {
+    PROBE="$1" lib 'tunnel_report "$PROBE" cloudflared.service; echo "rc=$?"' \
+        | sed "s/$(printf '\033')\[[0-9;]*m//g"
+}
+V='cloudflared version'
+
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared
+running=$V 2026.10.4 (built x)
+installed=2026.10.4
+candidate=2026.10.4
+lists_age_h=3")
+case "$out" in *"ok   tunnel: cloudflared 2026.10.4 is the newest"*) ;; *) fail "a current tunnel is not reported ok: $out" ;; esac
+case "$out" in *warn*) fail "a current tunnel produced a warning: $out" ;; esac
+
+# The case that went unnoticed for a month. Numeric, not lexical: 9 < 10.
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared
+running=$V 2026.9.3 (built x)
+installed=2026.9.3
+candidate=2026.10.4")
+case "$out" in *"2026.9.3 is BEHIND 2026.10.4"*) ;; *) fail "a stale tunnel is not reported behind: $out" ;; esac
+
+# Upgraded on disk, never restarted: the package says current, the process is not.
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared (deleted)
+running=$V 2026.9.3 (built x)
+installed=2026.10.4
+candidate=2026.10.4")
+case "$out" in *"REPLACED on disk"*"restart cloudflared.service"*) ;; *) fail "a replaced-but-not-restarted binary is not reported: $out" ;; esac
+case "$out" in *BEHIND*) ;; *) fail "the stale RUNNING version must still be compared, not the package's: $out" ;; esac
+
+# A Debian revision on the package must neither crash the comparison nor read
+# as a running/installed mismatch.
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared
+running=$V 2026.10.4 (built x)
+installed=2026.10.4-1
+candidate=2026.10.4-1")
+case "$out" in *"ok   tunnel: cloudflared 2026.10.4 is the newest"*rc=0*) ;; *) fail "a Debian revision broke the report: $out" ;; esac
+case "$out" in *warn*) fail "a Debian revision produced a warning: $out" ;; esac
+
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared
+running=$V 2026.10.4 (built x)
+installed=2026.10.4
+candidate=(none)")
+case "$out" in *"not installed from apt"*rc=0*) ;; *) fail "an apt '(none)' candidate must say it cannot compare: $out" ;; esac
+
+out=$(tunnel "pid=0")
+case "$out" in *"is not running"*) ;; *) fail "a stopped tunnel unit is not reported: $out" ;; esac
+
+out=$(tunnel "pid=42
+exe=/usr/local/bin/cloudflared
+running=$V 2026.10.4 (built x)
+installed=
+candidate=")
+case "$out" in *"not installed from apt"*) ;; *) fail "a non-apt install must say it cannot compare, not pass: $out" ;; esac
+case "$out" in *"ok   tunnel"*) fail "a non-apt install was reported ok: $out" ;; esac
+
+out=$(tunnel "pid=42
+exe=/usr/bin/cloudflared
+running=$V 2026.10.4 (built x)
+installed=2026.10.4
+candidate=2026.10.4
+lists_age_h=200")
+case "$out" in *"200h old"*) ;; *) fail "stale package lists are not reported: $out" ;; esac
+
+out=$(tunnel "pid=42
+running=garbage")
+case "$out" in *"could not read"*) ;; *) fail "an unreadable version is not reported: $out" ;; esac
+
+# Report only: no verdict may stop the run (set -e is on inside lib).
+out=$(tunnel "")
+case "$out" in *rc=0*) ;; *) fail "tunnel_report must never fail the run: $out" ;; esac
+
 # Sourcing for tests must never reach the run (it would ssh).
 out=$(KNAPPER_DEPLOY_LIB=1 bash -c '. "$0"; echo SOURCED' "$SCRIPT" 2>&1)
 case "$out" in SOURCED) ;; *) fail "sourcing with KNAPPER_DEPLOY_LIB=1 ran more than definitions: $out" ;; esac
