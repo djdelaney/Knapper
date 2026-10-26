@@ -275,9 +275,19 @@ Two gates now stand on either side of that:
 - The **coverage gate** fails the publish if any file under `ops/` is neither
   in the archive nor on `NOT_SHIPPED` — it catches a file ADDED to the repo and
   never staged. `NOT_SHIPPED` is the runbook, `publish.sh`, `release.sh`,
-  `runbook-lint.sh`, `version.sh`, `claude-cloud-setup.sh`, and `deploy.sh`
-  with its `deploy.env.example`: repo-side tooling with no business on a
-  deployed host.
+  `runbook-lint.sh`, `version.sh`, `check-runtime.sh`, `claude-cloud-setup.sh`,
+  and `deploy.sh` with its `deploy.env.example`: repo-side tooling with no
+  business on a deployed host.
+
+A third publish gate is about the runtime rather than `ops/`:
+`ops/check-runtime.sh` refuses the build when the .NET runtime the artifact
+bundles is behind the latest patch of its channel (read from Microsoft's
+release metadata), or when it cannot find out. A self-contained artifact
+carries whatever runtime its SDK knew of, and nothing downstream sees it age:
+v0.12.1 reached CT 106 on 10.0.8 while 10.0.13 was current. The fix is a newer
+SDK on the publishing machine; `KNAPPER_ALLOW_STALE_RUNTIME=1` ships anyway
+(offline, or a fix that cannot wait for the SDK) and belongs in the deployment
+record when used.
 
 So adding a file under `ops/` means deciding, in the script, which it is. That
 is the whole point — writing the deliberate omissions down is what stops "not

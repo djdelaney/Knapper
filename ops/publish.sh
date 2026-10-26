@@ -37,6 +37,11 @@ esac
 STAMP="-p:InformationalVersion=$VERSION"
 dotnet publish src/Knapper.Mcp -c Release -r linux-x64 --self-contained "$STAMP" -o "$STAGE/mcp"
 dotnet publish src/Knapper.Cli -c Release -r linux-x64 --self-contained "$STAMP" -o "$STAGE/cli"
+# Runtime gate: the artifact carries its own .NET, chosen by whichever SDK
+# built it, and nothing downstream can see that copy go stale. Checked on the
+# staged output, before the tarball exists, so a stale build leaves nothing
+# behind to deploy by mistake.
+./ops/check-runtime.sh "$STAGE/mcp/Knapper.Mcp.runtimeconfig.json" "$STAGE/cli/knapper.runtimeconfig.json"
 cp -R ops/systemd "$STAGE/ops/systemd"
 cp ops/sync-heartbeat.sh "$STAGE/ops/"
 chmod +x "$STAGE/ops/sync-heartbeat.sh"
@@ -114,6 +119,7 @@ done
 # list is the point. Writing the deliberate omissions down is what separates
 # them from the accidental ones.
 NOT_SHIPPED='
+ops/check-runtime.sh
 ops/claude-cloud-setup.sh
 ops/ct106-runbook.md
 ops/deploy.env.example
