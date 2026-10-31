@@ -56,7 +56,7 @@ public class McpSurfaceTests : IClassFixture<KnapperMcpFactory>
     public async Task Server_identifies_itself_and_carries_instructions()
     {
         await using var client = await ConnectAsync(_factory);
-        client.ServerInfo.Name.ShouldBe("knapper");
+        client.ServerInfo.ShouldNotBeNull().Name.ShouldBe("knapper");
         client.ServerInstructions.ShouldNotBeNull();
         client.ServerInstructions!.ShouldContain("single authoritative interface");
         client.ServerInstructions.ShouldContain("TRUST MODEL");

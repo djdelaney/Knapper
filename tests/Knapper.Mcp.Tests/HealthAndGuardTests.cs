@@ -73,7 +73,7 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         // came from Assembly.GetEntryAssembly(), which under `dotnet test` is
         // the test host — so the assertion would have been about the runner.
         await using var mcp = await McpSurfaceTests.ConnectAsync(_factory);
-        mcp.ServerInfo.Version.ShouldBe(BuildInfo.Version);
+        mcp.ServerInfo.ShouldNotBeNull().Version.ShouldBe(BuildInfo.Version);
     }
 
     [Fact]
