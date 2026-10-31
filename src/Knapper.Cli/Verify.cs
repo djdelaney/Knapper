@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Knapper.Core;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace Knapper.Cli;
 
@@ -540,13 +541,19 @@ internal static class Verify
         private async Task SurfaceAsync()
         {
             McpClient? client = null;
+            Implementation? serverInfo = null;
             try
             {
                 await CheckAsync("the MCP endpoint completes initialize", async () =>
                 {
                     client = await ConnectAsync().ConfigureAwait(false);
-                    if (client.ServerInfo.Name != "knapper")
-                        throw new InvalidOperationException($"server identifies as '{client.ServerInfo.Name}', not 'knapper'");
+                    // SDK 2.3 types serverInfo nullable: a server may omit it.
+                    // Knapper never does, so its absence fails this check
+                    // rather than reading as an unnamed but healthy server.
+                    serverInfo = client.ServerInfo
+                        ?? throw new InvalidOperationException("server sent no serverInfo — it cannot be identified as knapper");
+                    if (serverInfo.Name != "knapper")
+                        throw new InvalidOperationException($"server identifies as '{serverInfo.Name}', not 'knapper'");
                 }).ConfigureAwait(false);
 
                 if (client is null)
@@ -555,7 +562,10 @@ internal static class Verify
                     return;
                 }
 
-                VersionChecks(client.ServerInfo.Version);
+                if (serverInfo is null)
+                    Skip("the version checks", "the server reported no serverInfo — see the failure above");
+                else
+                    VersionChecks(serverInfo.Version);
 
                 Check("initialize carries the routing instruction and mutation protocol", () =>
                 {
