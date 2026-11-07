@@ -563,7 +563,15 @@ Directory.Build.props <Version>          the one carrier
   locally computed source hash into the grant and requiring the commit receipt
   to equal it. Read its Amendment 1 first — the transport is for content whose
   base the caller does NOT hold, or that is not text; an anchored `vault_edit`
-  stays the cheaper and better-guarded path for evolving text at any size. The
+  stays the cheaper and better-guarded path for evolving text at any size.
+  Its Amendment 2 (2026-11-07) folds in the reverse direction — download
+  grants that put vault bytes, binaries included, on an agent's disk — and
+  makes plain `curl` plus a SHA-256 tool the required client in both
+  directions, so no Knapper binary is needed in any harness. Amendment 3
+  (same day) makes the design generic: instructions in tool descriptions and
+  grant responses, batched upload tools, and a local-only mode for
+  deployments without Cloudflare Access. Until it ships,
+  `vault_read` refuses binaries and no tool hands their bytes over. The
   entry below stands until something ships. Knapper has no upload-from-path, so
   content not already in the vault enters only through model output tokens.
   Chunked `vault_append` costs `B·(N−1)/2` re-sent tokens (quadratic in
