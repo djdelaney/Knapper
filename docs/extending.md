@@ -558,20 +558,17 @@ Directory.Build.props <Version>          the one carrier
 - **Bulk ingest of large files** — deliberately NOT built;
   [proposals/bulk-ingest.md](proposals/bulk-ingest.md) records why the
   obvious tool is the wrong first move. ⚠️ A successor design exists and is
-  ALSO not built: [proposals/upload-grants.md](proposals/upload-grants.md)
-  (2026-09-05) answers the `Verified: true` objection below by binding a
-  locally computed source hash into the grant and requiring the commit receipt
-  to equal it. Read its Amendment 1 first — the transport is for content whose
-  base the caller does NOT hold, or that is not text; an anchored `vault_edit`
-  stays the cheaper and better-guarded path for evolving text at any size.
-  Its Amendment 2 (2026-11-07) folds in the reverse direction — download
-  grants that put vault bytes, binaries included, on an agent's disk — and
-  makes plain `curl` plus a SHA-256 tool the required client in both
-  directions, so no Knapper binary is needed in any harness. Amendment 3
-  (same day) makes the design generic: instructions in tool descriptions and
-  grant responses, batched upload tools, and a local-only mode for
-  deployments without Cloudflare Access. Until it ships,
-  `vault_read` refuses binaries and no tool hands their bytes over. The
+  ALSO not built: [proposals/transfer-grants.md](proposals/transfer-grants.md)
+  (2026-09-05, consolidated 2026-11-07; formerly `upload-grants.md`). It
+  answers the `Verified: true` objection below by binding a locally computed
+  source hash into the grant and requiring the commit receipt to equal it,
+  adds the reverse direction (download grants that put vault bytes, binaries
+  included, on an agent's disk), and makes plain `curl` plus a SHA-256 tool
+  the required client in any harness. Its rule for uploads: the transport is
+  for content whose base the caller does NOT hold, or that is not text; an
+  anchored `vault_edit` stays the cheaper and better-guarded path for evolving
+  text at any size. Until it ships, `vault_read` refuses binaries and no tool
+  hands their bytes over. The
   entry below stands until something ships. Knapper has no upload-from-path, so
   content not already in the vault enters only through model output tokens.
   Chunked `vault_append` costs `B·(N−1)/2` re-sent tokens (quadratic in
