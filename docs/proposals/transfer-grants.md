@@ -14,6 +14,16 @@ secrets BEFORE the write (§4.3); download prepare guards against a torn read
 is marked as a writer (§13); and §9 says plainly which layer protects the MCP
 route when the edge Bypass misbehaves.
 
+A second pass the same day, checked against the code, changed four more.
+The pre-landing secret scan now covers exactly what `GitCommitJob` scans
+(§4.3). The earlier "strict UTF-8 only" rule let a Latin-1 `.env` or a
+stored zip land and then wedge every commit, and the §15 test that read
+"binary … not scanned and lands" asserted that wedge. A read-only
+deployment refuses `Download:Enabled` as well as `Upload:Enabled` (§13).
+The rate limiter runs after authentication, never in front of a valid token
+(§11, open decision 4). The separate-hostname choice is now open decision 5,
+with the Host binding it needs (§9).
+
 Reviewers: the questions this document cannot settle on its own are in
 §16 (open decisions), and the places it most needs a skeptical read are in
 §17.
@@ -88,6 +98,8 @@ the MCP calls, the agent holds a **grant**: a single-use, short-lived
 capability bound to exact bytes.
 
 ```mermaid
+%% No semicolons in message text. Mermaid reads a semicolon as a statement
+%% separator, and GitHub then refuses to render the whole diagram.
 sequenceDiagram
     participant A as Agent
     participant S as Agent shell (curl)
@@ -100,7 +112,7 @@ sequenceDiagram
     K-->>A: Grant: URL, token, expiry, send hint
     A->>S: curl -T file (token on stdin)
     S->>K: PUT /uploads/{id}
-    K-->>S: Staged and hash-checked; no vault write
+    K-->>S: Staged and hash-checked, no vault write
     A->>M: vault_upload_commit(id)
     M->>K: Authenticated call
     K->>K: Gates, locks, fresh precondition, AtomicFile, verify, audit
@@ -108,7 +120,7 @@ sequenceDiagram
     Note over A,K: Download
     A->>M: vault_download_prepare(path, expectSha256?)
     M->>K: Authenticated call
-    K->>K: Read and hash the file once; keep the snapshot in memory
+    K->>K: Read and hash the file once, keep the snapshot in memory
     K-->>A: Grant: URL, token, sha256, length, fetch hint
     A->>S: curl -o tmp (token on stdin), check hash, then mv
     S->>K: GET /downloads/{id}
@@ -248,15 +260,30 @@ vault_upload_commit(uploadIds: [string])
   such file stops the WHOLE vault reaching history until a human edits it.
   Today that takes an agent typing a secret into `vault_create`; an upload
   makes it a one-liner (a 2 MB log, a `.env`, a shell history). So commit
-  runs the same scanner over a payload that is strict UTF-8 text, inside the
-  audited region and before any temp file exists, and refuses the item
-  `SecretDetected` with the finding MASKED exactly as the committer masks it.
-  The grant goes terminal; the bytes never reach the vault. Binary payloads
-  are not scanned, which is the standing attachment rule, not a new gap. The
-  pre-existing path (`vault_create` with a secret in the text) has the same
-  consequence and is out of scope here; whether the text tools should get
-  the same pre-landing scan is a question for `docs/extending.md`'s open
-  decisions, not this proposal.
+  runs the scanner over the payload inside the audited region and before any
+  temp file exists, and refuses the item `SecretDetected` with the finding
+  MASKED exactly as the committer masks it. The grant goes terminal; the
+  bytes never reach the vault.
+- **The pre-landing scan covers EXACTLY what the committer will scan, no
+  more and no less.** The committer does not scan by content type.
+  `GitCommitJob.ScanStaged` decodes EVERY staged blob of at most
+  `MaxScanBlobBytes` (4,000,000) as UTF-8, binary included, plus any size of
+  blob whose extension is in `AlwaysScannedExtensions`. A pre-landing rule
+  narrower than that ("strict UTF-8 text only", as an earlier draft said)
+  admits exactly the files that then wedge the committer: a Latin-1 `.env`
+  is not strict UTF-8, and a stored (uncompressed) zip holding a key is
+  binary, yet both decode to a match at commit. So the selection rule and
+  the decode become ONE shared definition in `Knapper.Core.Git`, used by
+  both callers. The committer reads the blob as bytes and calls the same
+  decoder rather than relying on its process stdout reader, so the two cannot
+  disagree about BOMs or invalid sequences. A payload neither scans is
+  over 4,000,000 bytes with a non-text extension, which is the committer's
+  standing attachment limit, not a new gap. A binary that matches by
+  accident is refused here rather than wedging every commit later, which is
+  strictly the better failure. The pre-existing path (`vault_create` with a
+  secret in the text) has the same consequence and is out of scope here;
+  whether the text tools should get the same pre-landing scan is a question
+  for `docs/extending.md`'s open decisions, not this proposal.
 - **The receipt is the ordinary mutation receipt plus the upload ID.** Its
   new hash must equal the source hash bound into the grant. That proves
   transfer fidelity, not that the content is correct.
@@ -598,7 +625,16 @@ recommended hygiene: the vault hostname then keeps its clean property
 unconditionally, and the worst edge mistake on the transfer hostname (a
 Bypass at `/`) exposes only routes that carry their own authentication. It
 is a deployment choice, not a precondition: the origin's assertion check is
-what protects the MCP route, and it holds either way. The two holes are not
+what protects the MCP route, and it holds either way (open decision 5).
+
+Taking the separate hostname adds origin work that the configuration table
+does not otherwise need: each route must be bound to its Host, so the
+transfer routes answer only on the transfer hostname and the MCP route,
+`/health` and `/up` refuse it. Derive that binding from the host of
+`Transfer:PublicOrigin` rather than adding a second setting that names the
+same host: the grant URLs are already built from it, so one value cannot
+disagree with itself. When `PublicOrigin`'s host equals the vault's
+hostname, no binding applies and the routes share it. The two holes are not
 equal:
 
 - **A PUT defect** can at worst stage bytes that still need an authenticated
@@ -732,6 +768,17 @@ in the vault can be switched off by the agents it constrains.
   internet probe. Authentication happens before any payload capacity is
   allocated. Edge and connection-level controls are still needed for public
   traffic.
+- **The limiter has no client key, so it must never stand in front of a
+  valid token.** Behind cloudflared every request arrives from 127.0.0.1, so
+  the peer address names nobody, and keying on `CF-Connecting-IP` trusts a
+  header for a security decision. A global limiter placed in FRONT of
+  authentication would let any internet prober exhaust it and deny the
+  owner's own transfers. The token check is one constant-time digest lookup
+  per request, cheap enough to run unthrottled, so it runs FIRST, and the
+  limiter governs only what happens after a refusal: the log line and any
+  added delay. A request carrying a valid token for a live grant is never
+  throttled. This is the recommended order; open decision 4 records the
+  alternative.
 - **Audit records link the steps.** Prepare, transfer outcome and mutation
   records share the nonsecret grant ID and the authenticated principal, and
   preserve issuing and commit request IDs. `AuditContext` and
@@ -779,7 +826,8 @@ in the vault can be switched off by the agents it constrains.
     supplies a replacement precondition without returning content.
   - The git secret scanner and the conflict rules apply to committed uploads
     as to any write; the pre-landing scan in §4.3 is in ADDITION to the
-    committer's, never instead of it.
+    committer's, never instead of it, and shares its selection rule and
+    decode.
   - Every committed binary, and every replacement of one, adds a blob to the
     vault's local git repository. That is already true of binaries Sync
     delivers; uploads make it easier to do often.
@@ -834,10 +882,14 @@ restricted surface", and this tool is not. Two consequences:
 derives the writer set from the hints and demands a `VaultConventions.Clauses`
 entry for each, gets an explicit exemption keyed by this tool's NAME, with
 the reason beside it, so the next tool that forgets its clause still fails
-the test. A read-only deployment that sets `Upload:Enabled` refuses to boot
-under the half-enabled rule in §10, because `Mcp:ReadOnly` disables
-`vault_upload_commit`; that is correct and must be written in the
-configuration reference.
+the test. A read-only deployment that enables EITHER direction refuses to
+boot under the half-enabled rule in §10: `Mcp:ReadOnly` disables
+`vault_upload_commit`, so `Upload:Enabled` is refused, and it disables
+`vault_download_prepare` too (that is the point of marking it a writer), so
+`Download:Enabled` is refused as well. Both are correct, both get a boot
+test, and both must be written in the configuration reference. A read-only
+deployment that wants byte export must stop being read-only, which is a
+choice someone has to make, not a side effect.
 
 All four names go in all three locked tables (`ToolSurface.All`, the
 attributes, `ToolNames.All`, with `ToolNames.ReadOnly` matching), even when a
@@ -1001,11 +1053,15 @@ those are their own deployment task.
   is preserved.
 - **Vault rules on the byte path.** A convention-breaking Markdown upload
   gets the same warnings `vault_create` gives; an archived replace is refused
-  and an archived create allowed (extend `ArchivedMutationTests`). A text
+  and an archived create allowed (extend `ArchivedMutationTests`). A
   payload carrying a credential-shaped string fails `SecretDetected` with no
   temp file created and the matched text absent from the error, the audit
-  and the log; a binary payload containing the same bytes is not scanned and
-  lands.
+  and the log. That holds for strict UTF-8 text, for a Latin-1 `.env`, and
+  for a binary under `MaxScanBlobBytes` containing the same bytes. A
+  differential test runs the pre-landing verdict and the committer's verdict
+  over the same payloads, including a non-text file just over the cap (both
+  skip it) and a `.log` over the cap (both scan it), and they must agree on
+  every one.
 - **Download integrity.** A file rewritten in place during prepare's read
   is re-read, and the served snapshot hashes to a version that existed on
   disk; a `Range` or conditional GET gets the full 200 body and no `ETag`.
@@ -1079,6 +1135,29 @@ read-only.
    - **Upload first** would serve the replacement case sooner.
 
    Gate zero covers both routes either way.
+4. **Rate limiting with no client key (§11).**
+   - **Recommended: authenticate first, limit only refusals.** Every request
+     comes from the tunnel's loopback peer, so a limiter has no client
+     identity to key on. A global limiter that runs only after the token
+     check fails cannot deny the owner, because a valid token never reaches
+     it.
+   - **The alternative is keying on `CF-Connecting-IP`.** That gives
+     per-client limits, but it trusts a header for a security decision. It
+     is safe only while the tunnel is the only route to the port, and it
+     means nothing in local-only mode.
+5. **Separate transfer hostname (§9).**
+   - **Recommended: take it.** The vault hostname keeps its no-Bypass property
+     unconditionally, and a Bypass mistake on the transfer hostname exposes
+     only routes that carry their own authentication. The cost is one DNS
+     name, one tunnel ingress rule, and the Host binding derived from
+     `Transfer:PublicOrigin`.
+   - **The alternative is a path-scoped Bypass on the vault hostname**,
+     which the origin's assertion check makes tolerable (§9). It saves the
+     DNS and tunnel change. In return, the vault hostname's safety depends
+     on Cloudflare's path precedence holding.
+
+   Decide before gate zero, because gate zero tests the arrangement it is
+   given.
 
 ## 17. Where review is most useful
 
@@ -1086,8 +1165,8 @@ read-only.
   the vault's hostname is tolerable because the ORIGIN validates the Access
   assertion on the MCP route, so an edge surprise reaches a 401, not the
   vault. A separate hostname is recommended hygiene, not a precondition.
-  Still open: whether to take the hygiene, and gate zero's measurement of
-  the edge's actual behaviour.
+  Still open: whether to take the hygiene (open decision 5), and gate zero's
+  measurement of the edge's actual behaviour.
 - **The download threat model (§3, §5, §16.2).** Does serving only
   in-memory snapshots bound a GET authentication defect the way §3 claims?
   Is the audited prepare enough record of what left the vault?
