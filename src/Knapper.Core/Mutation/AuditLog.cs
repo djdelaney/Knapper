@@ -50,7 +50,21 @@ public sealed class AuditLog
         /// broken convention to a client; the metrics counter only says how
         /// often.
         /// </summary>
-        IReadOnlyList<string>? Warnings = null);
+        IReadOnlyList<string>? Warnings = null,
+        /// <summary>
+        /// The nonsecret transfer grant ID this line belongs to, linking the
+        /// prepare, transfer and (for uploads) mutation records of one grant.
+        /// Never the token.
+        /// </summary>
+        string? GrantId = null,
+        /// <summary>
+        /// The verified principal a transfer grant is bound to
+        /// (<c>TransferPrincipal.ForAudit</c>). Distinct from
+        /// <see cref="Client"/>, which is display attribution.
+        /// </summary>
+        string? Principal = null,
+        /// <summary>Byte length of a transferred file; omitted elsewhere.</summary>
+        long? ByteLength = null);
 
     /// <summary>
     /// Test seam: runs inside Append before the write so a test can fail the

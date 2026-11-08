@@ -598,7 +598,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
        Rollback: $ROLLBACK_TGZ  (no snapshot is taken)"
   # Load-bearing: this is what catches a check that silently stopped running.
   # Update it whenever a release adds or removes a verify check.
-  warn "expect 16 ok and NO skips. A lower count means a check is silently missing — do not accept 'all checks passed' alone."
+  warn "expect 17 ok and NO skips. A lower count means a check is silently missing — do not accept 'all checks passed' alone."
   VERIFY_OK=1
 fi
 

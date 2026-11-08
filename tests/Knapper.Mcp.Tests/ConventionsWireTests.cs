@@ -49,6 +49,13 @@ public class ConventionsWireTests : IClassFixture<ConventionsWireTests.Configure
         {
             if (name == "vault_delete")
                 continue;
+            // Declared a writer although it writes no vault byte: byte export
+            // must prompt a human and stay off Mcp:ReadOnly surfaces
+            // (transfer-grants §13). It writes no note, so no convention is in
+            // play. Exempted by NAME so the next tool that forgets its clause
+            // still fails here.
+            if (name == "vault_download_prepare")
+                continue;
             var states = description.Contains("[[wikilinks]]", StringComparison.Ordinal)
                 || description.Contains("Quicknotes/", StringComparison.Ordinal);
             states.ShouldBeTrue(

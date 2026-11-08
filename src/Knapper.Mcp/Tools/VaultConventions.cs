@@ -71,6 +71,9 @@ internal static class VaultConventions
             ["vault_create"] = (true, true),
             ["vault_mkdir"] = (false, true),
             ["vault_move"] = (false, true),
+            // The path is chosen at prepare but the content lands at commit,
+            // so commit carries both (transfer-grants §13).
+            ["vault_upload_commit"] = (true, true),
         };
 
     /// <summary>How the content itself is written; null when no writing convention is configured.</summary>

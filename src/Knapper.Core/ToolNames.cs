@@ -31,6 +31,10 @@ public static class ToolNames
         "vault_move",
         "vault_delete",
         "vault_batch",
+        "vault_download_prepare",
+        "vault_upload_prepare",
+        "vault_upload_commit",
+        "vault_upload_status",
     ];
 
     /// <summary>
@@ -50,5 +54,9 @@ public static class ToolNames
         "vault_read",
         "vault_batch_read",
         "vault_stat",
+        // NOT vault_download_prepare: it is declared a writer on purpose —
+        // byte export is not safe on a restricted surface (transfer-grants §13).
+        "vault_upload_prepare",
+        "vault_upload_status",
     ];
 }

@@ -22,7 +22,15 @@ public class ToolResponseConformanceTests
     [Fact]
     public async Task Every_tool_returns_what_its_published_schema_promises()
     {
-        using var factory = new KnapperMcpFactory(null);
+        using var factory = new KnapperMcpFactory(new Dictionary<string, string?>
+        {
+            // Local-only transfer mode, so vault_download_prepare issues a
+            // real grant over TestServer's loopback caller.
+            ["Transfer:LocalOnly"] = "true",
+            ["Transfer:PublicOrigin"] = "http://127.0.0.1:3535",
+            ["Download:Enabled"] = "true",
+            ["Download:AllowedPrefixes:0"] = "conformance",
+        });
         factory.Seed("conformance/edit-me.md", "before text\n");
         factory.Seed("conformance/append-me.md", "first line\n");
         factory.Seed("conformance/move-me.md", "movable\n");
@@ -116,6 +124,29 @@ public class ToolResponseConformanceTests
                 },
             },
         });
+
+        await Call("vault_download_prepare", new
+        {
+            items = new object[]
+            {
+                new { path = "conformance/batch-me.md" },
+                new { path = "Notes/Daily.md" }, // outside the allowlist: a per-item error, so both shapes are exercised
+            },
+        });
+
+        // Registered but not built (transfer-grants decision 4): they never
+        // return a result, so there is nothing to conform. Each must refuse
+        // with the typed code instead — and nothing else may hide here.
+        string[] notBuilt = ["vault_upload_prepare", "vault_upload_commit", "vault_upload_status"];
+        foreach (var tool in notBuilt)
+        {
+            var refused = await session.CallToolAsync(tool, tool == "vault_upload_prepare"
+                ? new { items = new[] { new { path = "x.md", sourceSha256 = new string('a', 64), byteLength = 1L, mode = "create" } } }
+                : new { uploadIds = new[] { "x" } });
+            refused.GetProperty("isError").GetBoolean().ShouldBeTrue();
+            refused.ToString().ShouldContain("[UploadDisabled]");
+            covered.Add(tool);
+        }
 
         problems.ShouldBeEmpty(string.Join("\n", problems));
         // A tool added to the surface without a case here would otherwise go

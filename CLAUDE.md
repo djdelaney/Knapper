@@ -37,7 +37,7 @@ Developer docs (read on demand; this file stays invariants-only):
 - [`docs/architecture.md`](docs/architecture.md) — project/library structure,
   the two layers, the locking model, gates, security model.
 - [`docs/usage.md`](docs/usage.md) — running it, the full configuration
-  reference, the 14-tool surface with the agent write loop, error-code table,
+  reference, the 18-tool surface with the agent write loop, error-code table,
   health/monitoring.
 - [`docs/extending.md`](docs/extending.md) — how to add a tool / query
   capability / mutation / error code / config knob without breaking the
@@ -266,7 +266,7 @@ format by default.
   sends the full string, the manifest is well-formed, tools answer calls, every
   test reads the SERVER's copy, health stays green. The cap is per FIELD, not
   per manifest, so **"move it to the tool description" is not an escape** —
-  that channel has the same ceiling, it just has fourteen of them. Order is
+  that channel has the same ceiling, it just has one per tool. Order is
   half the rule and cannot be checked mechanically: a cut takes the TAIL, so
   what must survive goes at the FRONT (TRUST MODEL first; `vault_lint`'s
   never-bulk-fix rule ahead of its mechanics). Length is pinned by
@@ -317,7 +317,7 @@ format by default.
   Measured here on SDK 2.1.0 with an `McpServer` parameter added for client
   attribution: `inputSchema.properties.server` appeared carrying the
   permissive `true` at four nested points, which is the 0.3.2 outage exactly
-  — a manifest a strict client rejects WHOLE, taking all fourteen tools down
+  — a manifest a strict client rejects WHOLE, taking every tool down
   over a parameter nobody meant to publish, while every test that merely
   CALLS a tool stays green. Request-scoped data reaches a tool body through a
   FILTER instead (`Program.cs`'s `AddCallToolFilter` → `CallingClient`), which
@@ -435,6 +435,55 @@ format by default.
   discloses no paths, no conflict filenames, no generation counter — a test
   pins the exact property set. The status-code parity between the two is
   what monitors alert on.
+
+## Transfer-layer invariants (silent-corruption-prone)
+
+Download grants are built; uploads are registered but answer
+`[UploadDisabled]` (`docs/proposals/transfer-grants.md`).
+
+- **Everything under `/transfer` reaches the origin UNAUTHENTICATED**, because
+  the edge's path-scoped Bypass covers the whole prefix — so `TransferEndpoint`
+  owns ALL of it, one catch-all that serves the two grant routes and 404s
+  everything else. Never map another endpoint under the prefix
+  (`Nothing_but_the_transfer_catch_all_is_mapped_under_the_prefix`). The edge
+  resolves `..` before matching but NOT an encoded slash (measured 2026-11-08),
+  so `/transfer/..%2Fmcp` arrives here and must die in the catch-all.
+- **The download GET serves ONLY the snapshot taken at prepare.** It opens no
+  file, resolves no path and calls no Core read; a read-through would turn any
+  defect in grant authentication into unauthenticated read access to the whole
+  vault, instead of the snapshots of live grants. The bytes served are the
+  bytes hashed. Never add `Range`, `ETag` or 304 handling: a partial or empty
+  body fails the client's hash check with a misleading error.
+- **`vault_download_prepare` declares `ReadOnly = false` although it writes no
+  vault byte.** `Mcp:ReadOnly` DERIVES its served set from that flag, so `true`
+  would put byte export on every read-only deployment with nobody choosing it,
+  and harnesses auto-approve read-only tools. `ToolNames.ReadOnly` excludes it;
+  `ConventionsWireTests` exempts it from the clause rule by NAME.
+- **A grant's principal comes only from VALIDATED Access claims**
+  (`(iss, sub)`, else `(iss, common_name)`), compared as a structured value —
+  never email, `clientInfo` or a header. Access's loopback exemption admits a
+  same-box caller with no claims, and that supplies NO principal (cloudflared
+  is a loopback peer); only `Transfer:LocalOnly`, which startup permits solely
+  on a this-machine-only configuration, mints the local key.
+- **The snapshot's torn-read guard is by CONTENT**: two full reads through one
+  descriptor must agree byte for byte. The size/mtime comparison only ever
+  drives a retry, never a decision to serve — the `Replace` rule again.
+- **Capacity is reserved BEFORE a snapshot's bytes are allocated**
+  (`DownloadGrantStore.Reserve`, called from inside the read with the stat's
+  size), and the verifying second read compares in bounded chunks. Reading
+  first and checking at issue let concurrent prepares hold file-sized
+  buffers over a full budget (review 2026-11-08) — the budget is what bounds
+  memory, so nothing file-sized may exist until it is held.
+- **Prepare audits BEFORE the grant leaves the server**, and a grant whose
+  audit line cannot be written is revoked; grants issued earlier in a call
+  that then throws are revoked too. Best-effort audit handlers are exhaustive
+  by construction (`UnauthorizedAccessException` is not an `IOException`).
+  Transfer OUTCOMES are recorded best-effort against the grant ID; invalid-
+  token probes never are. No token and no content ever reach the audit
+  trail; refusals carry the error CODE.
+- **One validator (`TransferConfiguration`) for startup and doctor**, and it
+  refuses a half-enabled direction: a disabled or read-only-hidden tool must
+  never leave its route usable.
 
 ## Mutation-layer invariants (silent-corruption-prone)
 

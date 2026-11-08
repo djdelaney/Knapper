@@ -31,6 +31,10 @@ internal static class ToolSurface
             ["vault_move"] = typeof(VaultMoveTool),
             ["vault_delete"] = typeof(VaultDeleteTool),
             ["vault_batch"] = typeof(VaultBatchTool),
+            ["vault_download_prepare"] = typeof(VaultDownloadPrepareTool),
+            ["vault_upload_prepare"] = typeof(VaultUploadPrepareTool),
+            ["vault_upload_commit"] = typeof(VaultUploadCommitTool),
+            ["vault_upload_status"] = typeof(VaultUploadStatusTool),
         };
 
     // Declared IEnumerable<Type>, NOT IReadOnlyList<Type>, and load-bearing:

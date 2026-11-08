@@ -128,6 +128,55 @@ to its `Client`:
 `jq -c 'select(.Warnings) | {At, Client, Op, Path, Warnings}' audit.jsonl`. The check never fails a write — anything it cannot judge
 (non-Markdown, non-UTF-8, unparseable YAML) yields no warning.
 
+### `Transfer:*`, `Download:*`, `Upload:*` — transfer grants
+
+Byte-exact file transfer between an agent's disk and the vault
+([proposals/transfer-grants.md](proposals/transfer-grants.md)). An
+authenticated MCP call issues a single-use, short-lived **grant**; the agent
+moves the bytes with plain `curl` from its shell. **Downloads are built; uploads
+are not** — their three tools are registered so the tool-name contract moves
+once, and every call answers `[UploadDisabled]`. Everything is off by default.
+Startup and `knapper doctor` share one validator and refuse an incoherent
+configuration.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Transfer:PublicOrigin` | empty | Exact origin grant URLs are built from (`https://host[:port]`, nothing else); never derived from request headers. Required when a direction is on; its host must be in `Mcp:AllowedHosts` (or loopback). Grant URLs append the fixed `/transfer/...` path. |
+| `Transfer:LocalOnly` | `false` | Same-machine deployments without Access: mints a fixed local principal for a loopback caller and allows a loopback `http://` origin. Refused unless `Mcp:Access:Enabled` is false, `Mcp:AllowedHosts` names only loopback hosts, and `Mcp:Access:AllowPublicHostsWithoutAccess` is false. |
+| `Transfer:MaxBufferedBytes` | `33554432` | Shared in-memory byte budget for grant snapshots. Must hold one `Sync:MaxFileBytes` file. A full budget refuses per item (`DownloadCapacityExceeded`); nothing is evicted. |
+| `Transfer:MaxTrackedGrants` | `128` | Active plus retained terminal grant records. |
+| `Download:Enabled` | `false` | `vault_download_prepare` and `GET /transfer/downloads/*` together. Refused on an `Mcp:ReadOnly` deployment or with `vault_download_prepare` in `Mcp:DisabledTools` — hiding the tool must never leave the route usable. |
+| `Download:AllowedPrefixes` | `[]` | Vault-relative prefixes downloads may serve. **Empty serves nothing.** Ordinal and boundary-aware, like `Vault:ArchivedPrefixes`. |
+| `Download:GrantLifetimeSeconds` | `300` | Issued-to-served lifetime (10–3600). |
+| `Download:MaxActiveGrants` / `MaxActiveGrantsPerPrincipal` | `16` / `16` | Unserved grants, process-wide and per principal. |
+| `Upload:Enabled` | `false` | Must stay false: upload is not built in this release, and `true` refuses startup. |
+
+**The principal.** A grant is bound to the verified Access identity —
+`(issuer, sub)` for a user, `(issuer, common_name)` for a service token —
+never email, `clientInfo` or a header. Access's loopback exemption supplies
+NO principal, so an Access deployment's same-box caller cannot prepare; only
+`Transfer:LocalOnly` mints the local one.
+
+**The edge.** Everything under `/transfer` must reach the origin without an
+Access login, so production needs ONE path-scoped Bypass application at
+`/transfer` on the vault hostname. The origin owns the whole prefix: one
+handler serves the two grant routes and answers 404 for every other path
+there (including an encoded-slash escape such as `/transfer/..%2Fmcp`, which
+the edge does not resolve). The MCP endpoint keeps its own Access policy and
+origin assertion check either way. Enable the direction on the origin first
+and add the Bypass second — `knapper verify` names which state it found.
+
+**Audit.** Every download prepare is audited before the grant is returned
+(`Op: download_prepare`, with `GrantId`, `Principal`, `AfterSha256` and
+`ByteLength`; refusals for a resolved path carry the error code as
+`Outcome`). A grant whose audit line cannot be written is withdrawn. Each
+GET with a valid token adds a best-effort `Op: download_transfer` line with
+the same `GrantId` and `Principal`: `Outcome` is `sent` (every byte handed to
+the transport — only the client's hash check proves arrival), `aborted` (the
+client went away mid-body), `DownloadAlreadyClaimed` or `DownloadExpired`.
+Invalid-token probes are never audited. No content and no token ever reaches
+the audit trail.
+
 ### `Lint:*` — `vault_lint`'s baseline
 
 | Key | Default | Meaning |
@@ -171,7 +220,7 @@ as new after every accept. `knapper lint --accept` lists such files.
 
 ## The tool surface
 
-Thirteen tools, all responses structured content. List/search responses
+Eighteen tools, all responses structured content. List/search responses
 wear the completeness envelope (`items`, `truncated`, `nextCursor`,
 `scannedFiles`, `totalMatches`, `generationStart/End`,
 `changedDuringQuery`); `truncated: false` means the scope was exhaustively
@@ -203,6 +252,13 @@ manifest.
 | `vault_search` | `pattern` (+`literal`), `caseMode` smart/sensitive/insensitive, `wholeWord`, `multiline`, `pathPrefixes` (max 64), `includeGlobs`/`excludeGlobs` (raw rg semantics, case-sensitive), `extensions` (sugar, case-INsensitive on both surfaces), `contextBefore/After`, `mode` matches/files/counts, paging. Every mode returns the same item shape — `path` always, plus `line`/`column`/`text` (+`contextBefore`/`contextAfter`) in matches mode and `count` in counts mode; fields a mode does not fill are omitted. |
 | `vault_search_frontmatter` | `field`, `op` exists/equals/contains, `value`, `pathPrefix`. Response lists `unparseableFiles` — check it before trusting "no match". |
 | `vault_lint` | `pathPrefix`, `checks` (`unresolved_link`, `ambiguous_link`, `broken_anchor`, `table_pipe`, `table_needs_blank_line`), paging. Read-only link-graph checks, plus one structural one: a table with no blank line above its header row is absorbed into the paragraph — or the bullet — above it and renders as literal pipes (a table under a heading is fine and is not reported, nor is one inside a code fence or an indented code block). `pathPrefix` scopes what is REPORTED; the index is always whole-vault, since a link inside the scope can point anywhere. Embeds are not checked. Response lists `unexaminedFiles` — unreadable notes are valid link targets but their headings are unknown, so anchor findings against them are suppressed. Findings are observations, not a work list. With a `Lint:BaselinePath` baseline accepted, only findings absent from it are returned — `baselineCommit` names it, `suppressedByBaseline` counts the backlog, `all: true` includes it; `baselineCommit: null` means nothing was suppressed. |
+
+### Transfer grants
+
+| Tool | Essentials |
+|---|---|
+| `vault_download_prepare` | `items: [{path, expectSha256?}]` (1–16). Per-item grants `{downloadId, downloadUrl, downloadToken, expiresAt, path, sha256, byteLength, fetch}` or a typed error. `fetch` is fixed shell text (no token in it) to run with `TOKEN URL SHA LEN DEST` set: it pipes the token to `curl` on stdin, writes a private temp file, and moves it into place only after `sha256sum -c` passes. A grant serves ONCE (`GET`, full body, `Range` ignored); failure means prepare again. Declared a WRITER although it writes no vault byte, so harnesses ask a human and `Mcp:ReadOnly` hides it. |
+| `vault_upload_prepare`, `vault_upload_commit`, `vault_upload_status` | Not built: every call answers `[UploadDisabled]`. Their schemas are the final ones. |
 
 ### Mutations (all conditional; no unconditional write exists)
 
@@ -249,6 +305,10 @@ Tool errors are structured MCP errors whose message leads with the code:
 | `IoError` | Filesystem/OS failure (or rg/git missing). |
 | `Internal` | Unexpected server error (a bug, not your request). Details are in the server log, never on the wire. |
 | `QueryCancelled` | The request was cancelled at the transport before completion. |
+| `DownloadDisabled`, `UploadDisabled` | The transfer direction is off on this deployment (uploads are not built at all). **TERMINAL.** |
+| `DownloadNotPermitted` | Outside `Download:AllowedPrefixes`, or no verified principal to bind a grant to. **TERMINAL** — the allowlist is operator configuration. |
+| `DownloadCapacityExceeded` | The transfer byte budget or a grant slot is full right now; nothing was issued. Retry later or in a smaller round. |
+| `DownloadInvalidToken`, `DownloadExpired`, `DownloadAlreadyClaimed` | HTTP only (`GET /transfer/downloads/{id}` → 401 / 410 / 409, body `{code, message}`). Prepare again. A 401 never burns a valid grant. |
 
 ## Health & monitoring
 
@@ -322,16 +382,23 @@ Tool errors are structured MCP errors whose message leads with the code:
   as a real MCP client over the same transport agents use. **Read-only, and
   it must stay that way**: it is pointed at the production vault, where a
   stray write syncs to the user's devices. Checks `tools/list` against the
-  locked 13 names (a partially-registered surface answers without
+  locked 18 names (a partially-registered surface answers without
   complaint), the routing instruction, scan evidence on a no-match search
   (the live ripgrep-15 check), the completeness envelope, whole-file SHAs,
   and a typed `[NotFound]` from the mutation surface. The tool line reports
-  the count it saw (`ok tools/list is EXACTLY the locked surface (14 tools)`)
+  the count it saw (`ok tools/list is EXACTLY the locked surface (18 tools)`)
   — the set comparison is the stronger check, but a deployment checklist that
   asks for a number should not have to go get it from a second call. Through a tunnel it
   also checks the ingress contract: unauthenticated callers refused,
   `/health` unreachable from outside, `/up` disclosing booleans only, and the
-  monitoring token refused at the vault surface. Against a loopback URL
+  monitoring token refused at the vault surface. On every URL it also probes
+  the `/transfer` prefix with no credential (an unknown grant ID and an
+  encoded-slash escape) and passes only on a NAMED answer: the origin's 401
+  `DownloadInvalidToken` (downloads on), its 404 `DownloadDisabled` (off), its
+  404 `NotFound` for the escape, or — tunnelled — an Access refusal at the edge
+  (no Bypass yet — recognized only as a redirect to Access's login path or a
+  401 carrying the RFC 9728 pointer; any other 3xx or a flat 401/403 FAILS).
+  Against a loopback URL
   those ingress checks print `skip` — the same-box exemption is the thing
   they would be testing; `--expect-access` says an Access edge fronts this
   URL regardless of its shape, and turns the skips back into checks that
@@ -368,7 +435,7 @@ Tool errors are structured MCP errors whose message leads with the code:
 
   Every run prints the CLI's OWN build in its header
   (`verifying … · knapper CLI 0.5.1+gabc0dbf`) and a tally above the verdict
-  (`14 ok, 0 failed, 1 skipped`), and warns outright when the CLI is an older
+  (`15 ok, 0 failed, 1 skipped`), and warns outright when the CLI is an older
   release than the service. All three exist because everything else `verify`
   prints describes the far end: a stale CLI runs whatever check list *it*
   shipped with, and reports "all checks passed" over a shorter one without

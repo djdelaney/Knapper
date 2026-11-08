@@ -38,7 +38,9 @@ public sealed class VerifyCommandTests : IDisposable
         // passed the line above, exit 0, no skips, against a manifest Claude
         // Code rejected outright. The count rides on the ok line so an
         // operator can see the check actually inspected thirteen schemas.
-        output.ShouldContain("ok    every published tool schema is one a client can load (14 schemas)");
+        output.ShouldContain("ok    every published tool schema is one a client can load (18 schemas)");
+        output.ShouldContain("ok    the /transfer prefix answers only with transfer refusals (downloads off — the origin's " +
+            "transfer route answered; encoded-slash escape: refused by the origin's transfer catch-all)");
         output.ShouldContain("ok    a no-match search still reports exhaustive scan evidence");
         output.ShouldContain("ok    the mutation surface is wired and answers with typed codes");
         // Loopback is the Access exemption's own target: the ingress checks
@@ -202,6 +204,45 @@ public sealed class VerifyCommandTests : IDisposable
         output.ShouldContain("check(s) FAILED");
     }
 
+    /// <summary>
+    /// Review 2026-11-08: the /transfer probe used to accept ANY 3xx (and any
+    /// flat refusal) as "the edge refused it — no Bypass". A misrouted
+    /// redirect, a bare 304 and a flat 403 prove neither transfer handling
+    /// nor Access, so each must FAIL the line.
+    /// </summary>
+    [Theory]
+    [InlineData(302, "/up")]
+    [InlineData(304, null)]
+    [InlineData(403, null)]
+    public void A_misrouted_transfer_prefix_FAILS_rather_than_passing_as_an_edge_refusal(int status, string? location)
+    {
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir, FakeAccessEdge.OriginSettings);
+        using var edge = new FakeAccessEdge(server.Port, transferResponder: context =>
+        {
+            context.Response.StatusCode = status;
+            if (location is not null)
+                context.Response.Headers.Location = location;
+        });
+
+        var (exitCode, output) = RunVerify(edge);
+
+        exitCode.ShouldBe(1, output);
+        output.ShouldContain("FAIL  the /transfer prefix answers only with transfer refusals");
+    }
+
+    [Fact]
+    public void An_access_edge_with_no_transfer_bypass_names_the_edge_shape()
+    {
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir, FakeAccessEdge.OriginSettings);
+        using var edge = new FakeAccessEdge(server.Port, rootRefusal: RootRefusal.ManagedOAuth);
+
+        var (exitCode, output) = RunVerify(edge);
+
+        exitCode.ShouldBe(0, output);
+        output.ShouldContain("ok    the /transfer prefix answers only with transfer refusals (HTTP 401 at the edge with " +
+            "the RFC 9728 pointer (Managed OAuth) — no Bypass covers /transfer");
+    }
+
     [Fact]
     public void A_server_missing_one_tool_FAILS_the_surface_check()
     {
@@ -285,6 +326,28 @@ public sealed class VerifyCommandTests : IDisposable
     }
 
     /// <summary>
+    /// With downloads ON, the /transfer probe must reach the ORIGIN's route
+    /// and see it refuse an unknown grant by name (transfer-grants §9).
+    /// </summary>
+    [Fact]
+    public void Verify_names_an_enabled_download_route()
+    {
+        using var server = new AcceptanceServer(_vaultDir, _outsideDir, new Dictionary<string, string>
+        {
+            ["Transfer__LocalOnly"] = "true",
+            ["Transfer__PublicOrigin"] = "http://127.0.0.1:9",
+            ["Download__Enabled"] = "true",
+            ["Download__AllowedPrefixes__0"] = "Photos",
+        });
+
+        var (exitCode, output) = RunVerify(server.Port);
+
+        exitCode.ShouldBe(0, output);
+        output.ShouldContain("ok    the /transfer prefix answers only with transfer refusals (downloads ON — the origin " +
+            "refused an unknown grant; encoded-slash escape: refused by the origin's transfer catch-all)");
+    }
+
+    /// <summary>
     /// A read-only deployment (Mcp:ReadOnly) passes verify only when verify
     /// is TOLD to expect one — never inferred, or a partially registered
     /// server would pass as read-only — and then the write tools must be
@@ -299,7 +362,7 @@ public sealed class VerifyCommandTests : IDisposable
 
         var (code, output) = RunVerifyRaw("--url", url, "--expect-read-only");
         code.ShouldBe(0, output);
-        output.ShouldContain("ok    tools/list is EXACTLY the locked read-only surface (7 tools)");
+        output.ShouldContain("ok    tools/list is EXACTLY the locked read-only surface (9 tools)");
         output.ShouldContain("ok    the mutation surface is ABSENT (read-only profile)");
 
         var (plainCode, plain) = RunVerifyRaw("--url", url);

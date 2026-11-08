@@ -266,6 +266,22 @@ internal static class Verify
                     .FirstOrDefault();
             }).ConfigureAwait(false);
 
+            // The /transfer prefix (transfer-grants §9): the one place a
+            // path-scoped Bypass may send unauthenticated traffic to the
+            // origin. Read-only like every check here — an unknown grant ID
+            // and an encoded-slash escape, no credential. Each answer is a
+            // NAMED shape; "not 200" is never a pass.
+            await CheckAsync("the /transfer prefix answers only with transfer refusals", async () =>
+            {
+                using var http = NewClient(null);
+                using var grant = await http.GetAsync(
+                    new Uri(endpoint, "transfer/downloads/" + new string('A', 43))).ConfigureAwait(false);
+                var grantAnswer = await TransferAnswerAsync(grant, expectInvalidToken: true).ConfigureAwait(false);
+                using var escape = await http.GetAsync(new Uri(endpoint, "transfer/..%2Fmcp")).ConfigureAwait(false);
+                var escapeAnswer = await TransferAnswerAsync(escape, expectInvalidToken: false).ConfigureAwait(false);
+                return $"{grantAnswer}; encoded-slash escape: {escapeAnswer}";
+            }).ConfigureAwait(false);
+
             if (!Tunnelled)
             {
                 // Would FAIL on a loopback URL, and correctly so: the
@@ -384,6 +400,75 @@ internal static class Verify
         }
 
         /// <summary>Refusal or bust, returning the evidence for the ok line.</summary>
+        /// <summary>
+        /// What answered a credential-less request under /transfer, or a
+        /// throw. Three named passes: the ORIGIN's transfer route refusing an
+        /// unknown grant (downloads on — 401 carrying the KnapperDownload
+        /// challenge), the origin saying downloads are off (404
+        /// DownloadDisabled), or — tunnelled only — the EDGE refusing it
+        /// because no Bypass application covers the prefix. Anything else,
+        /// a 200 above all, means something other than the transfer handler
+        /// answered an unauthenticated request.
+        /// </summary>
+        private async Task<string> TransferAnswerAsync(HttpResponseMessage response, bool expectInvalidToken)
+        {
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            string? code = null;
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String)
+                {
+                    code = c.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            var status = (int)response.StatusCode;
+            if (expectInvalidToken && status == 401 && code == "DownloadInvalidToken"
+                && response.Headers.WwwAuthenticate.ToString() == "KnapperDownload")
+            {
+                return "downloads ON — the origin refused an unknown grant";
+            }
+            if (expectInvalidToken && status == 404 && code == "DownloadDisabled")
+                return "downloads off — the origin's transfer route answered";
+            if (!expectInvalidToken && status == 404 && code == "NotFound")
+                return "refused by the origin's transfer catch-all";
+            if (Tunnelled && AccessRefusalOfTransfer(response) is { } refusal)
+                return $"{refusal} — no Bypass covers /transfer";
+            throw new InvalidOperationException(
+                $"got HTTP {status}{(code is null ? "" : $" {code}")} — expected a transfer refusal from the origin " +
+                "or an Access refusal at the edge; something other than the transfer handler answered an " +
+                "unauthenticated request under /transfer");
+        }
+
+        /// <summary>
+        /// The EDGE refusing a /transfer request, recognized only by the two
+        /// shapes that carry evidence of Access itself — never the general
+        /// <see cref="Refusal"/>, which accepts any 3xx and any flat 401/403
+        /// (review 2026-11-08: a misrouted `302 Location: /up` and a bare 304
+        /// both passed as "no Bypass covers /transfer"). The two shapes:
+        /// a redirect to Access's login path (an identity policy), or a 401
+        /// carrying the RFC 9728 `resource_metadata` pointer (Managed OAuth).
+        /// A flat refusal under /transfer names no layer — and the origin's
+        /// own HostGuard answers a bare 403 — so it is not a pass.
+        /// </summary>
+        private static string? AccessRefusalOfTransfer(HttpResponseMessage response)
+        {
+            var code = (int)response.StatusCode;
+            if (code == 401 && HasProtectedResourcePointer(response))
+                return "HTTP 401 at the edge with the RFC 9728 pointer (Managed OAuth)";
+            if (code is 302 or 303 or 307 && response.Headers.Location is { IsAbsoluteUri: true } location
+                && location.AbsolutePath.StartsWith("/cdn-cgi/access/login", StringComparison.Ordinal))
+            {
+                return $"HTTP {code} at the edge → Access login on {location.Host}";
+            }
+            return null;
+        }
+
         private static string AssertRefused(HttpResponseMessage response, string why) =>
             Refusal(response) ?? throw new InvalidOperationException(
                 $"got HTTP {(int)response.StatusCode}; {why}. A refusal is 401/403, or a 3xx to the " +

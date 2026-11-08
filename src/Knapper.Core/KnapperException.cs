@@ -83,6 +83,33 @@ public enum VaultErrorCode
 
     /// <summary>Underlying filesystem or OS failure.</summary>
     IoError,
+
+    // ---- transfer grants (docs/proposals/transfer-grants.md §14) ----------
+
+    /// <summary>The download direction is turned off (<c>Download:Enabled</c> false). TERMINAL for this deployment.</summary>
+    DownloadDisabled,
+
+    /// <summary>The upload direction is turned off, or not built in this release. TERMINAL for this deployment.</summary>
+    UploadDisabled,
+
+    /// <summary>
+    /// The path is outside <c>Download:AllowedPrefixes</c>, or the caller has
+    /// no verified principal to bind a grant to. TERMINAL: the allowlist is
+    /// operator configuration, never something a retry changes.
+    /// </summary>
+    DownloadNotPermitted,
+
+    /// <summary>The shared transfer budget (bytes or grant slots) is full right now. Retry later; nothing was issued.</summary>
+    DownloadCapacityExceeded,
+
+    /// <summary>HTTP only: missing, malformed or wrong grant token, or an unknown grant ID. Reveals nothing about which.</summary>
+    DownloadInvalidToken,
+
+    /// <summary>HTTP only: the grant's lifetime ended before it was used. Prepare again.</summary>
+    DownloadExpired,
+
+    /// <summary>HTTP only: the grant has already been served once. Prepare again.</summary>
+    DownloadAlreadyClaimed,
 }
 
 /// <summary>

@@ -33,6 +33,9 @@ builder.Services.Configure<McpOptions>(builder.Configuration.GetSection(McpOptio
 builder.Services.Configure<SyncOptions>(builder.Configuration.GetSection(SyncOptions.SectionName));
 builder.Services.Configure<ConventionsOptions>(builder.Configuration.GetSection(ConventionsOptions.SectionName));
 builder.Services.Configure<LintOptions>(builder.Configuration.GetSection(LintOptions.SectionName));
+builder.Services.Configure<TransferOptions>(builder.Configuration.GetSection(TransferOptions.SectionName));
+builder.Services.Configure<DownloadOptions>(builder.Configuration.GetSection(DownloadOptions.SectionName));
+builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection(UploadOptions.SectionName));
 
 // The deployment's note-writing conventions. Validated in the factory (forced
 // at boot below) so a malformed value refuses startup rather than being
@@ -139,6 +142,36 @@ builder.Services.AddSingleton(sp => new VaultMutationService(
     sp.GetRequiredService<AuditLog>(),
     sp.GetRequiredService<ConventionChecker>()));
 builder.Services.AddSingleton<HealthService>();
+
+// ---- Transfer grants (docs/proposals/transfer-grants.md). Validated in the
+// factory (forced at boot below) by the ONE validator doctor also runs, so an
+// incoherent configuration — a half-enabled direction, an unusable origin,
+// local-only mode on an edge-fronted box — refuses startup.
+builder.Services.AddSingleton(sp =>
+{
+    var transfer = sp.GetRequiredService<IOptions<TransferOptions>>().Value;
+    var download = sp.GetRequiredService<IOptions<DownloadOptions>>().Value;
+    var problems = Knapper.Core.Transfer.TransferConfiguration.Validate(
+        transfer, download,
+        sp.GetRequiredService<IOptions<UploadOptions>>().Value,
+        sp.GetRequiredService<IOptions<McpOptions>>().Value,
+        sp.GetRequiredService<IOptions<SyncOptions>>().Value.MaxFileBytes);
+    if (problems.Count > 0)
+        throw new InvalidOperationException("Transfer configuration refused: " + string.Join(" ", problems));
+    return new Knapper.Core.Transfer.DownloadGrantStore(transfer, download);
+});
+builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.DownloadSnapshotReader(
+    sp.GetRequiredService<VaultPathResolver>(),
+    sp.GetRequiredService<IOptions<SyncOptions>>().Value,
+    sp.GetRequiredService<IOptions<DownloadOptions>>().Value));
+builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.DownloadService(
+    sp.GetRequiredService<Knapper.Core.Transfer.DownloadSnapshotReader>(),
+    sp.GetRequiredService<Knapper.Core.Transfer.DownloadGrantStore>(),
+    sp.GetRequiredService<AuditLog>(),
+    sp.GetRequiredService<IOptions<TransferOptions>>().Value,
+    sp.GetRequiredService<IOptions<DownloadOptions>>().Value));
+builder.Services.AddSingleton<TransferIdentity>();
+builder.Services.AddSingleton<TransferRefusalLog>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
 
 // The vault's display name for the instructions (Mcp:VaultName). Read at
@@ -237,6 +270,7 @@ _ = app.Services.GetRequiredService<KnapperMetrics>();
 _ = app.Services.GetRequiredService<AuditLog>();
 _ = app.Services.GetRequiredService<VaultMutationService>();
 _ = app.Services.GetRequiredService<LintBaselineStore>();
+_ = app.Services.GetRequiredService<Knapper.Core.Transfer.DownloadGrantStore>();
 _ = app.Services.GetRequiredService<IOptions<ModelContextProtocol.Server.McpServerOptions>>().Value;
 
 // The DI-resolved options — authoritative, reflecting env vars and every
@@ -370,6 +404,14 @@ var upEndpoint = app.MapGet("/up", (HealthService health) =>
 });
 
 var mcpEndpoint = app.MapMcp();
+
+// The whole /transfer prefix, deliberately WITHOUT an Access policy: the
+// edge's path-scoped Bypass sends everything under it here unauthenticated,
+// so one handler owns all of it and answers 404 for anything that is not a
+// grant route. The grant token and HostGuard (above) are the controls. No
+// other endpoint may ever be mapped under this prefix — a test enumerates
+// the route table.
+app.Map(TransferOptions.PathPrefix + "/{**rest}", TransferEndpoint.Handle);
 
 if (accessEnabled)
 {

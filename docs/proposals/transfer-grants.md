@@ -1,6 +1,8 @@
 # Proposal: transfer grants — moving files between agents and the vault
 
-**Status: not built. Reviewed 2026-11-08; the review's findings are folded
+**Status: download direction BUILT 2026-11-08 (unreleased; off by default);
+upload not built — its three tools are registered and answer
+`[UploadDisabled]`. Reviewed 2026-11-08; the review's findings are folded
 in below.** Consolidated 2026-11-07 from the upload-grants proposal of
 2026-09-05 and its three amendments. Everything below is current; nothing
 here is superseded by a later section. The earlier versions are in this
@@ -334,15 +336,18 @@ vault_download_prepare(items: [{ path, expectSha256? }])   // 1..16
   write in place while the read is in flight, and a read that straddles such
   a write returns bytes from two versions. Its hash is the hash of THAT
   snapshot, so the client's check passes and the agent holds a file that
-  never existed on disk. So prepare `fstat`s the SAME descriptor before and
-  after the read and compares size, mtime and ctime; on any change it
-  re-reads, up to a small bounded count, and fails `IoError` if the file
-  will not settle. The stat tuple is not proof of content (CLAUDE.md's
-  `Replace` rule) and is not used as one here: it only ever drives a RETRY,
-  never a decision to serve. The residual, an in-place writer that preserves
-  all three fields across a write landing inside one read, is the same
-  exposure `vault_read` has today, and the grant's hash describes what the
-  agent received, not that the file was ever quiescent in that state.
+  never existed on disk. **As built, the guard is by CONTENT**: prepare reads
+  the whole file TWICE through the same descriptor and serves the snapshot
+  only when both reads agree byte for byte and the descriptor's size and
+  mtime did not move across them; otherwise it re-reads, up to four
+  attempts, and fails `IoError` if the file will not settle. (The design
+  first proposed comparing size, mtime and ctime; the stat helper carries no
+  ctime, and a second read is the stronger proof anyway, in the codebase's
+  own currency.) The stat comparison only ever drives a RETRY, never a
+  decision to serve (CLAUDE.md's `Replace` rule). The residual is a writer
+  that stalls identically across both reads, and the grant's hash describes
+  what the agent received, not that the file was ever quiescent in that
+  state. At the 5 MiB ceiling the second read costs milliseconds.
 - **`expectSha256` is optional.** When supplied, a mismatch fails the item
   `PreconditionFailed` and issues nothing. When absent, the grant reports the
   snapshot's hash, which arrived over the authenticated channel and is
@@ -410,7 +415,9 @@ printf 'Authorization: KnapperUpload %s\n' "$TOKEN" |
        -T "$SRC" -H 'Content-Type: application/octet-stream' -H @- "$URL"
 ```
 
-Download (after prepare):
+Download (after prepare). **As built, this text IS the grant's `fetch`
+field**, prefixed by three shell-comment lines that say which variables to
+set, so the whole field runs as written:
 
 ```sh
 ( umask 077; tmp=$(mktemp "$(dirname "$DEST")/.knapper-dl.XXXXXX") &&

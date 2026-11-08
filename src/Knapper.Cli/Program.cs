@@ -305,6 +305,20 @@ int Doctor()
             : parts.Count == 0 ? "none" : string.Join(", ", parts);
         Check($"Conventions parse ({label})", () => problems.Count == 0);
     }
+    {
+        // The SAME validator startup runs, so doctor and the server can never
+        // disagree about a coherent transfer configuration (transfer-grants §10).
+        var transfer = configuration.GetSection(TransferOptions.SectionName).Get<TransferOptions>() ?? new TransferOptions();
+        var download = configuration.GetSection(DownloadOptions.SectionName).Get<DownloadOptions>() ?? new DownloadOptions();
+        var upload = configuration.GetSection(UploadOptions.SectionName).Get<UploadOptions>() ?? new UploadOptions();
+        var mcp = configuration.GetSection(McpOptions.SectionName).Get<McpOptions>() ?? new McpOptions();
+        var problems = Knapper.Core.Transfer.TransferConfiguration.Validate(transfer, download, upload, mcp, syncOptions.MaxFileBytes);
+        var state = download.Enabled
+            ? $"downloads ON, {download.AllowedPrefixes.Count(p => !string.IsNullOrWhiteSpace(p))} allowed prefix(es)"
+            : "downloads off";
+        var label = problems.Count > 0 ? "INVALID — " + string.Join(" ", problems) : state + ", uploads not built";
+        Check($"Transfer configuration coherent ({label})", () => problems.Count == 0);
+    }
     Check($"Vault:HealthScanBudgetMs within {VaultOptions.MinHealthScanBudgetMs}–{VaultOptions.MaxHealthScanBudgetMs} ({vaultOptions.HealthScanBudgetMs} ms)",
         () => VaultOptions.ValidateHealthScanBudget(vaultOptions.HealthScanBudgetMs) is null);
     Check("Vault:CommitStampPath outside the vault (or unset)",

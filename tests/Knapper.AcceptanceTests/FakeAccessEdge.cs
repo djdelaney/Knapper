@@ -88,6 +88,7 @@ internal sealed class FakeAccessEdge : IDisposable
     private readonly HttpClient _origin;
     private readonly bool _vaultSurfaceExposed;
     private readonly RootRefusal _rootRefusal;
+    private readonly Action<HttpContext>? _transferResponder;
 
     /// <param name="originPort">The real <see cref="AcceptanceServer"/> behind the edge.</param>
     /// <param name="vaultSurfaceExposed">
@@ -100,13 +101,20 @@ internal sealed class FakeAccessEdge : IDisposable
     /// application with the same policies — only Managed OAuth differs, and
     /// turning it on is what changed CT 106's 302s into 401s.
     /// </param>
+    /// <param name="transferResponder">
+    /// When set, answers every request under /transfer itself — a misrouted
+    /// or misconfigured edge, for proving verify does not mistake an arbitrary
+    /// refusal-ish status for Access refusing the transfer prefix.
+    /// </param>
     internal FakeAccessEdge(
         int originPort,
         bool vaultSurfaceExposed = false,
-        RootRefusal rootRefusal = RootRefusal.LoginRedirect)
+        RootRefusal rootRefusal = RootRefusal.LoginRedirect,
+        Action<HttpContext>? transferResponder = null)
     {
         _vaultSurfaceExposed = vaultSurfaceExposed;
         _rootRefusal = rootRefusal;
+        _transferResponder = transferResponder;
         _origin = new HttpClient
         {
             BaseAddress = new Uri($"http://127.0.0.1:{originPort}/"),
@@ -152,6 +160,12 @@ internal sealed class FakeAccessEdge : IDisposable
             await context.Response.WriteAsync(
                 "<!doctype html><html><head><title>Sign in</title></head>" +
                 "<body><h1>Sign in to continue</h1></body></html>");
+            return;
+        }
+
+        if (_transferResponder is not null && path.StartsWith("/transfer", StringComparison.Ordinal))
+        {
+            _transferResponder(context);
             return;
         }
 
