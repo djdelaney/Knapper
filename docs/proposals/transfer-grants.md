@@ -1,11 +1,18 @@
 # Proposal: transfer grants — moving files between agents and the vault
 
-**Status: not built. Open for review.** Consolidated 2026-11-07 from the
-upload-grants proposal of 2026-09-05 and its three amendments. Everything
-below is current; nothing here is superseded by a later section. The earlier
-versions are in this file's git history (it was `upload-grants.md` until
-2026-11-07). For what Knapper does today, read
-[architecture.md](../architecture.md) and [usage.md](../usage.md).
+**Status: not built. Reviewed 2026-11-08; the review's findings are folded
+in below.** Consolidated 2026-11-07 from the upload-grants proposal of
+2026-09-05 and its three amendments. Everything below is current; nothing
+here is superseded by a later section. The earlier versions are in this
+file's git history (it was `upload-grants.md` until 2026-11-07). For what
+Knapper does today, read [architecture.md](../architecture.md) and
+[usage.md](../usage.md).
+
+The 2026-11-08 review changed five things: commit now scans text payloads for
+secrets BEFORE the write (§4.3); download prepare guards against a torn read
+(§5.1); open decision 1 is closed by the brief (§16); `vault_download_prepare`
+is marked as a writer (§13); and §9 says plainly which layer protects the MCP
+route when the edge Bypass misbehaves.
 
 Reviewers: the questions this document cannot settle on its own are in
 §16 (open decisions), and the places it most needs a skeptical read are in
@@ -235,6 +242,21 @@ vault_upload_commit(uploadIds: [string])
   containment checks on both sides, byte verification. No network read
   happens while vault locks are held. An existing file keeps its mode; a new
   one gets the normal create mode.
+- **A text payload is scanned for secrets BEFORE it lands.** `SecretScanner`
+  refuses the vault's git commit when any staged file holds a
+  credential-shaped string, and `GitCommitJob` retries every tick, so one
+  such file stops the WHOLE vault reaching history until a human edits it.
+  Today that takes an agent typing a secret into `vault_create`; an upload
+  makes it a one-liner (a 2 MB log, a `.env`, a shell history). So commit
+  runs the same scanner over a payload that is strict UTF-8 text, inside the
+  audited region and before any temp file exists, and refuses the item
+  `SecretDetected` with the finding MASKED exactly as the committer masks it.
+  The grant goes terminal; the bytes never reach the vault. Binary payloads
+  are not scanned, which is the standing attachment rule, not a new gap. The
+  pre-existing path (`vault_create` with a secret in the text) has the same
+  consequence and is out of scope here; whether the text tools should get
+  the same pre-landing scan is a question for `docs/extending.md`'s open
+  decisions, not this proposal.
 - **The receipt is the ordinary mutation receipt plus the upload ID.** Its
   new hash must equal the source hash bound into the grant. That proves
   transfer fidelity, not that the content is correct.
@@ -269,6 +291,20 @@ vault_download_prepare(items: [{ path, expectSha256? }])   // 1..16
   the call or be followed. The whole file is read once into memory, bounded
   by `Sync__MaxFileBytes` (over it: `TooLarge`), and hashed. That snapshot is
   what the GET will serve.
+- **The read is guarded against a torn snapshot.** It takes no lock, and
+  the locks bind only Knapper writers anyway: Sync and a human shell can
+  write in place while the read is in flight, and a read that straddles such
+  a write returns bytes from two versions. Its hash is the hash of THAT
+  snapshot, so the client's check passes and the agent holds a file that
+  never existed on disk. So prepare `fstat`s the SAME descriptor before and
+  after the read and compares size, mtime and ctime; on any change it
+  re-reads, up to a small bounded count, and fails `IoError` if the file
+  will not settle. The stat tuple is not proof of content (CLAUDE.md's
+  `Replace` rule) and is not used as one here: it only ever drives a RETRY,
+  never a decision to serve. The residual, an in-place writer that preserves
+  all three fields across a write landing inside one read, is the same
+  exposure `vault_read` has today, and the grant's hash describes what the
+  agent received, not that the file was ever quiescent in that state.
 - **`expectSha256` is optional.** When supplied, a mismatch fails the item
   `PreconditionFailed` and issues nothing. When absent, the grant reports the
   snapshot's hash, which arrived over the authenticated channel and is
@@ -302,6 +338,10 @@ Authorization: KnapperDownload <token>
   `X-Content-Type-Options: nosniff`, and `Content-Disposition: attachment`
   with no filename. The vault path never appears in a URL or header, so it
   never reaches edge logs.
+- **`Range` is ignored: the response is always 200 with the full body.** A
+  206 would fail the client's hash check with a misleading error. The same
+  goes for conditional headers (`If-None-Match`, `If-Modified-Since`): no
+  304, no `ETag`, no `Last-Modified`.
 - **The first admitted GET claims and burns the grant**, and the snapshot is
   freed once it has been served. A dropped connection, a partial body or a
   failed local hash means prepare again; preparing is a cheap idempotent
@@ -335,13 +375,18 @@ printf 'Authorization: KnapperUpload %s\n' "$TOKEN" |
 Download (after prepare):
 
 ```sh
-umask 077; tmp=$(mktemp "$(dirname "$DEST")/.knapper-dl.XXXXXX")
-printf 'Authorization: KnapperDownload %s\n' "$TOKEN" |
+( umask 077; tmp=$(mktemp "$(dirname "$DEST")/.knapper-dl.XXXXXX") &&
+  printf 'Authorization: KnapperDownload %s\n' "$TOKEN" |
   curl --fail -sS --proto '=https' --max-redirs 0 --max-time 120 \
        --max-filesize "$LEN" -H @- -o "$tmp" "$URL" &&
   echo "$SHA  $tmp" | sha256sum -c - &&
-  mv "$tmp" "$DEST" || { rm -f "$tmp"; false; }
+  mv "$tmp" "$DEST" || { rm -f "$tmp"; false; } )
 ```
+
+The subshell matters: `umask` is a shell builtin, and without the
+parentheses it would stay changed for the rest of the agent's shell
+invocation and quietly tighten the mode of every file that invocation
+creates afterwards.
 
 How the recipes hold the design's properties:
 
@@ -364,6 +409,19 @@ How the recipes hold the design's properties:
 - **`--proto` comes from the grant.** It is `'=https'`, or `'=http'` on a
   local-only deployment (§8.3), and the `send`/`fetch` hint names the right
   value.
+- **The upload URL never ends in `/`.** With `-T`, curl appends the local
+  file's name to a URL that ends in a slash, and the request would go to a
+  path no route serves. The grant URL ends in the upload ID, so this cannot
+  happen; the recipe test pins it anyway, because a future URL shape that
+  reintroduced the slash would fail every upload with a 404 that looks like
+  a routing bug.
+- **A one-second stall on upload is not a fault.** curl sends
+  `Expect: 100-continue` for larger bodies and waits for the 100 before
+  sending them. If the edge strips the header or never relays the interim
+  response, curl gives up waiting after one second and sends the body
+  anyway; the upload still succeeds, one second slower. Gate zero (§15)
+  measures which of the two the edge does, so the delay is known rather
+  than diagnosed.
 
 Verified 2026-11-07 against a local stub server (curl 8.7.1, macOS): the
 header-on-stdin form authenticates, `--fail` turns a 401 into exit 22 with
@@ -521,7 +579,27 @@ Access and origin owner authentication still protect every MCP call.
 
 This is a deliberate hole in the property the ingress design exists to hold,
 that nothing reaches the vault surface unauthenticated, on a host serving
-the owner's whole personal life. The two holes are not equal:
+the owner's whole personal life. Say precisely where the hole is: **at the
+edge only.** The origin validates the `Cf-Access-Jwt-Assertion` itself
+(`AccessAuth`, the brief's B2 origin-side validation), so if Cloudflare's
+path precedence or URL normalization ever sends a bare request for `/mcp`
+through the Bypass, the origin still demands a valid assertion and answers
+401. That origin check is what makes a path-scoped Bypass on the vault's own
+hostname tolerable, and it is the reason the check must never be relaxed for
+"requests that came through the tunnel". The transfer routes themselves have
+no such second layer by design: on them, the grant token and `HostGuard` are
+all there is, in EITHER hostname arrangement. The `/up` monitoring app
+already relies on path-scoped precedence on this hostname in production,
+which is evidence for gate zero, not a substitute for it.
+
+A separate hostname for transfers (one more DNS name and tunnel ingress rule
+to the same origin, with the origin binding each route to its Host) is the
+recommended hygiene: the vault hostname then keeps its clean property
+unconditionally, and the worst edge mistake on the transfer hostname (a
+Bypass at `/`) exposes only routes that carry their own authentication. It
+is a deployment choice, not a precondition: the origin's assertion check is
+what protects the MCP route, and it holds either way. The two holes are not
+equal:
 
 - **A PUT defect** can at worst stage bytes that still need an authenticated
   commit.
@@ -700,9 +778,16 @@ in the vault can be switched off by the agents it constrains.
   - `vault_stat` hashes any file, including ones above the read cap, so it
     supplies a replacement precondition without returning content.
   - The git secret scanner and the conflict rules apply to committed uploads
-    as to any write.
+    as to any write; the pre-landing scan in §4.3 is in ADDITION to the
+    committer's, never instead of it.
+  - Every committed binary, and every replacement of one, adds a blob to the
+    vault's local git repository. That is already true of binaries Sync
+    delivers; uploads make it easier to do often.
   - Local byte verification does not prove Sync delivery: the replicas'
-    Sync file-type settings must carry scripts and attachments.
+    Sync file-type settings must carry scripts and attachments. The CT's
+    `ob` is configured with `image,audio,video,pdf,unsupported` (runbook
+    §4), so an uploaded binary leaves the CT; every OTHER device decides for
+    itself whether to pull it.
 
 ## 13. Agent instructions and the tool surface
 
@@ -734,7 +819,25 @@ a problem; the fix is never a longer field.
 | `vault_upload_prepare` | yes (writes no vault bytes) | none; its description points to commit's |
 | `vault_upload_commit` | no | writing and placement: the path is chosen at prepare but lands at commit |
 | `vault_upload_status` | yes | none |
-| `vault_download_prepare` | yes | none |
+| `vault_download_prepare` | **no** (see below) | none; exempted by name |
+
+**`vault_download_prepare` is marked as a writer although it writes no vault
+byte**, for two reasons that are both about what the flag MEANS rather than
+what the tool does. Harnesses auto-approve tools that declare
+`readOnlyHint`, and this one exports bytes past the host boundary into a
+workspace where outbound tools can reach them; the human should be asked.
+And `Mcp:ReadOnly` deployments DERIVE their served set from the attribute,
+so `ReadOnly = true` would put byte export onto a read-only deployment
+automatically, with nobody choosing it. The attribute means "safe on a
+restricted surface", and this tool is not. Two consequences:
+`ToolNames.ReadOnly` does NOT list it; and `ConventionsWireTests`, which
+derives the writer set from the hints and demands a `VaultConventions.Clauses`
+entry for each, gets an explicit exemption keyed by this tool's NAME, with
+the reason beside it, so the next tool that forgets its clause still fails
+the test. A read-only deployment that sets `Upload:Enabled` refuses to boot
+under the half-enabled rule in §10, because `Mcp:ReadOnly` disables
+`vault_upload_commit`; that is correct and must be written in the
+configuration reference.
 
 All four names go in all three locked tables (`ToolSurface.All`, the
 attributes, `ToolNames.All`, with `ToolNames.ReadOnly` matching), even when a
@@ -837,8 +940,10 @@ responses are possible. A disconnect or stream I/O failure records
 `UploadTransferFailed`; a disconnected client need not receive a response.
 
 New codes in the shared typed vocabulary: the HTTP codes above, plus
-`UploadNotFound`, `UploadNotReady`, `UploadReplacementDisabled` and
-`DownloadNotPermitted`. Commit failures use the existing mutation codes
+`UploadNotFound`, `UploadNotReady`, `UploadReplacementDisabled`,
+`DownloadNotPermitted` and `SecretDetected` (§4.3; TERMINAL for the grant,
+its message carries the scanner's MASKED finding and never the matched
+text). Commit failures otherwise use the existing mutation codes
 unchanged. HTTP and MCP share one definition of the transfer states and
 errors rather than two mappings of their meaning.
 
@@ -896,7 +1001,14 @@ those are their own deployment task.
   is preserved.
 - **Vault rules on the byte path.** A convention-breaking Markdown upload
   gets the same warnings `vault_create` gives; an archived replace is refused
-  and an archived create allowed (extend `ArchivedMutationTests`).
+  and an archived create allowed (extend `ArchivedMutationTests`). A text
+  payload carrying a credential-shaped string fails `SecretDetected` with no
+  temp file created and the matched text absent from the error, the audit
+  and the log; a binary payload containing the same bytes is not scanned and
+  lands.
+- **Download integrity.** A file rewritten in place during prepare's read
+  is re-read, and the served snapshot hashes to a version that existed on
+  disk; a `Range` or conditional GET gets the full 200 body and no `ETag`.
 - **Batches.** Per-item results, duplicate paths refused, one stale item
   does not block the rest, and capacity is refused per item.
 - **Crashes.** Process death during receive, ready and commit produces the
@@ -933,19 +1045,23 @@ read-only.
 
 ## 16. Open decisions
 
-1. **Ship conditional replacement on by default?** The recurring upload
-   case is a revision, not a first store: the motivating script was revised
-   four times in three weeks. Create-only would deliver attachments and
-   first-time storage while leaving that case on the anchored-edit path it
-   already has, so it must not be presented as the answer to it. The options:
-   - **Enable `AllowReplace` by default**, under the discipline in §4: a
-     mandatory nonempty `expectSha256`, a fresh check under the lock at
-     commit, no upsert, no substituted hash. A deployment can still turn it
-     off.
-   - **Or read brief §7 as forbidding conditional whole-file replacement**,
-     and say plainly that uploads do not serve revisions. Note that §7's
-     prohibition is on UNCONDITIONAL writes, and `vault_edit` already replaces
-     a whole file under exactly this precondition when its anchors span it.
+1. **Conditional replacement: CLOSED 2026-11-08, settled by the brief.**
+   Brief §7's table has a row for exactly this operation: full-file write is
+   "Disabled by default. If retained: `expect_sha256` for replacement or
+   explicit `expect_absent` for creation." This design's `create` mode IS
+   the `expect_absent` form and its `replace` mode IS the retained form, so
+   the brief answers both halves of the question that was open here: build
+   conditional replacement under the §4 discipline (a mandatory nonempty
+   `expectSha256`, a fresh check under the lock at commit, no upsert, no
+   substituted hash), and ship `Upload:AllowReplace` **false by default**,
+   with the operator enabling it per deployment. The two options this
+   section used to weigh were both wrong against the brief: enabling by
+   default contradicts "disabled by default", and reading §7 as a
+   prohibition on conditional replacement misreads a prohibition on
+   UNCONDITIONAL writes. The recurring case this serves is still a revision
+   (the motivating script was revised four times in three weeks), so a
+   deployment that leaves the flag off must not present uploads as the
+   answer to revisions; the anchored-edit path stays the answer there.
 2. **What can be downloaded?**
    - **Recommended: the fail-closed operator allowlist** in §10. Empty means
      nothing, and the first entry is chosen for a real use. Widening is a
@@ -966,9 +1082,12 @@ read-only.
 
 ## 17. Where review is most useful
 
-- **The edge exception (§9).** Is a path-scoped Bypass on the vault's own
-  hostname acceptable at all, or should transfers live on a separate
-  hostname with nothing else behind it?
+- **The edge exception (§9).** Reviewed 2026-11-08: a path-scoped Bypass on
+  the vault's hostname is tolerable because the ORIGIN validates the Access
+  assertion on the MCP route, so an edge surprise reaches a 401, not the
+  vault. A separate hostname is recommended hygiene, not a precondition.
+  Still open: whether to take the hygiene, and gate zero's measurement of
+  the edge's actual behaviour.
 - **The download threat model (§3, §5, §16.2).** Does serving only
   in-memory snapshots bound a GET authentication defect the way §3 claims?
   Is the audited prepare enough record of what left the vault?
@@ -978,10 +1097,15 @@ read-only.
   in the harnesses you use?
 - **Local-only mode (§8.3).** Is the refusal set tight enough that no
   edge-fronted deployment can ever mint the local principal?
-- **The read-only hints (§13).** `vault_download_prepare` writes nothing, so
-  this draft marks it read-only. But harnesses often auto-approve read-only
-  tools, and this one exports bytes. Should it be marked as a writer so the
-  harness asks first?
+- **The read-only hints (§13).** Settled 2026-11-08: `vault_download_prepare`
+  is marked as a writer. The deciding argument was not harness approval
+  alone but `Mcp:ReadOnly`, which derives a restricted deployment's surface
+  from the attribute and would have served byte export there by default.
+- **The download read's torn-snapshot guard (§5.1).** Is a stat-before-and-
+  after retry the right shape, given this codebase's recorded position that
+  a stat tuple proves nothing about content? Here it only triggers a re-read
+  and never a decision to serve, which is the distinction the guard rests
+  on.
 
 ## 18. Considered and rejected
 
