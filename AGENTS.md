@@ -828,7 +828,24 @@ Download grants are built; uploads are registered but answer
   that list
   (`Planted_hooks_fsmonitor_and_signing_programs_never_run`). The scanner's
   size cap is for ATTACHMENTS: text formats are scanned at any size, or every
-  note between the cap and Sync's ceiling enters history unscanned.
+  note between the cap and Sync's ceiling enters history unscanned. **WHICH
+  bytes are scanned and HOW they are decoded is `SecretScanPolicy`'s alone**
+  (`ShouldScan`, `Decode`), shared with the upload commit's pre-landing scan:
+  a pre-scan narrower than the committer admits exactly the files that then
+  refuse every commit (a Latin-1 `.env`, a key inside a binary under the cap).
+  The committer reads blobs as raw BYTES (`GitProcess.RunBytes`) and decodes
+  through the policy — never a process stdout reader's own decoding. And a
+  byte-order mark is two bytes, not proof of encoding: a non-UTF-8 mark gets
+  BOTH readings scanned, because a file merely starting `FF FE` was read as
+  UTF-16 and hid every credential in it (found 2026-11-08). Parity also
+  needs STAGING to leave the bytes alone, so a staged path with an effective
+  `working-tree-encoding` attribute refuses the commit (like a filter
+  driver): it re-encodes on `add`, and a UTF-16 credential invisible to the
+  pre-scan appeared in the staged blob — an upload that passes, then refuses
+  every commit (review 2026-11-08). Pinned by
+  `SecretScanPolicyTests`, whose differential runs both callers over the same
+  payloads against KNOWN verdicts — agreement alone passed while both sides
+  were blind.
 
 ## Query-layer invariants (silent-corruption-prone)
 

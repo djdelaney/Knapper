@@ -289,7 +289,15 @@ vault_upload_commit(uploadIds: [string])
   the decode become ONE shared definition in `Knapper.Core.Git`, used by
   both callers. The committer reads the blob as bytes and calls the same
   decoder rather than relying on its process stdout reader, so the two cannot
-  disagree about BOMs or invalid sequences. A payload neither scans is
+  disagree about BOMs or invalid sequences. **Built 2026-11-08** as `SecretScanPolicy`
+  (`ShouldScan`, `Decode`, `Scan`). Building it found a blind spot the
+  committer already had: a byte-order mark is two bytes, so a file that
+  merely started `FF FE` was decoded wholesale as UTF-16 and hid every
+  credential in it. A non-UTF-8 mark now gets both readings scanned. Review
+  of the build found the other half of parity: `git add` itself re-encodes
+  a path carrying `working-tree-encoding`, so a UTF-16 credential the
+  pre-scan cannot see appears in the staged blob. The committer refuses any
+  staged path with that attribute, as it refuses a filter driver. A payload neither scans is
   over 4,000,000 bytes with a non-text extension, which is the committer's
   standing attachment limit, not a new gap. A binary that matches by
   accident is refused here rather than wedging every commit later, which is

@@ -26,28 +26,8 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
 
     public sealed record CommitOutcome(bool Committed, string? CommitSha, string Message);
 
-    /// <summary>
-    /// Blobs above this are not text-scanned. The scanner is a tripwire for
-    /// credential-shaped TEXT in notes; anything this large is
-    /// attachment-class (Sync deliberately delivers image/audio/video/pdf —
-    /// brief §5), and cat-file'ing it would materialize every synced photo
-    /// into a string on every commit run. A DOCUMENTED limitation like the
-    /// scanner's line-based matching — not a silent skip: the size check
-    /// itself failing still refuses the commit.
-    /// </summary>
-    public const long MaxScanBlobBytes = 4_000_000;
-
-    /// <summary>
-    /// Text formats scanned at ANY size: the cap above exists for attachment-
-    /// class blobs, and applying it to notes left every .md between the cap and
-    /// Sync's 5 MiB ceiling committed unscanned. The extension only
-    /// CLASSIFIES; the bytes are still fetched by blob SHA, never by name.
-    /// </summary>
-    internal static readonly HashSet<string> AlwaysScannedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".md", ".txt", ".json", ".canvas", ".yaml", ".yml", ".csv", ".env", ".ini", ".conf",
-        ".toml", ".xml", ".html", ".js", ".ts", ".py", ".sh", ".ps1", ".sql", ".log",
-    };
+    /// <summary>The attachment cap, now owned by <see cref="SecretScanPolicy"/> (shared with the upload pre-scan).</summary>
+    public const long MaxScanBlobBytes = SecretScanPolicy.MaxScanBytes;
 
     /// <summary>
     /// Wall-clock bound on any one git invocation. Every git call in this
@@ -122,6 +102,7 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
             if (staged.Length == 0)
                 return Stamped(new CommitOutcome(false, null, "nothing to commit"), successStampPath);
 
+            RequireNoContentConversion(staged);
             var findings = ScanStaged(staged);
             if (findings.Count > 0)
             {
@@ -193,6 +174,54 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
         }
     }
 
+    /// <summary>
+    /// The attributes `git add` uses to RE-ENCODE content on its way into the
+    /// index. The secret scan reads the STAGED blob, and the upload commit's
+    /// pre-landing scan reads the payload's own bytes; the two agree only if
+    /// staging leaves the bytes alone. `working-tree-encoding` does not: a
+    /// credential stored as UTF-16 without a mark is invisible to the
+    /// pre-scan and appears in UTF-8 in the staged blob, so an upload passes
+    /// and then refuses every vault commit — the exact failure the shared
+    /// policy exists to prevent (review 2026-11-08). Line-ending
+    /// normalization and `ident` cannot CREATE a credential-shaped run, so
+    /// they stay legal; `filter` is refused separately, before `add`.
+    /// </summary>
+    internal static readonly string[] ContentConvertingAttributes = ["working-tree-encoding"];
+
+    /// <summary>
+    /// Refuse the commit when any staged path has an effective
+    /// content-converting attribute — from an in-tree `.gitattributes` (vault
+    /// content Sync delivers) or `.git/info/attributes` (writable by the
+    /// service account). Like a filter driver, Knapper never sets one, so it
+    /// is refused rather than honoured; the index is reset so the tree is left
+    /// as Sync left it. Reading attributes runs nothing.
+    /// </summary>
+    private void RequireNoContentConversion(string rawZ)
+    {
+        var paths = StagedEntries(rawZ).Where(e => !e.Status.StartsWith('D')).Select(e => e.Path).ToList();
+        foreach (var chunk in paths.Chunk(200))
+        {
+            // -z: <path> NUL <attribute> NUL <value> NUL, per path and attribute.
+            var answer = Run(["check-attr", "-z", .. ContentConvertingAttributes, "--", .. chunk])
+                .Split('\0');
+            var converting = new List<string>();
+            for (var i = 0; i + 2 < answer.Length; i += 3)
+            {
+                if (answer[i + 2] is not ("unspecified" or "unset"))
+                    converting.Add($"{answer[i]} ({answer[i + 1]}={answer[i + 2]})");
+            }
+            if (converting.Count > 0)
+            {
+                Run("reset");
+                throw new KnapperException(VaultErrorCode.MutationBlocked,
+                    $"commit refused: git attributes would re-encode staged content ({string.Join(", ", converting.Take(5))}" +
+                    $"{(converting.Count > 5 ? ", …" : "")}), so the secret scan could not see what enters history. " +
+                    "Knapper never sets one — inspect .gitattributes in the vault and .git/info/attributes, remove " +
+                    "the attribute, and commit again.");
+            }
+        }
+    }
+
     /// <summary>Age of HEAD in seconds, or null when there is no commit yet — for the freshness monitor.</summary>
     public double? LastCommitAgeSeconds()
     {
@@ -220,14 +249,18 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// rev), and ANY fetch failure refuses the whole commit: a scan that
     /// cannot run must never be mistaken for a scan that found nothing.
     /// </summary>
-    private List<SecretScanner.Finding> ScanStaged(string rawZ)
+    /// <summary>
+    /// The entries of `diff --cached --raw -z`: NUL-framed (meta, path)
+    /// pairs. Unparseable input fails closed — never a partial list that
+    /// would leave content unscanned.
+    /// </summary>
+    private static List<(string BlobSha, string Status, string Path)> StagedEntries(string rawZ)
     {
-        var findings = new List<SecretScanner.Finding>();
+        var entries = new List<(string, string, string)>();
         var tokens = rawZ.Split('\0');
         for (var i = 0; i + 1 < tokens.Length; i += 2)
         {
             var meta = tokens[i];
-            var path = tokens[i + 1];
             if (meta.Length == 0)
                 break; // trailing NUL
             var fields = meta.TrimStart(':').Split(' ');
@@ -236,8 +269,16 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
                 throw new KnapperException(VaultErrorCode.IoError,
                     "unparseable `git diff --cached --raw -z` entry — refusing to commit unscanned content");
             }
-            var newBlobSha = fields[3];
-            var status = fields[4];
+            entries.Add((fields[3], fields[4], tokens[i + 1]));
+        }
+        return entries;
+    }
+
+    private List<SecretScanner.Finding> ScanStaged(string rawZ)
+    {
+        var findings = new List<SecretScanner.Finding>();
+        foreach (var (newBlobSha, status, path) in StagedEntries(rawZ))
+        {
             if (status.StartsWith('D'))
                 continue; // deletion: no new content can enter history
 
@@ -247,9 +288,13 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
                 // Size first (cat-file -s is metadata-only): attachment-class
                 // blobs are skipped per MaxScanBlobBytes, never materialized.
                 var size = long.Parse(Run("cat-file", "-s", newBlobSha).Trim());
-                if (size > MaxScanBlobBytes && !AlwaysScannedExtensions.Contains(Path.GetExtension(path)))
+                // Coverage and decoding are SecretScanPolicy's, never decided
+                // here: the upload commit's pre-landing scan uses the same
+                // two calls, and a disagreement admits a file that then
+                // refuses every commit (transfer-grants §4.3).
+                if (!SecretScanPolicy.ShouldScan(path, size))
                     continue;
-                content = Run("cat-file", "blob", newBlobSha);
+                content = SecretScanPolicy.Decode(RunBytes("cat-file", "blob", newBlobSha));
             }
             catch (Exception e) when (e is KnapperException or FormatException or OverflowException)
             {
@@ -270,5 +315,9 @@ public sealed class GitCommitJob(VaultPathResolver resolver, VaultLockManager lo
     /// </summary>
     private string Run(params string[] args) =>
         GitProcess.Run(GitExecutable, resolver.Root, TimeoutMs,
+            "the commit is abandoned and will be retried on the next tick", args);
+
+    private byte[] RunBytes(params string[] args) =>
+        GitProcess.RunBytes(GitExecutable, resolver.Root, TimeoutMs,
             "the commit is abandoned and will be retried on the next tick", args);
 }

@@ -126,6 +126,45 @@ internal static class GitProcess
     }
 
     /// <summary>
+    /// <see cref="Run"/> for a command whose stdout is BYTES, not text
+    /// (`cat-file blob`): the secret scan must decode a blob itself, through
+    /// <see cref="SecretScanPolicy.Decode"/>, so the committer and the upload
+    /// pre-scan read identical text. Same discipline as <see cref="Execute"/>:
+    /// both pipes drained concurrently, every wait bounded.
+    /// </summary>
+    internal static byte[] RunBytes(string git, string root, int timeoutMs, string consequence, params string[] args)
+    {
+        var psi = StartInfo(git, root, args);
+        using var process = Start(psi);
+        var stdoutTask = DrainAsync(process.StandardOutput.BaseStream);
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(timeoutMs))
+        {
+            Kill(process);
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"git {args[0]} did not exit within {timeoutMs} ms and was killed — {consequence}");
+        }
+        if (!Task.WaitAll([stdoutTask, stderrTask], timeoutMs))
+        {
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"git {args[0]} exited but its output pipes stayed open past {timeoutMs} ms — {consequence}");
+        }
+        if (process.ExitCode != 0)
+        {
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"git {args[0]} failed ({process.ExitCode}): {stderrTask.GetAwaiter().GetResult().Trim()}");
+        }
+        return stdoutTask.GetAwaiter().GetResult();
+
+        static async Task<byte[]> DrainAsync(Stream stream)
+        {
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer).ConfigureAwait(false);
+            return buffer.ToArray();
+        }
+    }
+
+    /// <summary>
     /// Start git, TYPED on failure: a missing or unexecutable binary is
     /// Win32Exception from Process.Start, which would otherwise reach a
     /// client as an untyped internal error instead of an IoError naming git.
