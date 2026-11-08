@@ -2,11 +2,9 @@ using Knapper.Core.Mutation;
 
 namespace Knapper.Core.Transfer;
 
-// The upload direction's wire shapes (docs/proposals/transfer-grants.md
-// §14). NOT BUILT in this release: the three upload tools are registered with
-// these final shapes so neither the tool names nor their schemas move when
-// upload ships, and every call answers [UploadDisabled]. Nothing constructs
-// these yet; they exist to be published as outputSchema.
+// The upload direction's wire shapes (docs/proposals/transfer-grants.md §14).
+// Item states are the seven upload states in lower case, plus "unknown" for
+// an ID the caller cannot see.
 
 public sealed record UploadGrant(
     string UploadId,
@@ -33,13 +31,18 @@ public sealed record UploadCommitItem(
 
 public sealed record UploadCommitResult(IReadOnlyList<UploadCommitItem> Items);
 
+/// <summary>
+/// One grant's state. The grant fields are null only for an ID this
+/// principal cannot see (<c>UploadNotFound</c>, state <c>unknown</c>) —
+/// unknown, forgotten and other-principal IDs look alike.
+/// </summary>
 public sealed record UploadStatusItem(
     string UploadId,
     string State,
-    DateTimeOffset ExpiresAt,
-    string Path,
-    string SourceSha256,
-    long ByteLength,
+    DateTimeOffset? ExpiresAt,
+    string? Path,
+    string? SourceSha256,
+    long? ByteLength,
     MutationResult? Result,
     string? ErrorCode,
     string? ErrorMessage);

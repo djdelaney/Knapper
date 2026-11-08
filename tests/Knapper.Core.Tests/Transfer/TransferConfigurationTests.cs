@@ -37,9 +37,47 @@ public class TransferConfigurationTests
     public void A_local_only_download_configuration_is_coherent() =>
         Validate(Origin("http://127.0.0.1:3535", localOnly: true), On()).ShouldBeEmpty();
 
+    private static UploadOptions UploadOn() => new() { Enabled = true };
+
     [Fact]
-    public void Upload_cannot_be_enabled_before_it_is_built() =>
-        Validate(u: new UploadOptions { Enabled = true }).ShouldHaveSingleItem().ShouldContain("not built");
+    public void A_production_shaped_upload_configuration_is_coherent() =>
+        Validate(Origin("https://vault.example.com"), On(), UploadOn(), EdgeFronted()).ShouldBeEmpty();
+
+    [Fact]
+    public void Uploads_on_a_read_only_deployment_are_refused()
+    {
+        var mcp = EdgeFronted();
+        mcp.ReadOnly = true;
+        Validate(Origin("https://vault.example.com"), u: UploadOn(), m: mcp)
+            .ShouldContain(p => p.Contains("Upload:Enabled") && p.Contains("Mcp:ReadOnly"));
+    }
+
+    [Theory]
+    [InlineData("vault_upload_prepare")]
+    [InlineData("vault_upload_commit")]
+    [InlineData("vault_upload_status")]
+    public void Hiding_any_upload_tool_refuses_the_direction(string tool)
+    {
+        var mcp = EdgeFronted();
+        mcp.DisabledTools = [tool];
+        Validate(Origin("https://vault.example.com"), u: UploadOn(), m: mcp).ShouldContain(p => p.Contains(tool));
+    }
+
+    [Fact]
+    public void Upload_limits_must_be_coherent()
+    {
+        var origin = Origin("https://vault.example.com");
+        Validate(origin, u: new UploadOptions { Enabled = true, GrantLifetimeSeconds = 60, ReceiveTimeoutSeconds = 120 }, m: EdgeFronted())
+            .ShouldContain(p => p.Contains("ReceiveTimeoutSeconds"));
+        Validate(origin, u: new UploadOptions { Enabled = true, MaxActiveGrants = 2, MaxConcurrentReceives = 3, MaxActiveGrantsPerPrincipal = 2 },
+                m: EdgeFronted())
+            .ShouldContain(p => p.Contains("MaxConcurrentReceives"));
+        Validate(origin, u: new UploadOptions { Enabled = true, ReceiptRetentionSeconds = 1 }, m: EdgeFronted())
+            .ShouldContain(p => p.Contains("ReceiptRetentionSeconds"));
+        // Tracked records must cover BOTH directions' active grants together.
+        Validate(new TransferOptions { PublicOrigin = "https://vault.example.com", MaxTrackedGrants = 20 }, On(), UploadOn(), EdgeFronted())
+            .ShouldContain(p => p.Contains("MaxTrackedGrants"));
+    }
 
     [Fact]
     public void A_read_only_deployment_refuses_downloads()

@@ -65,15 +65,35 @@ public sealed class DownloadOptions
     public int MaxActiveGrantsPerPrincipal { get; set; } = 16;
 }
 
-/// <summary>
-/// The upload direction (§4). NOT BUILT in this release: its three tools are
-/// registered so the tool-name contract moves once, and answer
-/// <c>UploadDisabled</c>. Turning it on refuses startup rather than enabling
-/// nothing.
-/// </summary>
+/// <summary>The upload direction (§4). Off by default.</summary>
 public sealed class UploadOptions
 {
     public const string SectionName = "Upload";
 
+    /// <summary>Enables the three upload tools and <c>PUT /transfer/uploads/*</c> together.</summary>
     public bool Enabled { get; set; }
+
+    /// <summary>
+    /// Permit conditional whole-file replacement (<c>mode: "replace"</c>).
+    /// Off by default per brief §7 ("full-file write: disabled by default").
+    /// Replacement is always conditional on a fresh <c>expectSha256</c>; this
+    /// only decides whether a deployment offers it at all.
+    /// </summary>
+    public bool AllowReplace { get; set; }
+
+    /// <summary>Issued-to-commit-start lifetime.</summary>
+    public int GrantLifetimeSeconds { get; set; } = 600;
+
+    /// <summary>Absolute deadline for one PUT's body, from the moment it is admitted.</summary>
+    public int ReceiveTimeoutSeconds { get; set; } = 60;
+
+    public int MaxActiveGrants { get; set; } = 16;
+
+    public int MaxActiveGrantsPerPrincipal { get; set; } = 16;
+
+    /// <summary>Simultaneous admitted PUTs; a PUT over the limit gets 429 and claims nothing.</summary>
+    public int MaxConcurrentReceives { get; set; } = 4;
+
+    /// <summary>How long a terminal outcome stays answerable by commit and status.</summary>
+    public int ReceiptRetentionSeconds { get; set; } = 900;
 }

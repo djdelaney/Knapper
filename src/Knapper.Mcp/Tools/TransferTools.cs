@@ -45,20 +45,11 @@ public sealed class VaultDownloadPrepareTool(DownloadService downloads, Transfer
             support.Caller()));
 }
 
-// ---- Upload: registered, not built (decision 4). Final shapes, so neither
-// the names nor the schemas move when upload ships; every call refuses.
-
-internal static class UploadNotBuilt
-{
-    internal const string Message =
-        "uploads are not available on this server — use vault_create, vault_edit or vault_append";
-
-    internal static T Refuse<T>(ToolSupport support, string tool) =>
-        support.Run<T>(tool, () => throw new KnapperException(VaultErrorCode.UploadDisabled, Message));
-}
+// ---- Upload (§4). Prepare binds destination and exact source bytes; the PUT
+// only stages; commit lands them through the ordinary conditional write.
 
 [McpServerToolType]
-public sealed class VaultUploadPrepareTool(ToolSupport support)
+public sealed class VaultUploadPrepareTool(UploadService uploads, TransferIdentity identity, ToolSupport support)
 {
     public sealed record UploadItem(
         [property: Description("Vault-relative destination path")] string Path,
@@ -67,39 +58,55 @@ public sealed class VaultUploadPrepareTool(ToolSupport support)
         [property: Description("\"create\" (destination must be absent) or \"replace\"")] string Mode,
         [property: Description("Replace only: the destination's current sha256")] string? ExpectSha256 = null);
 
+    // ReadOnly: it writes no vault byte — the PUT only stages, and the write
+    // happens at vault_upload_commit, which is a writer and prompts.
     [McpServerTool(Name = "vault_upload_prepare", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
     [Description(
-        "Upload grants are not available on this server yet: every call fails [UploadDisabled]. To put content " +
-        "in the vault use vault_create, vault_edit or vault_append. When enabled, this authorizes uploading " +
-        "local files byte-exact over plain curl — but whenever you hold a file's current bytes, an anchored " +
-        "vault_edit is cheaper and safer; uploads are for new files, binaries and wholesale rewrites.")]
+        "Upload files from YOUR disk into the vault byte-exact: new files, binaries (photos, PDFs) and wholesale " +
+        "rewrites. If you hold a file's current bytes, an anchored vault_edit is cheaper and safer — use it for " +
+        "evolving text. RULES: (1) Hash first: sourceSha256 = sha256sum of the local file, byteLength = its size; " +
+        "the server binds both. (2) Each grant works ONCE and expires in minutes; keep the token OFF the command " +
+        "line — run the grant's `send` recipe, which pipes it to curl on stdin. (3) Nothing lands until " +
+        "vault_upload_commit; the PUT only stages bytes. (4) curl exit 0: commit. 22: read the printed {code} — " +
+        "UploadHashMismatch or UploadSizeMismatch mean the file changed: re-hash and prepare again; " +
+        "UploadAlreadyClaimed: call vault_upload_status. 6/7/35/60: never connected, nothing was claimed; retry the " +
+        "same grant, and if it repeats your sandbox is probably blocking the network: tell the user, do not loop. " +
+        "28/52/55/56: dropped mid-transfer — call vault_upload_status, never re-send blindly. mode \"create\" needs " +
+        "the path absent; \"replace\" needs expectSha256 from a fresh read and is off unless the operator allows it " +
+        "([UploadReplacementDisabled]). Parent folders must exist. 1–16 items per call.")]
     public UploadPrepareResult Prepare(
         [Description("Files to upload (1–16)")] UploadItem[] items) =>
-        UploadNotBuilt.Refuse<UploadPrepareResult>(support, "vault_upload_prepare");
+        support.Run("vault_upload_prepare", () => uploads.Prepare(
+            identity.Current(),
+            items is null ? null : [.. items.Select(i => i is null ? null! :
+                new UploadPrepareRequest(i.Path, i.SourceSha256, i.ByteLength, i.Mode, i.ExpectSha256))],
+            support.Caller()));
 }
 
 [McpServerToolType]
-public sealed class VaultUploadCommitTool(ToolSupport support)
+public sealed class VaultUploadCommitTool(UploadService uploads, TransferIdentity identity, ToolSupport support)
 {
     // Kept no longer than vault_create's own description: the two carry the
     // same convention clauses, so a deployment whose vault_create fits the
     // delivery budget is guaranteed this fits too (a test pins the order).
     [McpServerTool(Name = "vault_upload_commit", UseStructuredContent = true, ReadOnly = false, OpenWorld = false)]
     [Description(
-        "Upload grants are not available on this server yet: every call fails [UploadDisabled]. Write vault " +
-        "content with vault_create, vault_edit or vault_append instead.")]
+        "Land staged uploads (state ready) through the normal conditional write; the receipt hash equals the " +
+        "source hash. Items commit independently: a stale base or a secret fails only its own item.")]
     public UploadCommitResult Commit(
         [Description("Upload IDs from vault_upload_prepare")] string[] uploadIds) =>
-        UploadNotBuilt.Refuse<UploadCommitResult>(support, "vault_upload_commit");
+        support.Run("vault_upload_commit", () => uploads.Commit(identity.Current(), uploadIds, support.Caller()));
 }
 
 [McpServerToolType]
-public sealed class VaultUploadStatusTool(ToolSupport support)
+public sealed class VaultUploadStatusTool(UploadService uploads, TransferIdentity identity, ToolSupport support)
 {
     [McpServerTool(Name = "vault_upload_status", UseStructuredContent = true, ReadOnly = true, OpenWorld = false)]
     [Description(
-        "Upload grants are not available on this server yet: every call fails [UploadDisabled].")]
+        "State of upload grants — issued, receiving, ready, committing, succeeded, failed, expired, or unknown — and " +
+        "the outcome once terminal. Use it after an uncertain transfer (curl exit 28/52/55/56) instead of re-sending: " +
+        "ready means commit, receiving means wait, failed or expired means prepare again. It never starts a write.")]
     public UploadStatusResult Status(
         [Description("Upload IDs from vault_upload_prepare")] string[] uploadIds) =>
-        UploadNotBuilt.Refuse<UploadStatusResult>(support, "vault_upload_status");
+        support.Run("vault_upload_status", () => uploads.Status(identity.Current(), uploadIds));
 }

@@ -1,8 +1,8 @@
 # Proposal: transfer grants — moving files between agents and the vault
 
-**Status: download direction BUILT 2026-11-08 (unreleased; off by default);
-upload not built — its three tools are registered and answer
-`[UploadDisabled]`. Reviewed 2026-11-08; the review's findings are folded
+**Status: download direction BUILT and DEPLOYED (v0.13.0, 2026-11-08);
+upload direction BUILT 2026-11-08 on branch `transfer-grants-upload`
+(unreleased; off by default). Reviewed 2026-11-08; the review's findings are folded
 in below.** Consolidated 2026-11-07 from the upload-grants proposal of
 2026-09-05 and its three amendments. Everything below is current; nothing
 here is superseded by a later section. The earlier versions are in this

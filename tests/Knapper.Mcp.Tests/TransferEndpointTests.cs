@@ -220,7 +220,8 @@ public class TransferDisabledTests : IClassFixture<KnapperMcpFactory>
 public class TransferStartupRefusalTests
 {
     [Theory]
-    [InlineData("Upload:Enabled", "true")]
+    [InlineData("Upload:MaxConcurrentReceives", "0")]
+    [InlineData("Mcp:DisabledTools:0", "vault_upload_commit")]
     [InlineData("Mcp:ReadOnly", "true")]
     [InlineData("Mcp:DisabledTools:0", "vault_download_prepare")]
     [InlineData("Transfer:PublicOrigin", "http://vault.example.com")]
@@ -232,6 +233,7 @@ public class TransferStartupRefusalTests
             ["Transfer:PublicOrigin"] = "http://127.0.0.1:3535",
             ["Download:Enabled"] = "true",
             ["Download:AllowedPrefixes:0"] = "Photos",
+            ["Upload:Enabled"] = "true",
             [key] = value,
         };
         using var factory = new KnapperMcpFactory(settings);

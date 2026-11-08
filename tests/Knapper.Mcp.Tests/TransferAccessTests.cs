@@ -103,6 +103,44 @@ public sealed class TransferAccessTests : IDisposable
         result.ToString().ShouldContain("[DownloadNotPermitted]");
     }
 
+    /// <summary>
+    /// An upload is bound to the principal that prepared it (§8.1): another
+    /// verified identity — here a service token — cannot see or commit it.
+    /// The PUT itself carries no assertion, exactly as through the Bypass.
+    /// </summary>
+    [Fact]
+    public async Task An_upload_commits_only_for_the_principal_that_prepared_it()
+    {
+        var bytes = "uploaded over the edge\n"u8.ToArray();
+        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+        var owner = await RawMcp.OpenAsync(Tunnelled(Mint(sub: "user-123")));
+        var prepared = await owner.CallToolAsync("vault_upload_prepare", new
+        {
+            items = new[] { new { path = "Notes/edge.md", sourceSha256 = sha, byteLength = (long)bytes.Length, mode = "create" } },
+        });
+        var grant = prepared.GetProperty("structuredContent").GetProperty("items")[0].GetProperty("grant");
+        grant.GetProperty("uploadUrl").GetString()!.ShouldStartWith("https://mcp.example.com/transfer/uploads/");
+
+        var put = new HttpRequestMessage(HttpMethod.Put, new Uri(grant.GetProperty("uploadUrl").GetString()!).PathAndQuery)
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        put.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        put.Headers.Authorization = new AuthenticationHeaderValue("KnapperUpload", grant.GetProperty("uploadToken").GetString());
+        (await Tunnelled(null).SendAsync(put)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var id = grant.GetProperty("uploadId").GetString();
+        var stranger = await RawMcp.OpenAsync(Tunnelled(Mint(commonName: "svc-client.access")));
+        var theirs = await stranger.CallToolAsync("vault_upload_commit", new { uploadIds = new[] { id } });
+        theirs.GetProperty("structuredContent").GetProperty("items")[0].GetProperty("errorCode").GetString()
+            .ShouldBe("UploadNotFound");
+        File.Exists(Path.Combine(_factory.VaultDir, "Notes/edge.md")).ShouldBeFalse();
+
+        var mine = await owner.CallToolAsync("vault_upload_commit", new { uploadIds = new[] { id } });
+        mine.GetProperty("structuredContent").GetProperty("items")[0].GetProperty("state").GetString().ShouldBe("succeeded");
+        _factory.ReadVaultFile("Notes/edge.md").ShouldBe("uploaded over the edge\n");
+    }
+
     private static string Mint(string? sub = null, string? email = null, string? commonName = null)
     {
         var claims = new Dictionary<string, object>();
@@ -136,6 +174,7 @@ public sealed class TransferAccessTests : IDisposable
             ["Transfer:PublicOrigin"] = "https://" + PublicHost,
             ["Download:Enabled"] = "true",
             ["Download:AllowedPrefixes:0"] = "Notes",
+            ["Upload:Enabled"] = "true",
         })
         {
         }

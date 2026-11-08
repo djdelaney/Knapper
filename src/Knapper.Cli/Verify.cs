@@ -276,10 +276,18 @@ internal static class Verify
                 using var http = NewClient(null);
                 using var grant = await http.GetAsync(
                     new Uri(endpoint, "transfer/downloads/" + new string('A', 43))).ConfigureAwait(false);
-                var grantAnswer = await TransferAnswerAsync(grant, expectInvalidToken: true).ConfigureAwait(false);
+                var grantAnswer = await TransferAnswerAsync(grant, "Download").ConfigureAwait(false);
+                // An empty PUT under an unknown ID: refused before any body is
+                // read, and an invalid token never claims anything — so this
+                // stays read-only against a live deployment.
+                using var empty = new ByteArrayContent([]);
+                empty.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                using var upload = await http.PutAsync(
+                    new Uri(endpoint, "transfer/uploads/" + new string('A', 43)), empty).ConfigureAwait(false);
+                var uploadAnswer = await TransferAnswerAsync(upload, "Upload").ConfigureAwait(false);
                 using var escape = await http.GetAsync(new Uri(endpoint, "transfer/..%2Fmcp")).ConfigureAwait(false);
-                var escapeAnswer = await TransferAnswerAsync(escape, expectInvalidToken: false).ConfigureAwait(false);
-                return $"{grantAnswer}; encoded-slash escape: {escapeAnswer}";
+                var escapeAnswer = await TransferAnswerAsync(escape, null).ConfigureAwait(false);
+                return $"{grantAnswer}; {uploadAnswer}; encoded-slash escape: {escapeAnswer}";
             }).ConfigureAwait(false);
 
             if (!Tunnelled)
@@ -410,7 +418,8 @@ internal static class Verify
         /// a 200 above all, means something other than the transfer handler
         /// answered an unauthenticated request.
         /// </summary>
-        private async Task<string> TransferAnswerAsync(HttpResponseMessage response, bool expectInvalidToken)
+        /// <param name="direction">"Download" or "Upload" for a grant route; null for the catch-all escape.</param>
+        private async Task<string> TransferAnswerAsync(HttpResponseMessage response, string? direction)
         {
             var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             string? code = null;
@@ -428,14 +437,15 @@ internal static class Verify
             }
 
             var status = (int)response.StatusCode;
-            if (expectInvalidToken && status == 401 && code == "DownloadInvalidToken"
-                && response.Headers.WwwAuthenticate.ToString() == "KnapperDownload")
+            var plural = direction?.ToLowerInvariant() + "s";
+            if (direction is not null && status == 401 && code == $"{direction}InvalidToken"
+                && response.Headers.WwwAuthenticate.ToString() == $"Knapper{direction}")
             {
-                return "downloads ON — the origin refused an unknown grant";
+                return $"{plural} ON — the origin refused an unknown grant";
             }
-            if (expectInvalidToken && status == 404 && code == "DownloadDisabled")
-                return "downloads off — the origin's transfer route answered";
-            if (!expectInvalidToken && status == 404 && code == "NotFound")
+            if (direction is not null && status == 404 && code == $"{direction}Disabled")
+                return $"{plural} off — the origin's transfer route answered";
+            if (direction is null && status == 404 && code == "NotFound")
                 return "refused by the origin's transfer catch-all";
             if (Tunnelled && AccessRefusalOfTransfer(response) is { } refusal)
                 return $"{refusal} — no Bypass covers /transfer";

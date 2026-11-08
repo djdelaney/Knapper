@@ -110,6 +110,50 @@ public enum VaultErrorCode
 
     /// <summary>HTTP only: the grant has already been served once. Prepare again.</summary>
     DownloadAlreadyClaimed,
+
+    /// <summary>No verified principal to bind an upload grant to. TERMINAL for the request.</summary>
+    UploadNotPermitted,
+
+    /// <summary>Unknown, expired-and-forgotten, or another principal's upload ID — deliberately indistinguishable.</summary>
+    UploadNotFound,
+
+    /// <summary>Commit asked of a grant whose bytes have not arrived (issued or receiving). Nothing was consumed.</summary>
+    UploadNotReady,
+
+    /// <summary><c>replace</c> mode while <c>Upload:AllowReplace</c> is off. TERMINAL for this deployment.</summary>
+    UploadReplacementDisabled,
+
+    /// <summary>The transfer budget, a grant slot, or the concurrent-receiver limit is full right now; nothing was claimed.</summary>
+    UploadCapacityExceeded,
+
+    /// <summary>HTTP only: missing, malformed or wrong upload token, or an unknown ID.</summary>
+    UploadInvalidToken,
+
+    /// <summary>The grant's lifetime ended before the transfer or the commit started. Prepare again.</summary>
+    UploadExpired,
+
+    /// <summary>HTTP only: the grant already took its one PUT. Call <c>vault_upload_status</c>; never re-send blindly.</summary>
+    UploadAlreadyClaimed,
+
+    /// <summary>The body was longer or shorter than the bound length. The grant is spent; re-hash and prepare again.</summary>
+    UploadSizeMismatch,
+
+    /// <summary>The body's sha256 is not the bound one — the local file changed. The grant is spent; re-hash and prepare again.</summary>
+    UploadHashMismatch,
+
+    /// <summary>The body did not arrive within <c>Upload:ReceiveTimeoutSeconds</c>. The grant is spent.</summary>
+    UploadTransferTimeout,
+
+    /// <summary>The connection failed mid-body. The grant is spent.</summary>
+    UploadTransferFailed,
+
+    /// <summary>
+    /// The payload carries a credential-shaped string the git committer would
+    /// refuse — one such file stops every vault commit. TERMINAL for the
+    /// grant; the message carries the scanner's MASKED finding, never the
+    /// matched text.
+    /// </summary>
+    SecretDetected,
 }
 
 /// <summary>

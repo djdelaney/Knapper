@@ -913,6 +913,28 @@ the Claude Code app. A new session alone keeps the cached manifest (observed
 2026-11-08: two fresh sessions after the v0.13.0 deploy still listed 14 tools,
 before the app restart). The same was seen at v0.6.0 for a live session.
 
+### 6.7 Transfer grants — uploads (optional, after 6.6)
+
+Off by default. The §6.6 Bypass already covers `/transfer/uploads/*`, so
+enabling uploads is an origin change only: add
+`Environment=Upload__Enabled=true` (and `Environment=Upload__AllowReplace=true`
+only if agents may replace existing files — always conditional on a fresh
+hash; brief §7 keeps it off by default) to the unit and to `REQUIRED_ENV`,
+then restart. `knapper doctor` prints `uploads ON (create only)` or
+`(replace allowed)`, and `verify`'s transfer line gains `uploads ON — the
+origin refused an unknown grant`.
+
+First-deployment measurements, dated and marked observed when taken:
+- a 2–5 MB upload end to end from a real harness: prepare, the grant's
+  `send` text run as written, commit, and the landed file's sha256 equal to
+  the source's. curl sends `Expect: 100-continue` above 1 MiB; if the edge
+  does not relay the interim `100`, the upload still succeeds about one
+  second later, which is the only cost;
+- the audit chain for that upload: `upload_prepare`, `upload_transfer`
+  (`ready`), then the mutation's `create` (or `replace`) lines, all with the
+  same `GrantId`:
+  `grep '"GrantId":"<id>"' /var/lib/knapper/audit.jsonl`.
+
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh

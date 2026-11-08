@@ -40,7 +40,8 @@ public sealed class VerifyCommandTests : IDisposable
         // operator can see the check actually inspected thirteen schemas.
         output.ShouldContain("ok    every published tool schema is one a client can load (18 schemas)");
         output.ShouldContain("ok    the /transfer prefix answers only with transfer refusals (downloads off — the origin's " +
-            "transfer route answered; encoded-slash escape: refused by the origin's transfer catch-all)");
+            "transfer route answered; uploads off — the origin's transfer route answered; encoded-slash escape: " +
+            "refused by the origin's transfer catch-all)");
         output.ShouldContain("ok    a no-match search still reports exhaustive scan evidence");
         output.ShouldContain("ok    the mutation surface is wired and answers with typed codes");
         // Loopback is the Access exemption's own target: the ingress checks
@@ -330,7 +331,7 @@ public sealed class VerifyCommandTests : IDisposable
     /// and see it refuse an unknown grant by name (transfer-grants §9).
     /// </summary>
     [Fact]
-    public void Verify_names_an_enabled_download_route()
+    public void Verify_names_enabled_transfer_routes()
     {
         using var server = new AcceptanceServer(_vaultDir, _outsideDir, new Dictionary<string, string>
         {
@@ -338,13 +339,15 @@ public sealed class VerifyCommandTests : IDisposable
             ["Transfer__PublicOrigin"] = "http://127.0.0.1:9",
             ["Download__Enabled"] = "true",
             ["Download__AllowedPrefixes__0"] = "Photos",
+            ["Upload__Enabled"] = "true",
         });
 
         var (exitCode, output) = RunVerify(server.Port);
 
         exitCode.ShouldBe(0, output);
         output.ShouldContain("ok    the /transfer prefix answers only with transfer refusals (downloads ON — the origin " +
-            "refused an unknown grant; encoded-slash escape: refused by the origin's transfer catch-all)");
+            "refused an unknown grant; uploads ON — the origin refused an unknown grant; encoded-slash escape: " +
+            "refused by the origin's transfer catch-all)");
     }
 
     /// <summary>

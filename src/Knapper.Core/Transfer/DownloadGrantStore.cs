@@ -30,13 +30,19 @@ public sealed class DownloadGrantStore : IDisposable
     private readonly Dictionary<string, Grant> _grants = new(StringComparer.Ordinal);
     private readonly HashSet<Reservation> _pending = [];
     private readonly ITimer _sweeper;
-    private long _bufferedBytes;
+    private readonly TransferBudget _budget;
 
-    public DownloadGrantStore(TransferOptions transfer, DownloadOptions download, TimeProvider? time = null)
+    /// <param name="budget">
+    /// The budget shared with the upload direction (one per process). Null
+    /// gives this store a private one — tests only.
+    /// </param>
+    public DownloadGrantStore(
+        TransferOptions transfer, DownloadOptions download, TimeProvider? time = null, TransferBudget? budget = null)
     {
         _transfer = transfer;
         _download = download;
         _time = time ?? TimeProvider.System;
+        _budget = budget ?? new TransferBudget(transfer);
         // Expiry is swept on store access AND on a bounded timer, so an idle
         // server does not hold an abandoned snapshot past its lifetime.
         _sweeper = _time.CreateTimer(_ => Sweep(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -147,22 +153,12 @@ public sealed class DownloadGrantStore : IDisposable
             var mine = ActiveLocked(principal);
             if (mine >= _download.MaxActiveGrantsPerPrincipal)
                 throw Capacity($"this principal holds {mine} active download grants (Download:MaxActiveGrantsPerPrincipal)");
-            if (_grants.Count + _pending.Count >= _transfer.MaxTrackedGrants)
-                throw Capacity($"{_grants.Count + _pending.Count} grant records are tracked (Transfer:MaxTrackedGrants {_transfer.MaxTrackedGrants})");
-            long after;
-            try
-            {
-                after = checked(_bufferedBytes + bytes);
-            }
-            catch (OverflowException)
-            {
-                throw Capacity("the transfer byte budget would overflow");
-            }
-            if (after > _transfer.MaxBufferedBytes)
-                throw Capacity($"the transfer byte budget is full ({_bufferedBytes} of {_transfer.MaxBufferedBytes} bytes in use)");
+            // One record slot (held for the grant's whole retained life) and
+            // the declared bytes (held until served, expired or revoked).
+            if (_budget.TryTake(bytes, 1) is { } why)
+                throw Capacity(why);
             var reservation = new Reservation(this, principal, bytes);
             _pending.Add(reservation);
-            _bufferedBytes = after;
             return reservation;
         }
     }
@@ -232,7 +228,7 @@ public sealed class DownloadGrantStore : IDisposable
                 return;
             reservation.Done = true;
             if (_pending.Remove(reservation))
-                _bufferedBytes -= reservation.Bytes;
+                _budget.Return(reservation.Bytes, 1);
         }
     }
 
@@ -244,8 +240,8 @@ public sealed class DownloadGrantStore : IDisposable
     {
         lock (_lock)
         {
-            if (_grants.Remove(downloadId, out var grant) && grant.Snapshot is not null)
-                _bufferedBytes -= grant.Length;
+            if (_grants.Remove(downloadId, out var grant))
+                _budget.Return(grant.Snapshot is not null ? grant.Length : 0, 1);
         }
     }
 
@@ -281,15 +277,8 @@ public sealed class DownloadGrantStore : IDisposable
         }
     }
 
-    /// <summary>Bytes currently counted against the budget (tests, metrics).</summary>
-    public long BufferedBytes
-    {
-        get
-        {
-            lock (_lock)
-                return _bufferedBytes;
-        }
-    }
+    /// <summary>Bytes currently counted against the budget (tests, metrics; the shared total when shared).</summary>
+    public long BufferedBytes => _budget.Bytes;
 
     /// <summary>Tracked records, active and terminal (tests, metrics).</summary>
     public int TrackedCount
@@ -317,8 +306,8 @@ public sealed class DownloadGrantStore : IDisposable
         {
             if (now >= grant.ExpiresAtTimestamp)
                 ExpireLocked(grant);
-            if (now >= grant.ForgetAtTimestamp)
-                _grants.Remove(id);
+            if (now >= grant.ForgetAtTimestamp && _grants.Remove(id))
+                _budget.Return(0, 1);
         }
     }
 
@@ -326,21 +315,17 @@ public sealed class DownloadGrantStore : IDisposable
     {
         if (grant.Snapshot is not null)
         {
-            _bufferedBytes -= grant.Length;
+            _budget.Return(grant.Length, 0);
             grant.Snapshot = null;
         }
     }
 
-    private void FreeBytes(long length)
-    {
-        lock (_lock)
-            _bufferedBytes -= length;
-    }
+    private void FreeBytes(long length) => _budget.Return(length, 0);
 
     private static KnapperException Capacity(string why) =>
         new(VaultErrorCode.DownloadCapacityExceeded, $"{why} — nothing was issued; try again shortly or in a later round");
 
-    private static string NewSecret() => Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(SecretBytes));
+    internal static string NewSecret() => Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(SecretBytes));
 
     /// <summary>Digest of a well-formed encoded secret, or null for anything malformed.</summary>
     internal static byte[]? Digest(string? encoded)

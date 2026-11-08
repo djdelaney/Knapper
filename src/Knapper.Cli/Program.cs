@@ -316,7 +316,10 @@ int Doctor()
         var state = download.Enabled
             ? $"downloads ON, {download.AllowedPrefixes.Count(p => !string.IsNullOrWhiteSpace(p))} allowed prefix(es)"
             : "downloads off";
-        var label = problems.Count > 0 ? "INVALID — " + string.Join(" ", problems) : state + ", uploads not built";
+        var uploadState = upload.Enabled
+            ? $"uploads ON ({(upload.AllowReplace ? "replace allowed" : "create only")})"
+            : "uploads off";
+        var label = problems.Count > 0 ? "INVALID — " + string.Join(" ", problems) : state + ", " + uploadState;
         Check($"Transfer configuration coherent ({label})", () => problems.Count == 0);
     }
     Check($"Vault:HealthScanBudgetMs within {VaultOptions.MinHealthScanBudgetMs}–{VaultOptions.MaxHealthScanBudgetMs} ({vaultOptions.HealthScanBudgetMs} ms)",

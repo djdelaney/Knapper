@@ -30,6 +30,7 @@ public class ToolResponseConformanceTests
             ["Transfer:PublicOrigin"] = "http://127.0.0.1:3535",
             ["Download:Enabled"] = "true",
             ["Download:AllowedPrefixes:0"] = "conformance",
+            ["Upload:Enabled"] = "true",
         });
         factory.Seed("conformance/edit-me.md", "before text\n");
         factory.Seed("conformance/append-me.md", "first line\n");
@@ -134,19 +135,29 @@ public class ToolResponseConformanceTests
             },
         });
 
-        // Registered but not built (transfer-grants decision 4): they never
-        // return a result, so there is nothing to conform. Each must refuse
-        // with the typed code instead — and nothing else may hide here.
-        string[] notBuilt = ["vault_upload_prepare", "vault_upload_commit", "vault_upload_status"];
-        foreach (var tool in notBuilt)
+        // Uploads: a real prepare → PUT → commit → status, so every upload
+        // tool's SUCCESS shape is checked, plus one per-item failure each.
+        var payload = "uploaded\n"u8.ToArray();
+        var payloadSha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(payload));
+        var prepared = await Call("vault_upload_prepare", new
         {
-            var refused = await session.CallToolAsync(tool, tool == "vault_upload_prepare"
-                ? new { items = new[] { new { path = "x.md", sourceSha256 = new string('a', 64), byteLength = 1L, mode = "create" } } }
-                : new { uploadIds = new[] { "x" } });
-            refused.GetProperty("isError").GetBoolean().ShouldBeTrue();
-            refused.ToString().ShouldContain("[UploadDisabled]");
-            covered.Add(tool);
-        }
+            items = new object[]
+            {
+                new { path = "conformance/uploaded.md", sourceSha256 = payloadSha, byteLength = (long)payload.Length, mode = "create" },
+                new { path = "conformance/edit-me.md", sourceSha256 = payloadSha, byteLength = (long)payload.Length, mode = "create" },
+            },
+        });
+        var grant = prepared.GetProperty("items")[0].GetProperty("grant");
+        var put = new HttpRequestMessage(HttpMethod.Put, new Uri(grant.GetProperty("uploadUrl").GetString()!).PathAndQuery)
+        {
+            Content = new ByteArrayContent(payload),
+        };
+        put.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        put.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("KnapperUpload", grant.GetProperty("uploadToken").GetString());
+        (await factory.CreateClient().SendAsync(put)).StatusCode.ShouldBe(System.Net.HttpStatusCode.OK);
+        var uploadId = grant.GetProperty("uploadId").GetString();
+        await Call("vault_upload_commit", new { uploadIds = new[] { uploadId, "no-such-upload" } });
+        await Call("vault_upload_status", new { uploadIds = new[] { uploadId, "no-such-upload" } });
 
         problems.ShouldBeEmpty(string.Join("\n", problems));
         // A tool added to the surface without a case here would otherwise go

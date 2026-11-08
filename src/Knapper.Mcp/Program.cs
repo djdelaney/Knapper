@@ -144,22 +144,32 @@ builder.Services.AddSingleton(sp => new VaultMutationService(
 builder.Services.AddSingleton<HealthService>();
 
 // ---- Transfer grants (docs/proposals/transfer-grants.md). Validated in the
-// factory (forced at boot below) by the ONE validator doctor also runs, so an
-// incoherent configuration — a half-enabled direction, an unusable origin,
-// local-only mode on an edge-fronted box — refuses startup.
+// budget's factory (forced at boot below) by the ONE validator doctor also
+// runs, so an incoherent configuration — a half-enabled direction, an
+// unusable origin, local-only mode on an edge-fronted box — refuses startup.
+// ONE budget per process: download snapshots and upload buffers draw on the
+// same Transfer:MaxBufferedBytes and Transfer:MaxTrackedGrants.
 builder.Services.AddSingleton(sp =>
 {
     var transfer = sp.GetRequiredService<IOptions<TransferOptions>>().Value;
-    var download = sp.GetRequiredService<IOptions<DownloadOptions>>().Value;
     var problems = Knapper.Core.Transfer.TransferConfiguration.Validate(
-        transfer, download,
+        transfer,
+        sp.GetRequiredService<IOptions<DownloadOptions>>().Value,
         sp.GetRequiredService<IOptions<UploadOptions>>().Value,
         sp.GetRequiredService<IOptions<McpOptions>>().Value,
         sp.GetRequiredService<IOptions<SyncOptions>>().Value.MaxFileBytes);
     if (problems.Count > 0)
         throw new InvalidOperationException("Transfer configuration refused: " + string.Join(" ", problems));
-    return new Knapper.Core.Transfer.DownloadGrantStore(transfer, download);
+    return new Knapper.Core.Transfer.TransferBudget(transfer);
 });
+builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.DownloadGrantStore(
+    sp.GetRequiredService<IOptions<TransferOptions>>().Value,
+    sp.GetRequiredService<IOptions<DownloadOptions>>().Value,
+    budget: sp.GetRequiredService<Knapper.Core.Transfer.TransferBudget>()));
+builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.UploadGrantStore(
+    sp.GetRequiredService<IOptions<TransferOptions>>().Value,
+    sp.GetRequiredService<IOptions<UploadOptions>>().Value,
+    budget: sp.GetRequiredService<Knapper.Core.Transfer.TransferBudget>()));
 builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.DownloadSnapshotReader(
     sp.GetRequiredService<VaultPathResolver>(),
     sp.GetRequiredService<IOptions<SyncOptions>>().Value,
@@ -170,6 +180,15 @@ builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.DownloadService(
     sp.GetRequiredService<AuditLog>(),
     sp.GetRequiredService<IOptions<TransferOptions>>().Value,
     sp.GetRequiredService<IOptions<DownloadOptions>>().Value));
+builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.UploadService(
+    sp.GetRequiredService<VaultPathResolver>(),
+    sp.GetRequiredService<VaultMutationService>(),
+    sp.GetRequiredService<Knapper.Core.Transfer.UploadGrantStore>(),
+    sp.GetRequiredService<AuditLog>(),
+    sp.GetRequiredService<ArchivedPrefixes>(),
+    sp.GetRequiredService<IOptions<TransferOptions>>().Value,
+    sp.GetRequiredService<IOptions<UploadOptions>>().Value,
+    sp.GetRequiredService<IOptions<SyncOptions>>().Value));
 builder.Services.AddSingleton<TransferIdentity>();
 builder.Services.AddSingleton<TransferRefusalLog>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
@@ -270,7 +289,9 @@ _ = app.Services.GetRequiredService<KnapperMetrics>();
 _ = app.Services.GetRequiredService<AuditLog>();
 _ = app.Services.GetRequiredService<VaultMutationService>();
 _ = app.Services.GetRequiredService<LintBaselineStore>();
+_ = app.Services.GetRequiredService<Knapper.Core.Transfer.TransferBudget>();
 _ = app.Services.GetRequiredService<Knapper.Core.Transfer.DownloadGrantStore>();
+_ = app.Services.GetRequiredService<Knapper.Core.Transfer.UploadGrantStore>();
 _ = app.Services.GetRequiredService<IOptions<ModelContextProtocol.Server.McpServerOptions>>().Value;
 
 // The DI-resolved options — authoritative, reflecting env vars and every

@@ -558,11 +558,11 @@ Directory.Build.props <Version>          the one carrier
 - **Bulk ingest of large files** — deliberately NOT built;
   [proposals/bulk-ingest.md](proposals/bulk-ingest.md) records why the
   obvious tool is the wrong first move. ⚠️ A successor design exists and is
-  HALF built: [proposals/transfer-grants.md](proposals/transfer-grants.md)
-  (2026-09-05, consolidated 2026-11-07; formerly `upload-grants.md`). The
-  DOWNLOAD direction is built (2026-11-08: `vault_download_prepare` and
-  `GET /transfer/downloads/*`, off by default — see usage.md); the upload
-  direction is not, and its three registered tools answer `[UploadDisabled]`.
+  BUILT: [proposals/transfer-grants.md](proposals/transfer-grants.md)
+  (2026-09-05, consolidated 2026-11-07; formerly `upload-grants.md`). Both
+  directions exist, off by default (usage.md): downloads since 2026-11-08
+  (`vault_download_prepare`, `GET /transfer/downloads/*`), uploads built the
+  same day (`vault_upload_prepare`/`commit`/`status`, `PUT /transfer/uploads/*`).
   It
   answers the `Verified: true` objection below by binding a locally computed
   source hash into the grant and requiring the commit receipt to equal it,
@@ -572,8 +572,8 @@ Directory.Build.props <Version>          the one carrier
   for content whose base the caller does NOT hold, or that is not text; an
   anchored `vault_edit` stays the cheaper and better-guarded path for evolving
   text at any size. `vault_read` still refuses binaries; a download grant is
-  how their bytes leave the vault. The
-  entry below stands until uploads ship. Knapper has no upload-from-path, so
+  how their bytes leave the vault, and an upload grant how files already on an
+  agent's disk enter it. The entry below is the history this design answers. Knapper has no upload-from-path, so
   content not already in the vault enters only through model output tokens.
   Chunked `vault_append` costs `B·(N−1)/2` re-sent tokens (quadratic in
   chunk count — smaller chunks are WORSE) and, the argument that survives a

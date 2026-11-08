@@ -133,9 +133,10 @@ to its `Client`:
 Byte-exact file transfer between an agent's disk and the vault
 ([proposals/transfer-grants.md](proposals/transfer-grants.md)). An
 authenticated MCP call issues a single-use, short-lived **grant**; the agent
-moves the bytes with plain `curl` from its shell. **Downloads are built; uploads
-are not** — their three tools are registered so the tool-name contract moves
-once, and every call answers `[UploadDisabled]`. Everything is off by default.
+moves the bytes with plain `curl` from its shell. Both directions are built and
+both are off by default. An upload's PUT only STAGES bytes; nothing lands in the
+vault until `vault_upload_commit`, which goes through the ordinary conditional
+write.
 Startup and `knapper doctor` share one validator and refuse an incoherent
 configuration.
 
@@ -149,7 +150,13 @@ configuration.
 | `Download:AllowedPrefixes` | `[]` | Vault-relative prefixes downloads may serve. **Empty serves nothing.** Ordinal and boundary-aware, like `Vault:ArchivedPrefixes`. |
 | `Download:GrantLifetimeSeconds` | `300` | Issued-to-served lifetime (10–3600). |
 | `Download:MaxActiveGrants` / `MaxActiveGrantsPerPrincipal` | `16` / `16` | Unserved grants, process-wide and per principal. |
-| `Upload:Enabled` | `false` | Must stay false: upload is not built in this release, and `true` refuses startup. |
+| `Upload:Enabled` | `false` | The three upload tools and `PUT /transfer/uploads/*` together. Refused on an `Mcp:ReadOnly` deployment (which hides `vault_upload_commit`) or with any upload tool in `Mcp:DisabledTools`. |
+| `Upload:AllowReplace` | `false` | Permit `mode: "replace"`: whole-file replacement, always conditional on a fresh `expectSha256`. Off by default per brief §7; `create` is always available. |
+| `Upload:GrantLifetimeSeconds` | `600` | Issued-to-commit-start lifetime (30–3600). |
+| `Upload:ReceiveTimeoutSeconds` | `60` | Absolute deadline for one PUT's body (5–lifetime); the `send` recipe's `--max-time` matches it. |
+| `Upload:MaxActiveGrants` / `MaxActiveGrantsPerPrincipal` | `16` / `16` | Grants not yet terminal, process-wide and per principal. |
+| `Upload:MaxConcurrentReceives` | `4` | Simultaneous admitted PUTs; one over the limit gets `429` and claims nothing. |
+| `Upload:ReceiptRetentionSeconds` | `900` | How long a terminal outcome stays answerable by commit and status. |
 
 **The principal.** A grant is bound to the verified Access identity —
 `(issuer, sub)` for a user, `(issuer, common_name)` for a service token —
@@ -174,8 +181,11 @@ GET with a valid token adds a best-effort `Op: download_transfer` line with
 the same `GrantId` and `Principal`: `Outcome` is `sent` (every byte handed to
 the transport — only the client's hash check proves arrival), `aborted` (the
 client went away mid-body), `DownloadAlreadyClaimed` or `DownloadExpired`.
-Invalid-token probes are never audited. No content and no token ever reaches
-the audit trail.
+Invalid-token probes are never audited. Uploads leave the same chain:
+`upload_prepare` (`Detail` is the mode), `upload_transfer` (`ready` or the
+refusal code), then the mutation's own `create`/`replace` lines — all carrying
+the `GrantId` — or an `upload_commit` line for a `SecretDetected` refusal. No
+content and no token ever reaches the audit trail.
 
 ### `Lint:*` — `vault_lint`'s baseline
 
@@ -258,7 +268,9 @@ manifest.
 | Tool | Essentials |
 |---|---|
 | `vault_download_prepare` | `items: [{path, expectSha256?}]` (1–16). Per-item grants `{downloadId, downloadUrl, downloadToken, expiresAt, path, sha256, byteLength, fetch}` or a typed error. `fetch` is fixed shell text (no token in it) to run with `TOKEN URL SHA LEN DEST` set: it pipes the token to `curl` on stdin, writes a private temp file, and moves it into place only after `sha256sum -c` passes. A grant serves ONCE (`GET`, full body, `Range` ignored); failure means prepare again. Declared a WRITER although it writes no vault byte, so harnesses ask a human and `Mcp:ReadOnly` hides it. |
-| `vault_upload_prepare`, `vault_upload_commit`, `vault_upload_status` | Not built: every call answers `[UploadDisabled]`. Their schemas are the final ones. |
+| `vault_upload_prepare` | `items: [{path, sourceSha256, byteLength, mode: create\|replace, expectSha256?}]` (1–16; duplicate destinations refused). Per-item grants `{uploadId, uploadUrl, uploadToken, expiresAt, path, sourceSha256, byteLength, mode, expectSha256, send}`. Destination state, parent, archive and size are checked here ADVISORILY and again at commit. `send` is fixed shell text (no token) to run with `TOKEN URL SRC` set; it PUTs the file with curl, which only stages it. Use `vault_edit` instead whenever you hold the file's current bytes. |
+| `vault_upload_commit` | `uploadIds` (1–16). Each ready upload lands as an independent mutation, in path order, through `CreateBytes` or the conditional `ReplaceBytes` — after the same secret scan the git committer runs (`[SecretDetected]`, masked). The receipt's `newSha256` equals the source hash. Not ready: `[UploadNotReady]`, nothing consumed. A repeat returns the cached outcome without writing. |
+| `vault_upload_status` | `uploadIds`. State (`issued`, `receiving`, `ready`, `committing`, `succeeded`, `failed`, `expired`, or `unknown`) and the terminal outcome. Never starts a write; the answer to an uncertain transfer. |
 
 ### Mutations (all conditional; no unconditional write exists)
 
@@ -305,7 +317,14 @@ Tool errors are structured MCP errors whose message leads with the code:
 | `IoError` | Filesystem/OS failure (or rg/git missing). |
 | `Internal` | Unexpected server error (a bug, not your request). Details are in the server log, never on the wire. |
 | `QueryCancelled` | The request was cancelled at the transport before completion. |
-| `DownloadDisabled`, `UploadDisabled` | The transfer direction is off on this deployment (uploads are not built at all). **TERMINAL.** |
+| `DownloadDisabled`, `UploadDisabled` | The transfer direction is off on this deployment. **TERMINAL.** |
+| `UploadNotPermitted`, `UploadReplacementDisabled` | No verified principal; or `replace` while `Upload:AllowReplace` is off — use `vault_edit`. **TERMINAL.** |
+| `UploadNotFound`, `UploadNotReady`, `UploadExpired` | Unknown or another principal's ID (indistinguishable); bytes not arrived yet (nothing consumed — send, then commit); lifetime over (prepare again). |
+| `UploadCapacityExceeded` | The transfer budget, a slot, or the receiver pool is full; nothing was claimed. Retry, or send in a later round. |
+| `UploadInvalidToken`, `UploadAlreadyClaimed` | HTTP only (401 / 409). A 401 never burns a grant; a 409 means the one PUT already happened — call `vault_upload_status`. |
+| `UploadSizeMismatch`, `UploadHashMismatch` | HTTP only (413/400, 400): the file changed since you hashed it. The grant is spent: re-hash and prepare again. |
+| `UploadTransferTimeout`, `UploadTransferFailed` | The body missed the receive deadline, or the connection dropped. The grant is spent. |
+| `SecretDetected` | Commit found a credential-shaped string the git committer would refuse — one such file stops every vault commit. **TERMINAL** for the grant; the message carries the MASKED finding. Remove the secret and upload again. |
 | `DownloadNotPermitted` | Outside `Download:AllowedPrefixes`, or no verified principal to bind a grant to. **TERMINAL** — the allowlist is operator configuration. |
 | `DownloadCapacityExceeded` | The transfer byte budget or a grant slot is full right now; nothing was issued. Retry later or in a smaller round. |
 | `DownloadInvalidToken`, `DownloadExpired`, `DownloadAlreadyClaimed` | HTTP only (`GET /transfer/downloads/{id}` → 401 / 410 / 409, body `{code, message}`). Prepare again. A 401 never burns a valid grant. |
@@ -392,10 +411,11 @@ Tool errors are structured MCP errors whose message leads with the code:
   also checks the ingress contract: unauthenticated callers refused,
   `/health` unreachable from outside, `/up` disclosing booleans only, and the
   monitoring token refused at the vault surface. On every URL it also probes
-  the `/transfer` prefix with no credential (an unknown grant ID and an
-  encoded-slash escape) and passes only on a NAMED answer: the origin's 401
-  `DownloadInvalidToken` (downloads on), its 404 `DownloadDisabled` (off), its
-  404 `NotFound` for the escape, or — tunnelled — an Access refusal at the edge
+  the `/transfer` prefix with no credential (an unknown download grant, an
+  empty upload PUT, and an encoded-slash escape) and passes only on a NAMED
+  answer: the origin's 401 `DownloadInvalidToken`/`UploadInvalidToken` (that
+  direction on), its 404 `DownloadDisabled`/`UploadDisabled` (off), its 404
+  `NotFound` for the escape, or — tunnelled — an Access refusal at the edge
   (no Bypass yet — recognized only as a redirect to Access's login path or a
   401 carrying the RFC 9728 pointer; any other 3xx or a flat 401/403 FAILS).
   Against a loopback URL

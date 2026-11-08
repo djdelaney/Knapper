@@ -438,8 +438,8 @@ format by default.
 
 ## Transfer-layer invariants (silent-corruption-prone)
 
-Download grants are built; uploads are registered but answer
-`[UploadDisabled]` (`docs/proposals/transfer-grants.md`).
+Both directions are built (`docs/proposals/transfer-grants.md`); downloads
+are deployed, uploads are off until a deployment enables them.
 
 - **Everything under `/transfer` reaches the origin UNAUTHENTICATED**, because
   the edge's path-scoped Bypass covers the whole prefix — so `TransferEndpoint`
@@ -484,6 +484,37 @@ Download grants are built; uploads are registered but answer
 - **One validator (`TransferConfiguration`) for startup and doctor**, and it
   refuses a half-enabled direction: a disabled or read-only-hidden tool must
   never leave its route usable.
+- **An upload PUT only STAGES; the vault write happens at commit, through
+  `VaultMutationService`, and nowhere else.** Committing inside the PUT would
+  give a bearer token vault-write authority on an unauthenticated route.
+  Commit runs `SecretScanPolicy.Scan` first (one credential-shaped file
+  refuses every vault commit), then `CreateBytes` or the conditional
+  `ReplaceBytes` with the grant's ID and principal on the `AuditContext`; the
+  receipt's hash must equal the source hash bound at prepare. Prepare's
+  destination checks are ADVISORY — commit re-checks everything under the
+  lock.
+- **The PUT authenticates and claims BEFORE reading a byte**, buffers only
+  into the exact-size array prepare reserved, and enforces the bound length
+  on the STREAM — a matching prefix of a longer body is never staged, and
+  `Content-Length` alone is never trusted. Every admitted PUT spends the
+  grant; an invalid token and a 429 never do.
+- **ONE `TransferBudget` per process** for download snapshots AND upload
+  buffers (bytes and record slots). Two budgets would each admit their own
+  maximum and together exceed what `Transfer:MaxBufferedBytes` promises.
+- **Every upload state transition happens under the store's one lock**, and a
+  grant leaves `committing` on EVERY path (the commit's handler is
+  exhaustive): a grant stuck there would answer "committing" until retention
+  ended, and a commit is never retried automatically.
+- **The budget may only count memory as free once nothing references it.**
+  A PUT handler holds a receiver LEASE from admission until it calls
+  `CompleteReceive` or `FailReceive` (a `finally` guarantees one of them):
+  the receive-deadline sweep fails the grant but releases neither the slot
+  nor the bytes, because the handler can still be inside its read with the
+  buffer live — releasing at the sweep admitted a receiver past
+  `MaxConcurrentReceives` and over the byte budget (review 2026-11-08). A
+  commit drops each staged buffer BEFORE `FinishCommit` returns its
+  capacity, and keeps the bytes in take-once holders rather than tuples or a
+  sort buffer, which kept every item alive until the batch ended.
 
 ## Mutation-layer invariants (silent-corruption-prone)
 
