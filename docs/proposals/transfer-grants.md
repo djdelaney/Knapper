@@ -21,7 +21,7 @@ stored zip land and then wedge every commit, and the §15 test that read
 "binary … not scanned and lands" asserted that wedge. A read-only
 deployment refuses `Download:Enabled` as well as `Upload:Enabled` (§13).
 The rate limiter runs after authentication, never in front of a valid token
-(§11, open decision 4). The separate-hostname choice is now open decision 5,
+(§11, decision 5). The separate-hostname choice became decision 6,
 with the Host binding it needs (§9).
 
 Gate zero's path-handling question was then answered on the production
@@ -30,9 +30,14 @@ path-scoped child application served as the stand-in for the planned
 Bypass, and unauthenticated probes showed which application matched each
 request. What is left is measured on the first deployment.
 
-Reviewers: the questions this document cannot settle on its own are in
-§16 (open decisions), and the places it most needs a skeptical read are in
-§17.
+Later on 2026-11-08 the owner closed every remaining decision (§16):
+download first, all four tool names registered in the first release, the
+download allowlist, the rate limiter after authentication, no client
+helper, and both routes under one `/transfer` prefix on the existing vault
+hostname (§9).
+
+Reviewers: §16 records every decision and what it rejected, and §17 lists
+the places this document most needs a skeptical read.
 
 ## 1. The problem
 
@@ -117,7 +122,7 @@ sequenceDiagram
     M->>K: Authenticated call
     K-->>A: Grant: URL, token, expiry, send hint
     A->>S: curl -T file (token on stdin)
-    S->>K: PUT /uploads/{id}
+    S->>K: PUT /transfer/uploads/{id}
     K-->>S: Staged and hash-checked, no vault write
     A->>M: vault_upload_commit(id)
     M->>K: Authenticated call
@@ -129,7 +134,7 @@ sequenceDiagram
     K->>K: Read and hash the file once, keep the snapshot in memory
     K-->>A: Grant: URL, token, sha256, length, fetch hint
     A->>S: curl -o tmp (token on stdin), check hash, then mv
-    S->>K: GET /downloads/{id}
+    S->>K: GET /transfer/downloads/{id}
     K-->>S: The snapshot's bytes
 ```
 
@@ -182,7 +187,7 @@ vault_upload_prepare(items: [{
   `expectSha256` is refused.
 - **`replace` requires a nonempty `expectSha256`** and refuses a missing
   file. It is available only when `Upload:AllowReplace` is true; otherwise it
-  fails `UploadReplacementDisabled` (the default is open decision 1). Never
+  fails `UploadReplacementDisabled` (the default is decision 1). Never
   infer an upsert, fall back to create, or fetch a newer hash automatically.
 - **Duplicate destination paths in one call are refused**, as in
   `vault_batch`.
@@ -211,7 +216,7 @@ the echo as a check.
 ### 4.2 Transfer
 
 ```text
-PUT /uploads/{uploadId}
+PUT /transfer/uploads/{uploadId}
 Authorization: KnapperUpload <token>
 Content-Type: application/octet-stream
 
@@ -347,7 +352,7 @@ vault_download_prepare(items: [{ path, expectSha256? }])   // 1..16
   subtrees are readable, so they are downloadable. The conflict and sync
   gates guard mutations only and do not apply.
 - **Scope.** Items outside `Download:AllowedPrefixes` fail
-  `DownloadNotPermitted` (open decision 2).
+  `DownloadNotPermitted` (decision 2).
 - **Capacity.** An item that does not fit the buffer budget fails
   `DownloadCapacityExceeded`.
 
@@ -362,7 +367,7 @@ sha256, byteLength` and a fixed-text `fetch` hint (§6).
 ### 5.2 Transfer
 
 ```text
-GET /downloads/{downloadId}
+GET /transfer/downloads/{downloadId}
 Authorization: KnapperDownload <token>
 ```
 
@@ -602,9 +607,14 @@ authentication), never a production fallback identity.
 ## 9. Edge and routing
 
 The current Access application would refuse the transfer routes: a grant
-token is not a Cloudflare OAuth token. Each route therefore needs a
-path-scoped Bypass application on the existing hostname, `/uploads/*` and
-`/downloads/*`. Cloudflare documents this pattern, and a more specific
+token is not a Cloudflare OAuth token. **Decided 2026-11-08: both routes
+live under ONE path prefix, `/transfer`, on the existing vault hostname**,
+so the edge needs exactly one path-scoped Bypass application, at
+`/transfer`. Uploads are `PUT /transfer/uploads/{id}` and downloads
+`GET /transfer/downloads/{id}`. The prefix is a constant in code, not a
+setting: the Access application's path must name the same string, and a
+configurable prefix would be a second carrier free to disagree with it.
+Cloudflare documents this pattern, and a more specific
 application path overrides the parent's policy rather than inheriting it
 ([path-scoped Bypass](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/common-policies/#bypass-a-public-endpoint),
 [application precedence](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/#policy-inheritance)).
@@ -621,31 +631,27 @@ through the Bypass, the origin still demands a valid assertion and answers
 hostname tolerable, and it is the reason the check must never be relaxed for
 "requests that came through the tunnel". The transfer routes themselves have
 no such second layer by design: on them, the grant token and `HostGuard` are
-all there is, in EITHER hostname arrangement. The `/up` monitoring app
-already relies on path-scoped precedence on this hostname in production,
-which is evidence for gate zero, not a substitute for it.
+all there is. The `/up` monitoring app already relies on path-scoped
+precedence on this hostname in production, and gate zero measured it (below).
 
-A separate hostname for transfers (one more DNS name and tunnel ingress rule
-to the same origin, with the origin binding each route to its Host) is the
-recommended hygiene: the vault hostname then keeps its clean property
-unconditionally, and the worst edge mistake on the transfer hostname (a
-Bypass at `/`) exposes only routes that carry their own authentication. It
-is a deployment choice, not a precondition: the origin's assertion check is
-what protects the MCP route, and it holds either way (open decision 5).
+**Everything under `/transfer` reaches the origin unauthenticated**, not
+only the two routes, so the origin owns the whole prefix: a catch-all under
+`/transfer` answers 404 for any path that is not one of the two routes (the
+bare prefix, `/transfer/..%2Fmcp`, `/transfer/health`, an unknown
+subpath), touches no grant, and is the only thing that can match there. No
+other endpoint may ever be mapped under the prefix; a test enumerates the
+route table and fails if one is.
 
-Taking the separate hostname adds origin work that the configuration table
-does not otherwise need: each route must be bound to its Host, so the
-transfer routes answer only on the transfer hostname and the MCP route,
-`/health` and `/up` refuse it. Derive that binding from the host of
-`Transfer:PublicOrigin` rather than adding a second setting that names the
-same host: the grant URLs are already built from it, so one value cannot
-disagree with itself. When `PublicOrigin`'s host equals the vault's
-hostname, no binding applies and the routes share it. The two holes are not
-equal:
+A separate hostname for transfers was considered and declined (decision
+6). It would keep the vault hostname free of any Bypass, at the
+cost of a DNS name, a tunnel ingress rule, and an origin binding of each
+route to its Host. The origin's assertion check is what protects the MCP
+route under either arrangement, and gate zero showed the path-scoped
+exception can be made tight. The two holes are not equal:
 
 - **A PUT defect** can at worst stage bytes that still need an authenticated
   commit.
-- **A GET defect** exports vault content to the internet. `/downloads/*` is
+- **A GET defect** exports vault content to the internet. `/transfer/downloads/*` is
   the first route on this hostname that returns vault bytes without passing
   Access. The snapshot design (§3) bounds the damage; the edge proof below
   must treat this route at least as strictly as the PUT.
@@ -653,8 +659,10 @@ equal:
 Origin rules:
 
 - **Each route has its own positive authorization policy.** No "skip auth
-  when the path starts with uploads" middleware, no global disable, no broad
-  anonymous route group. `HostGuard` stays in front of every route.
+  when the path starts with `/transfer`" middleware, no global disable, no
+  broad anonymous route group. The `/transfer` catch-all is not an
+  exception to this: it serves nothing but a 404. `HostGuard` stays in
+  front of every route.
 - **A grant is only a grant.** It is never a way to authenticate to MCP,
   `/up` or `/health`. No Access token substitutes for a grant. Outside
   local-only mode there is no loopback exemption.
@@ -681,22 +689,22 @@ root), so an unauthenticated probe shows which application matched each
 path without any credential. Every refusal came from the edge, and none was
 a bot challenge. Writing `/p` for the child's path:
 
-| Request | Matched | What it means for `/downloads/*` |
+| Request | Matched | What it means for `/transfer/*` |
 |---|---|---|
 | `/p`, `/p/`, `/p/x`, `/p?x=1` | child | the child overrides the Managed OAuth root: precedence works |
-| `/px`, `/p;x`, `/p%2F` | root | matching respects the segment boundary: `/downloadsx` stays protected |
+| `/px`, `/p;x`, `/p%2F` | root | matching respects the segment boundary: `/transferx` stays protected |
 | `/p/../mcp` (sent unnormalized) | root | dot segments are resolved BEFORE matching: no Bypass into MCP |
 | `/P`, `/%70` (an escaped letter) | child | case-insensitive and decodes unreserved escapes, as Kestrel routing does |
 | `//p`, `/./p` | child | reaches the origin with a path no route serves |
 | `/p/..%2Fmcp` | child | an encoded slash is NOT resolved: see below |
 
-The last row is the one that matters. Under a Bypass, `/downloads/..%2Fmcp`
+The last row is the one that matters. Under a Bypass, `/transfer/..%2Fmcp`
 reaches the origin unauthenticated. Kestrel does not decode `%2F` into a
-separator, so it routes to the download handler as an unknown ID, never to
-`/mcp`, and the MCP route would demand an Access assertion even if it did.
-An origin-side test pins exactly this request. The bare child path (`/p`,
-so `/downloads` with no ID) also matches, so the origin must refuse it
-without touching any grant.
+separator, so it matches the `/transfer` catch-all and gets a 404, never the
+MCP endpoint, and the MCP route would demand an Access assertion even if it
+did. An origin-side test pins exactly this request. The bare child path
+(`/p`, so a bare `/transfer`) also matches, and the catch-all refuses it
+the same way.
 
 What this does NOT prove, and the first deployment must: that a Bypass
 policy behaves as the Service Auth one did (Cloudflare orders applications
@@ -741,20 +749,20 @@ restart, which invalidates grants):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `Transfer:PublicOrigin` | empty | Exact origin the grant URLs are built from |
+| `Transfer:PublicOrigin` | empty | Exact origin the grant URLs are built from; they append the fixed `/transfer/...` path (§9) |
 | `Transfer:LocalOnly` | false | Local-only mode (§8.3) |
 | `Transfer:MaxBufferedBytes` | 33554432 | Shared byte budget for upload buffers and download snapshots |
 | `Transfer:MaxTrackedGrants` | 128 | Active plus retained terminal records, both directions |
-| `Upload:Enabled` | false | Enable the three upload tools and `PUT /uploads/*` together |
-| `Upload:AllowReplace` | false | Permit conditional whole-file replacement (open decision 1) |
+| `Upload:Enabled` | false | Enable the three upload tools and `PUT /transfer/uploads/*` together |
+| `Upload:AllowReplace` | false | Permit conditional whole-file replacement (decision 1) |
 | `Upload:GrantLifetimeSeconds` | 600 | Issued-to-commit-start lifetime |
 | `Upload:ReceiveTimeoutSeconds` | 60 | Absolute receive deadline |
 | `Upload:MaxActiveGrants` | 16 | Process-wide; a full batch fits |
 | `Upload:MaxActiveGrantsPerPrincipal` | 16 | |
 | `Upload:MaxConcurrentReceives` | 4 | Simultaneous admitted receivers |
 | `Upload:ReceiptRetentionSeconds` | 900 | Terminal-state metadata lifetime |
-| `Download:Enabled` | false | Enable `vault_download_prepare` and `GET /downloads/*` together |
-| `Download:AllowedPrefixes` | `[]` | Prefixes downloads may serve; empty means none (open decision 2) |
+| `Download:Enabled` | false | Enable `vault_download_prepare` and `GET /transfer/downloads/*` together |
+| `Download:AllowedPrefixes` | `[]` | Prefixes downloads may serve; empty means none (decision 2) |
 | `Download:GrantLifetimeSeconds` | 300 | Shorter than upload: meant for immediate use |
 | `Download:MaxActiveGrants` | 16 | Process-wide; a full batch fits |
 | `Download:MaxActiveGrantsPerPrincipal` | 16 | |
@@ -814,7 +822,7 @@ in the vault can be switched off by the agents it constrains.
   per request, cheap enough to run unthrottled, so it runs FIRST, and the
   limiter governs only what happens after a refusal: the log line and any
   added delay. A request carrying a valid token for a live grant is never
-  throttled. This is the recommended order; open decision 4 records the
+  throttled. This is the decided order; decision 5 records the
   alternative.
 - **Audit records link the steps.** Prepare, transfer outcome and mutation
   records share the nonsecret grant ID and the authenticated principal, and
@@ -1052,7 +1060,7 @@ handed to the origin.
 Measured only once a Bypass application exists, so these are deployment
 checks, not gates on the code:
 
-- `/uploads/*` and `/downloads/*` reach the origin and each demand their own
+- `/transfer/uploads/*` and `/transfer/downloads/*` reach the origin and each demand their own
   grant scheme (the refusal carries `WWW-Authenticate: KnapperUpload` or
   `KnapperDownload` from the ORIGIN, not an edge page);
 - `/up` and the MCP root are unchanged, and wrong Host and wrong method are
@@ -1098,7 +1106,7 @@ those are their own deployment task.
   cannot inspect or commit a grant. A grant cannot authorize MCP, reads or
   monitoring endpoints. The GET handler never touches the filesystem. The
   encoded-slash request the edge passes through a Bypass
-  (`/downloads/..%2Fmcp`, §9) and the bare `/downloads` both reach a refusal
+  (`/transfer/..%2Fmcp`, §9) and the bare `/transfer` both reach a refusal
   from the transfer route, never MCP routing, against a real Kestrel.
 - **Mutation races through the byte path**, with real second processes:
   create and no-clobber, replace and stale hash. Existing external-writer,
@@ -1152,7 +1160,11 @@ read-only.
 - the normal release, clean-tag publication, runbook and read-only verify
   gates are complete.
 
-## 16. Open decisions
+## 16. Decisions
+
+All closed as of 2026-11-08. Each records what was rejected and why, so a
+later reader can tell a settled question from an unasked one.
+
 
 1. **Conditional replacement: CLOSED 2026-11-08, settled by the brief.**
    Brief §7's table has a row for exactly this operation: full-file write is
@@ -1171,56 +1183,55 @@ read-only.
    (the motivating script was revised four times in three weeks), so a
    deployment that leaves the flag off must not present uploads as the
    answer to revisions; the anchored-edit path stays the answer there.
-2. **What can be downloaded?**
-   - **Recommended: the fail-closed operator allowlist** in §10. Empty means
-     nothing, and the first entry is chosen for a real use. Widening is a
-     config change; narrowing after a photo or a credential image has left
-     the vault is not.
-   - **The alternative is the whole vault**, on the argument that every
-     note's text is already readable. That is weaker than it sounds: images
-     are a different class (photos of people, a credential `SecretScanner`
-     cannot see), and only this surface writes them to disk where outbound
-     tools can reach them.
-3. **Build order after gate zero.**
-   - **Recommended: download first.** It needs no Core mutation change,
-     serves the need that keeps coming up, and ships one tool. Upload then
-     reuses its routing, grant store and memory pool.
-   - **Upload first** would serve the replacement case sooner.
-
-   Gate zero covers both routes either way.
-4. **Rate limiting with no client key (§11).**
-   - **Recommended: authenticate first, limit only refusals.** Every request
-     comes from the tunnel's loopback peer, so a limiter has no client
-     identity to key on. A global limiter that runs only after the token
-     check fails cannot deny the owner, because a valid token never reaches
-     it.
-   - **The alternative is keying on `CF-Connecting-IP`.** That gives
-     per-client limits, but it trusts a header for a security decision. It
-     is safe only while the tunnel is the only route to the port, and it
-     means nothing in local-only mode.
-5. **Separate transfer hostname (§9).**
-   - **Recommended: take it.** The vault hostname keeps its no-Bypass property
-     unconditionally, and a Bypass mistake on the transfer hostname exposes
-     only routes that carry their own authentication. The cost is one DNS
-     name, one tunnel ingress rule, and the Host binding derived from
-     `Transfer:PublicOrigin`.
-   - **The alternative is a path-scoped Bypass on the vault hostname**,
-     which the origin's assertion check makes tolerable (§9). It saves the
-     DNS and tunnel change. In return, the vault hostname's safety depends
-     on Cloudflare's path precedence holding.
-
-   Decide before the edge exception is configured. Gate zero's measurement
-   (§9) covers the Bypass arrangement; the separate hostname needs no
-   path-scoped exception at all, so it has nothing for gate zero to measure.
+2. **What can be downloaded: CLOSED 2026-11-08, the fail-closed operator
+   allowlist** in §10. Empty means nothing, and the first entry is chosen
+   for a real use at deployment time; it is operator configuration, never a
+   repository default. Widening is a config change; narrowing after a photo
+   or a credential image has left the vault is not. Rejected: the whole
+   vault, on the argument that every note's text is already readable.
+   Images are a different class (photos of people, a credential
+   `SecretScanner` cannot see), and only this surface writes them to disk
+   where outbound tools can reach them.
+3. **Build order: CLOSED 2026-11-08, download first.** It needs no Core
+   mutation change and serves the need that keeps coming up. Upload then
+   reuses its routing, grant store and memory pool.
+4. **Tool names in the first release: CLOSED 2026-11-08, all four.** The
+   first release registers all four names in the locked tables, as §13
+   requires, with the three upload tools answering `UploadDisabled` (and
+   `PUT /transfer/uploads/*` answering 404 `UploadDisabled`) until upload is
+   built. Tool names are a client contract, so registering one now and three
+   later would mean two minor releases, two moves of `knapper verify`'s
+   expected counts, and two rounds of clients reconnecting to see new
+   tools. The stubs are inert: no upload configuration, store or route
+   logic exists until upload is built, and `Upload:Enabled: true` refuses to
+   boot until then rather than enabling nothing.
+5. **Rate limiting: CLOSED 2026-11-08, authenticate first, limit only
+   refusals** (§11). Every request comes from the tunnel's loopback peer, so
+   a limiter has no client identity to key on, and a global limiter that runs
+   only after the token check fails cannot deny the owner, because a valid
+   token never reaches it. Rejected: keying on `CF-Connecting-IP`, which
+   trusts a header for a security decision, is safe only while the tunnel is
+   the only route to the port, and means nothing in local-only mode.
+6. **Hostname: CLOSED 2026-11-08, one `/transfer` prefix on the existing
+   vault hostname** (§9). One path-scoped Bypass application covers both
+   directions, and gate zero's measurement covers that arrangement.
+   Rejected: a separate transfer hostname, which keeps the vault hostname
+   free of any Bypass but costs a DNS name, a tunnel ingress rule and an
+   origin Host binding, while the MCP route's protection (the origin's
+   assertion check) is the same either way.
+7. **The optional client helper: CLOSED 2026-11-08, not built.** curl is
+   the supported client (§6), and the recipe tests are what keep it
+   portable. A helper would be one more artifact to install and keep
+   working in every harness, for a convenience no step needs.
 
 ## 17. Where review is most useful
 
 - **The edge exception (§9).** Reviewed 2026-11-08: a path-scoped Bypass on
   the vault's hostname is tolerable because the ORIGIN validates the Access
   assertion on the MCP route, so an edge surprise reaches a 401, not the
-  vault. A separate hostname is recommended hygiene, not a precondition.
-  Gate zero's path-handling measurement passed the same day (§9). Still
-  open: whether to take the hygiene (open decision 5), and the deployment
+  vault. Gate zero's path-handling measurement passed the same day (§9),
+  and the same day the owner chose one `/transfer` prefix on the existing
+  hostname over a separate one (decision 6). Still open: the deployment
   checks §15 lists.
 - **The download threat model (§3, §5, §16.2).** Does serving only
   in-memory snapshots bound a GET authentication defect the way §3 claims?
