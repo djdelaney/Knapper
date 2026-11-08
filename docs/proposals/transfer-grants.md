@@ -578,6 +578,15 @@ tools. An OAuth client ID is attribution, like `clientInfo`. Verify this live
 with two harnesses as one user. If the live assertion carries a per-client
 subject, report it; do not build an identity on email.
 
+**Observed 2026-11-08 (v0.13.0, production).** No measurement was needed
+beyond what the design already records: every prepare's audit line carries
+its `Principal`. From Claude Code over the claude.ai connector (Managed OAuth)
+the kind is `sub`, a per-user Access identity — not a per-client value — with
+the email in `Client` as attribution only; from a service token it is
+`service`. Still open: whether the subject is STABLE across token refreshes
+and fresh connector sessions, which one sample cannot show. Compare a later
+prepare's subject before relying on per-principal limits counting people.
+
 ### 8.3 Deployments without Cloudflare Access
 
 Knapper and its agents on one machine, with `Access:Enabled: false` and
@@ -961,7 +970,10 @@ Two deployment consequences:
 - **Existing sessions do not see the new tools until they reconnect.**
   Attached clients cache tool manifests (measured at v0.6.0: a live session
   stayed at 13 tools after the server shipped 14). Enabling the feature and
-  testing it from an agent are two separate events.
+  testing it from an agent are two separate events. At v0.13.0 (observed
+  2026-11-08) TWO caches had to clear: the claude.ai connector needed a
+  refresh in its settings, and then the Claude Code app a full quit and
+  reopen — two brand-new sessions before the restart still listed 14 tools.
 
 This is a minor release: new tools, error codes and configuration are
 client contracts.
@@ -1065,22 +1077,30 @@ on this hostname can be made tight. It can, with the one encoded-slash case
 handed to the origin.
 
 Measured only once a Bypass application exists, so these are deployment
-checks, not gates on the code:
+checks, not gates on the code. Status as of 2026-11-08, v0.13.0 in
+production with downloads on:
 
 - `/transfer/uploads/*` and `/transfer/downloads/*` reach the origin and each demand their own
   grant scheme (the refusal carries `WWW-Authenticate: KnapperUpload` or
-  `KnapperDownload` from the ORIGIN, not an edge page);
+  `KnapperDownload` from the ORIGIN, not an edge page). **Observed for
+  downloads:** a 401 with the `KnapperDownload` challenge from the origin,
+  and a Bypass policy behaved exactly as the Service Auth stand-in predicted
+  — the encoded-slash escape and bare `/transfer` reach the origin's 404,
+  while `/transferx`, `/transfer/../mcp` and `/mcp` stay with the host app.
+  Uploads: once built;
 - `/up` and the MCP root are unchanged, and wrong Host and wrong method are
-  refused;
+  refused. **Observed**, within a 17-ok `knapper verify` run;
 - a 2–5 MB PUT carrying `Expect: 100-continue` and a 5 MiB GET both pass
   through the tunnel intact. The cost of a surprise is bounded: a lost 100
   costs one second per upload (§6), and Cloudflare documents request bodies
-  far above the 5 MiB ceiling;
+  far above the 5 MiB ceiling. **Observed for the GET direction** at 2.3 MB
+  (the PUT waits for upload);
 - the principal shape across two harnesses (§8.2). The edge's
   authentication log does not record Managed OAuth sign-ins (observed
   2026-11-08: thirty days showed only service-token traffic), so this is
-  measured at the origin, by logging a digest of the subject while two
-  harnesses call in.
+  measured at the origin — and the prepare's audit `Principal` already is
+  that measurement. **Observed:** kind `sub` from Claude Code over Managed
+  OAuth; stability across sessions and a second harness still to sample.
 
 **Gate one: draft the four tool descriptions and measure them** composed
 with conventions configured (§13). Also cheap, also before building.
@@ -1157,12 +1177,16 @@ read-only.
 **Deployment is complete when:**
 
 - the real Access principal shapes are verified, including two harnesses as
-  one person (§8.2);
+  one person (§8.2) — user `sub` and service `common_name` both observed
+  2026-11-08; the second harness is still owed;
 - the edge exception is configured and gate zero's deployment checks pass;
 - the full loop passes in each harness the operator intends to support,
   with no authentication beyond its MCP connection. This is the harness
   matrix: hash, prepare, transfer and commit for upload; prepare, fetch and
-  verify for download. Results go in the runbook, dated and marked observed;
+  verify for download. Results go in the runbook, dated and marked observed
+  (runbook §6.6: Claude Code desktop over the claude.ai connector passed the
+  download loop 2026-11-08 with no sandbox friction; other harnesses
+  untested);
 - Sync delivery of text and binary files is checked on the replicas;
 - the normal release, clean-tag publication, runbook and read-only verify
   gates are complete.

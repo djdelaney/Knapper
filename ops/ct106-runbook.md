@@ -843,6 +843,76 @@ and still without a write.
    vault** before §9 — §8b does attach a real connector, pointed at a
    disposable copy, and that distinction is the whole of what makes it safe.
 
+### 6.6 Transfer grants — downloads (v0.13.0+, optional)
+
+Off by default; `docs/usage.md` has the settings and
+`docs/proposals/transfer-grants.md` the design. Turning downloads on is two
+changes, in this order, each verified before the next:
+
+1. **Origin first.** Add to the unit, then restart:
+   `Environment=Transfer__PublicOrigin=https://mcp.example.com`,
+   `Environment=Download__Enabled=true` and one
+   `Environment=Download__AllowedPrefixes__0=<folder>`. Add the same three to
+   `REQUIRED_ENV` in your `deploy.env` so §10's step 6b keeps checking them.
+   `knapper doctor` must print `Transfer configuration coherent (downloads ON,
+   1 allowed prefix(es), …)`. With no edge app yet, `verify`'s transfer line
+   still passes, naming the EDGE: `…401 at the edge with the RFC 9728 pointer
+   (Managed OAuth) — no Bypass covers /transfer`. Nothing under `/transfer`
+   reaches the origin in this state.
+2. **Then the edge.** One self-hosted Access application whose destination is
+   the vault hostname with path `transfer`, carrying a single policy with
+   action **Bypass**, include **Everyone**. Name it so it cannot be confused
+   with the host app. The dashboard saves the policy and the application
+   separately; a saved policy that shows "used by 0 applications" means the
+   application was never saved, and nothing changed at the edge.
+
+Verify from outside, with no credential (`--path-as-is` stops curl
+normalizing the dot segment before it leaves):
+
+```sh
+U=https://mcp.example.com; A=$(printf 'A%.0s' $(seq 43))
+for p in "/transfer/downloads/$A" "/transfer/..%2Fmcp" /transfer /transferx "/transfer/../mcp" /mcp; do
+  printf '%-28s ' "$p"; curl -sS --path-as-is --max-redirs 0 -o /dev/null -w '%{http_code}\n' "$U$p"
+done
+```
+
+| Request | Expected | Meaning |
+|---|---|---|
+| `/transfer/downloads/<43 chars>` | `401`, `WWW-Authenticate: KnapperDownload`, body code `DownloadInvalidToken` | the Bypass works and the ORIGIN's transfer route answered |
+| `/transfer/..%2Fmcp`, `/transfer` | `404`, body code `NotFound` | the edge does not resolve an encoded slash; the origin's catch-all must |
+| `/transferx`, `/transfer/../mcp`, `/mcp` | the host app's refusal (`401` + RFC 9728 pointer, or `302` to login) | the Bypass stops at the segment boundary and after dot-segment resolution |
+
+Observed 2026-11-08 on this deployment: every row as above, and `knapper
+verify` printing `ok the /transfer prefix answers only with transfer refusals
+(downloads ON — the origin refused an unknown grant; …)` within a 17-ok run.
+**A `200` on any row except a real grant fetch is an exposure — take the
+Bypass application down before diagnosing.**
+
+Then an end-to-end grant from a real harness: `vault_download_prepare` on a
+file under the allowed prefix, the grant's `fetch` text run as written, the
+landed file's sha256 equal to the grant's and to `sha256sum` of the file on the
+CT. Read the prepare's audit line for its `Principal`:
+
+```sh
+grep download_prepare /var/lib/knapper/audit.jsonl | tail -1
+```
+
+Observed 2026-11-08: from Claude Code over the claude.ai connector (Managed
+OAuth) the principal kind is `sub` — a per-user Access identity, not a
+per-client one — with the email in `Client` as attribution only; no sandbox
+or network-policy friction in the Claude Code desktop app; a 2.3 MB PDF
+landed hash-verified, mode 0600, no temp file left. From a service token the
+kind is `service`. One sample does not show the subject is STABLE across
+token refreshes and fresh connector sessions: compare it against a later
+prepare before relying on per-principal limits counting people.
+
+⚠️ **A release that changes the tool surface is not visible to agents until
+two caches are cleared**, and verify cannot see either: refresh the Knapper
+connector in claude.ai's connector settings, and then fully QUIT and reopen
+the Claude Code app. A new session alone keeps the cached manifest (observed
+2026-11-08: two fresh sessions after the v0.13.0 deploy still listed 14 tools,
+before the app restart). The same was seen at v0.6.0 for a live session.
+
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh
