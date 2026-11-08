@@ -904,9 +904,11 @@ OAuth) the principal kind is `sub` — a per-user Access identity, not a
 per-client one — with the email in `Client` as attribution only; no sandbox
 or network-policy friction in the Claude Code desktop app; a 2.3 MB PDF
 landed hash-verified, mode 0600, no temp file left. From a service token the
-kind is `service`. One sample does not show the subject is STABLE across
-token refreshes and fresh connector sessions: compare it against a later
-prepare before relying on per-principal limits counting people.
+kind is `service`. The subject was STABLE across separate sessions: the
+upload test hours later, from a new session started after a full app restart,
+recorded the identical principal string (observed 2026-11-08). So
+per-principal limits count the person, not the session. Re-check it if a
+second harness is ever added.
 
 ⚠️ **A release that changes the tool surface is not visible to agents until
 two caches are cleared**, and verify cannot see either: refresh the Knapper
@@ -945,8 +947,11 @@ complete (`upload_prepare` → `upload_transfer ready` → `create`/`replace`
 attempt + ok, principal kind `service`); the scratch file then soft-deleted
 to `.trash/`. curl reached the edge over **HTTP/2 and sent no `Expect:
 100-continue`** at all, so the one-second stall above does not arise there;
-it can only affect a client speaking HTTP/1.1 to the edge. Still owed: the
-same loop from a real harness over Managed OAuth.
+it can only affect a client speaking HTTP/1.1 to the edge. The same loop from
+Claude Code over the claude.ai connector (Managed OAuth) passed the same day
+— a 2 MiB create and a 1 MiB conditional replace, both hash-verified, with no
+sandbox or network-policy friction — and every audit line of both grants
+carried principal kind `sub`.
 
 ## 7. Git (brief §10 — after backup is proven)
 

@@ -592,9 +592,10 @@ beyond what the design already records: every prepare's audit line carries
 its `Principal`. From Claude Code over the claude.ai connector (Managed OAuth)
 the kind is `sub`, a per-user Access identity — not a per-client value — with
 the email in `Client` as attribution only; from a service token it is
-`service`. Still open: whether the subject is STABLE across token refreshes
-and fresh connector sessions, which one sample cannot show. Compare a later
-prepare's subject before relying on per-principal limits counting people.
+`service`. The subject is STABLE across fresh connector sessions: an upload
+test hours later, from a new session after a full app restart, recorded the
+identical principal string. Still unmeasured: a second harness (Codex,
+Gemini CLI) as the same person, deferred by the owner.
 
 ### 8.3 Deployments without Cloudflare Access
 
@@ -1112,7 +1113,7 @@ production with downloads on:
   2026-11-08: thirty days showed only service-token traffic), so this is
   measured at the origin — and the prepare's audit `Principal` already is
   that measurement. **Observed:** kind `sub` from Claude Code over Managed
-  OAuth; stability across sessions and a second harness still to sample.
+  OAuth, stable across fresh sessions; a second harness deferred.
 
 **Gate one: draft the four tool descriptions and measure them** composed
 with conventions configured (§13). Also cheap, also before building.
@@ -1189,16 +1190,16 @@ read-only.
 **Deployment is complete when:**
 
 - the real Access principal shapes are verified, including two harnesses as
-  one person (§8.2) — user `sub` and service `common_name` both observed
-  2026-11-08; the second harness is still owed;
+  one person (§8.2) — user `sub` (stable across sessions) and service
+  `common_name` both observed 2026-11-08; a second harness deferred;
 - the edge exception is configured and gate zero's deployment checks pass;
 - the full loop passes in each harness the operator intends to support,
   with no authentication beyond its MCP connection. This is the harness
   matrix: hash, prepare, transfer and commit for upload; prepare, fetch and
   verify for download. Results go in the runbook, dated and marked observed
-  (runbook §6.6: Claude Code desktop over the claude.ai connector passed the
-  download loop 2026-11-08 with no sandbox friction; other harnesses
-  untested);
+  (runbook §6.6–§6.7: Claude Code desktop over the claude.ai connector
+  passed both the download and the upload loop 2026-11-08 with no sandbox
+  friction; other harnesses untested);
 - Sync delivery of text and binary files is checked on the replicas;
 - the normal release, clean-tag publication, runbook and read-only verify
   gates are complete.
