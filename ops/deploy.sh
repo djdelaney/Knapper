@@ -504,7 +504,8 @@ cat <<'NOTE'
       A '+' line is NOT an instruction to apply it. /etc is authoritative for
       site config. knapper.service is EXPECTED to differ by this deployment's
       site edits (AllowedHosts, the Access lines, MonitoringAudience,
-      Sync__MaxFileBytes, Vault__ArchivedPrefixes__*, Conventions__*) —
+      Sync__MaxFileBytes, Vault__ArchivedPrefixes__*, Conventions__*,
+      Transfer__*, Download__*, Upload__*) —
       copying the shipped file reverts those into a service that still starts
       and still passes every check.
 

@@ -98,6 +98,16 @@ Environment=Mcp__Port=3535
 # logs a warning at startup and that is the only signal.
 # Two apps is the default. Take one only deliberately — runbook §6.4.
 #Environment=Mcp__Access__MonitoringAudience=YOUR_UP_APP_AUD
+# Transfer grants (runbook §6.6 downloads, §6.7 uploads): byte-exact file
+# transfer with plain curl. Off unless set. The origin first, then ONE
+# path-scoped Access Bypass application at /transfer. An EMPTY allowlist
+# serves nothing — name the folder downloads may serve. Replacement stays off
+# unless agents should overwrite existing files (always hash-conditional).
+#Environment=Transfer__PublicOrigin=https://mcp.example.com
+#Environment=Download__Enabled=true
+#Environment=Download__AllowedPrefixes__0=SomeFolder
+#Environment=Upload__Enabled=true
+#Environment=Upload__AllowReplace=true
 
 # Hardening. ReadWritePaths lists exactly what the service may touch.
 NoNewPrivileges=true

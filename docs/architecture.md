@@ -20,6 +20,10 @@ Agents (claude.ai / Desktop / Code) ──► cloudflared ──► Knapper.Mcp 
 
 Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + metrics
               deltas (pct exec) ──► silent-on-success mail to alerts@
+
+Agent shell (curl + grant token) ──► cloudflared ──► Knapper.Mcp /transfer
+                                     (path-scoped     ├── GET  downloads/{id}: serves a snapshot taken at prepare
+                                      Bypass)         └── PUT  uploads/{id}:   stages only; vault_upload_commit writes
 ```
 
 ## Projects
@@ -27,7 +31,7 @@ Proxmox host: knapper-monitor.sh ──► /up via tunnel + commit-stamp age + m
 | Project | Kind | Purpose |
 |---|---|---|
 | `Knapper.Core` | library | Everything that touches vault bytes: path containment, hashing, atomic commits, locks, query services, mutation service, gates, audit, git job, transfer grants (snapshot reader, grant store). No ASP.NET, no MCP types. |
-| `Knapper.Mcp` | web app | The MCP host: 18 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`, and the `/transfer` prefix (download grants served from in-memory snapshots; `TransferEndpoint.cs`). Thin — tools map wire shapes to Core calls. The write tools' convention clauses are composed at startup from `Conventions:*` (`Tools/VaultConventions.cs`) and budget-checked there. |
+| `Knapper.Mcp` | web app | The MCP host: 18 locked tools over Streamable HTTP, Cloudflare Access origin validation, HostGuard, `/health` + `/up`, and the `/transfer` prefix (`TransferEndpoint.cs`: download grants served from in-memory snapshots, upload grants staged in memory and committed over MCP). Thin — tools map wire shapes to Core calls. The write tools' convention clauses are composed at startup from `Conventions:*` (`Tools/VaultConventions.cs`) and budget-checked there. |
 | `Knapper.Cli` | exe (`knapper`) | Admin: `git-init`, `commit` (the snapshot job systemd runs), `status`, `doctor`, `audit-tail`, `lint --accept` (records the lint baseline — the only thing that moves it). Shares Core, so the commit job uses the *same* lock implementation as mutations. |
 | `tools/Knapper.LockProbe` | exe | Child process for genuine two-process lock tests. |
 | `tools/Knapper.MutationProbe` | exe | Child process for two-process stale-edit / create races through the real `VaultMutationService`. |
@@ -49,7 +53,7 @@ Core/
   KnapperException.cs      VaultErrorCode + the one exception type crossing layers
   KnapperMetrics.cs        bounded counters → atomic JSON snapshot (the monitor's rate signals)
   Interop/Posix.cs         flock / link / linkat-nofollow / creat / exchange / fsync-dir / realpath (LibraryImport)
-  Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions, ConventionsOptions (POCOs)
+  Options/                 VaultOptions, McpOptions, AccessOptions, SyncOptions, ConventionsOptions, TransferOptions (+ Download/Upload) (POCOs)
   Vault/
     VaultPathResolver.cs   THE gate for agent-supplied paths (traversal/symlink/dot-segments)
     VaultPath.cs           proof-of-validation record (internal ctor)
@@ -74,7 +78,7 @@ Core/
     VaultLintService.cs    vault_lint: link-graph + table checks over a whole-vault index, diffed against the accepted baseline commit
     LintBaselineStore.cs   the accepted baseline's record (Lint:BaselinePath, outside the vault)
   Mutation/
-    VaultMutationService.cs  THE mutation surface: edit/append/create/mkdir/move/delete/batch
+    VaultMutationService.cs  THE mutation surface: edit/append/create/mkdir/move/delete/batch, CreateBytes + conditional ReplaceBytes
     ConflictDetector.cs      Sync conflict-file gate
     SyncGate.cs / FileAgeSyncGate.cs  ISyncGate: mutations fail closed on unhealthy sync
     AuditLog.cs              append-only fsynced JSONL, outside the vault
@@ -85,6 +89,14 @@ Core/
     GitCommitJob.cs        the vault's only committer (vault-wide lock, staged secret scan)
     GitTreeReader.cs       read-only committed trees for lint's baseline (rev-parse, ls-tree, one cat-file --batch)
     SecretScanner.cs       credential-shaped-content tripwire
+    SecretScanPolicy.cs    WHICH bytes are scanned and HOW they decode — shared by the committer and the upload commit
+  Transfer/
+    TransferConfiguration.cs  the ONE validator (startup + doctor): half-enabled refusals, origin, limits
+    TransferBudget.cs         one byte budget + record cap for both directions
+    TransferPrincipal.cs      a grant's owner, from validated Access claims only
+    DownloadSnapshotReader.cs the only download read of vault bytes (reserve first, two-read torn-read guard)
+    DownloadGrantStore.cs / DownloadService.cs   download grants and vault_download_prepare
+    UploadGrantStore.cs / UploadService.cs       the upload state machine and prepare/commit/status
 ```
 
 ## The two layers, and their contracts
@@ -236,3 +248,19 @@ path-scoped monitoring audience is accepted on `/up` only. HostGuard pins
 Host/Origin headers against DNS-rebinding. The caller's identity (email /
 service-token common name) flows into every audit entry, and Access being
 disabled warns loudly at startup on every bind.
+
+**The `/transfer` exception.** Transfer grants
+([proposals/transfer-grants.md](proposals/transfer-grants.md)) need one
+path-scoped Bypass application at `/transfer`, so everything under it reaches
+the origin without an Access assertion. Four properties make that tolerable:
+- **The MCP route keeps its own check.** The origin still demands an
+  assertion there, so an edge surprise reaches a 401, not the vault.
+- **One handler owns the whole prefix**, serving the two grant routes and
+  404ing every other path — including the encoded-slash escape the edge does
+  not resolve.
+- **A grant is a single-use, short-lived token bound to a principal** taken
+  from validated Access claims. Access's loopback exemption supplies none.
+- **Neither route can reach the vault on its own.** The download GET serves
+  only a snapshot taken at prepare and opens no file; the upload PUT only
+  stages bytes, and the write happens at `vault_upload_commit` over the
+  authenticated MCP surface.

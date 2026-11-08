@@ -664,6 +664,18 @@ Directory.Build.props <Version>          the one carrier
 Consolidated from five review rounds so they are decided once, here — not
 re-litigated per review.
 
+- **A pre-landing secret scan for the TEXT write tools** — open, Dan's
+  call. Uploads run `SecretScanPolicy.Scan` before any byte lands, because
+  one credential-shaped string in a staged file refuses every vault commit
+  until a human edits it, and an upload makes that a one-liner. The text
+  tools (`vault_create`, `vault_edit`, `vault_append`, `vault_batch`) can
+  land the same string and do not scan; they have since before uploads, so
+  transfer grants deliberately left them out of scope
+  ([proposals/transfer-grants.md](proposals/transfer-grants.md) §4.3).
+  Adding it means calling the SAME policy from `VaultMutationService` before
+  the temp file, typed `SecretDetected`, never a second rule. Re-opens on a
+  commit wedge traced to a text write.
+
 - **Git remote for the vault repo** — Dan's call, blocked on the
   credential sweep closing (brief §10). Until then the repo is local-only;
   `knapper doctor` fails loud if a remote appears. Nothing in this repo

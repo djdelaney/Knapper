@@ -32,6 +32,7 @@ resolve it, don't pick a winner.**
 | 8b | smoke unit, disposable vault outside `/vault`, Access app 3 | + `knapper-smoke` :3536 | + smoke hostname | smoke unit/vault/route/app/connector; `LogToolCalls`; page-size override |
 | 9 | production | `knapper`, `obsidian-headless`, 2 timers, monitor | prod hostname only | **all of the above must be zero** |
 | 10 | + the PREVIOUS release's tarball, retained | as §9 | as §9 | — (steady state; repeats once per release) |
+| 6.6–6.7 (optional, any time after §9) | transfer settings in the unit + `REQUIRED_ENV`; Access app `/transfer` (Bypass) | as §9 | + `/transfer/*` unauthenticated, grant tokens only | — |
 
 **Peak surface is §8b**: 2 Knappers, 2 hostnames, 2 ports, 3 Access apps, 3
 service tokens, 2 vaults, 2 audit logs, 2 archives, 6 live deviations. That
@@ -45,6 +46,7 @@ document is a reference that resolves to the wrong member of a pair:
 | Root Access app + token (§6.2), `CF_ACCESS_CLIENT_*` | Claude Code and the other connectors | the monitor |
 | `/up` path-scoped app + token (§6.2), `CF_MONITOR_CLIENT_*`, `/etc/knapper-monitor.conf` | the host-side monitor only | the vault surface, or Claude Code |
 | Smoke app + token, `<smoke-hostname>` :3536 (§8b) | the smoke instance | production, and gone by §9 |
+| `/transfer` Bypass app (§6.6) | grant-carrying curl from agent shells, both directions | any path outside `/transfer`; never Service Auth or an identity policy (that would refuse every grant) |
 | `106` / `knapper` / `mcp.example.com` | VMID for `pct` / the CT's own hostname / the public name | used interchangeably |
 | `_deploy-check/` (§5) | live-vault acceptance gates — **synced to Dan's devices** | mistaken for isolated |
 | `/var/lib/knapper-smoke/vault` (§8b) | the smoke instance — outside `/vault`, unreachable by its unit | inside `/vault` |
@@ -667,7 +669,7 @@ and still without a write.
   `vault_delete` on a conflict file is refused by the very gate under test —
   agents never resolve Sync conflicts, a human does — so the fixture needs
   `rm`. The scratch subtree needs `rmdir` for a different reason: there is no
-  `vault_rmdir` in the 14-tool surface and there is not meant to be. Folder
+  `vault_rmdir` in the tool surface and there is not meant to be. Folder
   CREATION is a deliberate act with a tool behind it; folder REMOVAL has no
   tool at all, because a recursive delete is the one operation whose blast
   radius an anchored, hash-conditioned contract cannot bound. The asymmetry is
@@ -933,7 +935,7 @@ First-deployment measurements, dated and marked observed when taken:
 - the audit chain for that upload: `upload_prepare`, `upload_transfer`
   (`ready`), then the mutation's `create` (or `replace`) lines, all with the
   same `GrantId`:
-  `grep '"GrantId":"<id>"' /var/lib/knapper/audit.jsonl`.
+  `grep '"GrantId":"<grant-id>"' /var/lib/knapper/audit.jsonl`.
 
 ## 7. Git (brief §10 — after backup is proven)
 
@@ -1621,12 +1623,13 @@ A failure here means the service is not the build just installed. Do not
 "restart again and see" — go to §10.4.
 
 The `tools/list` line reports the count it saw (`ok tools/list is EXACTLY the
-locked surface (14 tools)`), so the acceptance checklist's "14 tool names" is
+locked surface (18 tools)`), so the acceptance checklist's "18 tool names" is
 answered by this run rather than by a second `tools/list` call by hand.
 
 **Read the header and the tally, not only the verdict.** The first line names
 the CLI that produced the transcript (`verifying … · knapper CLI <v>`) and the
-line above the verdict counts what ran (`14 ok, 0 failed, 1 skipped`). Both are
+line above the verdict counts what ran (`17 ok, 0 failed, 0 skipped` on a
+two-app production run). Both are
 there because everything else in the output describes the FAR end: a stale CLI
 runs the check list it shipped with and prints "all checks passed" over a
 shorter one, with every line reading ok. Compare the count against the previous

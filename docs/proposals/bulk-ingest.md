@@ -1,5 +1,17 @@
 # Proposal: bulk ingest (getting large files into the vault)
 
+> **Superseded for files already on an agent's disk (2026-11-08).** Upload
+> grants ([transfer-grants.md](transfer-grants.md)) now move such a file
+> byte-exact with plain `curl`, with the source hash bound into the grant and
+> the commit receipt proving it — the transcription problem §1 measures does
+> not arise. This document's analysis still holds for content an agent
+> GENERATES (it has no file to upload), and its rule stands for evolving
+> text: when the agent holds the current bytes, an anchored `vault_edit` is
+> the cheaper path at any size. §5's objection to a public write endpoint is
+> answered by the shape rather than waived: the public PUT only STAGES bytes
+> against a single-use grant, the vault write happens at an authenticated MCP
+> commit, and `knapper verify` probes the route with a named refusal.
+
 **Status: proposed, not built. Written 2026-09-03.** Nothing here describes
 shipped behavior. The recommendation is **build nothing yet** — §3 is a
 workflow that uses only tools that already exist. §4 onward exists so that

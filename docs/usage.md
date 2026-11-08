@@ -40,6 +40,17 @@ logs a warning while it's active. The CLI reads the same settings:
 dotnet run --project src/Knapper.Cli -- doctor
 ```
 
+To try transfer grants against a dev server, local-only mode gives the
+loopback caller a principal without Access (the server refuses it on any
+configuration that is not "this machine only"):
+
+```sh
+export Transfer__LocalOnly=true
+export Transfer__PublicOrigin=http://127.0.0.1:3535
+export Download__Enabled=true Download__AllowedPrefixes__0=<a folder in the vault>
+export Upload__Enabled=true                     # add Upload__AllowReplace=true to try replace
+```
+
 Developing from a Claude Code cloud session instead: see
 [cloud-development.md](cloud-development.md) for the environment setup and
 how to verify it.
@@ -227,6 +238,13 @@ as new after every accept. `knapper lint --accept` lists such files.
   Claude Code. The server's `initialize` response carries the routing
   instruction and trust model, so connected agents get the ground rules
   without per-surface prompt plumbing.
+- **After a release that changes the tool surface**, connected clients keep
+  their cached tool list until two caches clear: refresh the connector in
+  claude.ai's connector settings, then fully quit and reopen Claude Code — a
+  new session alone is not enough (observed 2026-11-08, runbook §6.6).
+- **Transfer grants** need a shell with network reach to the server and
+  `curl` 7.76+ plus `sha256sum` (or `shasum -a 256`). Chat-only clients
+  cannot use them; a sandboxed shell may need its network policy opened.
 
 ## The tool surface
 
