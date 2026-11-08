@@ -499,7 +499,12 @@ Download grants are built; uploads are registered but answer
   VALIDATE phase so one archived item fails the batch untouched. Pinned by
   `ArchivedMutationTests`.
 - **`VaultMutationService` is the only mutation surface, and every operation
-  on an existing file demands `expect_sha256`.** There is no unconditional
+  on an existing file demands `expect_sha256`.** That includes the byte paths
+  uploads commit through: `CreateBytes` (the ONE create — the text `Create`
+  delegates to it) and `ReplaceBytes`, brief §7's retained full-file write,
+  which runs inside `Mutate` and refuses an empty hash. Whether a deployment
+  exposes replacement is the caller's gate (`Upload:AllowReplace`), never a
+  second, ungated method. There is no unconditional
   write anywhere in the codebase and none may ever be added — not even as an
   internal helper "for tests" (a safe wrapper BESIDE an unsafe original is an
   exposed bypass; brief §7 forbids exactly that).

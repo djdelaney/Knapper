@@ -4,7 +4,13 @@ namespace Knapper.Core.Mutation;
 public sealed record EditSpec(string Old, string New, int Count = 1);
 
 /// <summary>Who asked. Filled by the MCP layer from the authenticated request; null in local/admin use.</summary>
-public sealed record AuditContext(string? Client, string? RequestId)
+/// <param name="GrantId">
+/// The nonsecret transfer grant a mutation commits, so the prepare, transfer
+/// and mutation records of one upload share an ID (transfer-grants §11).
+/// Null for every ordinary tool call.
+/// </param>
+/// <param name="Principal">The grant's verified principal, for the same records; never the display client.</param>
+public sealed record AuditContext(string? Client, string? RequestId, string? GrantId = null, string? Principal = null)
 {
     public static readonly AuditContext None = new(null, null);
 }

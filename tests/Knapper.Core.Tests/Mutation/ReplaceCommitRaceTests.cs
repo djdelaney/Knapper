@@ -239,6 +239,104 @@ public sealed class ReplaceCommitRaceTests : IDisposable
         _v.TempFiles().ShouldBeEmpty();
     }
 
+    // ---- the byte path uploads commit through (transfer-grants §12) ------
+    // Sync and human shells honor no locks, so the two-process tests cannot
+    // reach this window; the exchange hook stands in for that writer, as it
+    // does for edit above.
+
+    [Fact]
+    public void A_byte_replace_raced_by_an_external_replacement_rejects_without_mutating()
+    {
+        var sha = _v.Write("Photos/pic.bin", "agent base\n");
+        OnExchangeOf("Photos/pic.bin", p => ExternalReplace(p, "sync won\n"));
+
+        var ex = Should.Throw<KnapperException>(() =>
+            _v.Service.ReplaceBytes("Photos/pic.bin", sha, [0xFF, 0x00, 0xFE]));
+
+        ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+        _v.ReadText("Photos/pic.bin").ShouldBe("sync won\n");
+        _v.TempFiles().ShouldBeEmpty();
+        SiblingsOf("Photos");
+        _v.AuditLines().ShouldContain(l => l.Contains("\"replace\"") && l.Contains("\"PreconditionFailed\""));
+    }
+
+    [Fact]
+    public void A_byte_replace_raced_by_an_in_place_write_with_a_restored_mtime_still_rejects()
+    {
+        var sha = _v.Write("Photos/pic.bin", "agent base\n");
+        var path = _v.Resolver.Resolve("Photos/pic.bin").Absolute;
+        var fixedMtime = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, fixedMtime);
+        OnExchangeOf("Photos/pic.bin", p => ExternalInPlaceOverwrite(p, "sync won 1\n", fixedMtime));
+
+        var ex = Should.Throw<KnapperException>(() =>
+            _v.Service.ReplaceBytes("Photos/pic.bin", sha, "agent update\n"u8.ToArray()));
+
+        ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+        File.ReadAllText(path).ShouldBe("sync won 1\n");
+        _v.TempFiles().ShouldBeEmpty();
+        SiblingsOf("Photos");
+    }
+
+    [Fact]
+    public void A_byte_replace_raced_by_an_external_delete_leaves_it_deleted()
+    {
+        var sha = _v.Write("Photos/pic.bin", "agent base\n");
+        OnExchangeOf("Photos/pic.bin", File.Delete);
+
+        var ex = Should.Throw<KnapperException>(() =>
+            _v.Service.ReplaceBytes("Photos/pic.bin", sha, [1, 2, 3]));
+
+        ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+        File.Exists(_v.Absolute("Photos/pic.bin")).ShouldBeFalse("their delete stands");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Review 2026-11-08: the byte paths own their bytes. A caller changing
+    /// its array in the commit window must change neither what lands nor
+    /// what the receipt says — before the copy, this landed the original
+    /// bytes and answered [VerifyFailed].
+    /// </summary>
+    [Fact]
+    public void A_caller_mutating_its_array_mid_replace_changes_nothing()
+    {
+        var sha = _v.Write("Photos/pic.bin", "base\n");
+        byte[] payload = [5, 6];
+        OnExchangeOf("Photos/pic.bin", _ => payload[0] = 7);
+
+        var receipt = _v.Service.ReplaceBytes("Photos/pic.bin", sha, payload);
+
+        File.ReadAllBytes(_v.Absolute("Photos/pic.bin")).ShouldBe(new byte[] { 5, 6 });
+        receipt.Verified.ShouldBeTrue();
+        receipt.NewSha256.ShouldBe(VaultHash.Sha256Hex([5, 6]));
+    }
+
+    [Fact]
+    public void A_caller_mutating_its_array_mid_create_changes_nothing()
+    {
+        Directory.CreateDirectory(_v.Absolute("Photos"));
+        byte[] payload = [5, 6];
+        var target = _v.Resolver.Resolve("Photos/new.bin").Absolute;
+        AtomicFile.BeforeCreateLinkTestHook = p =>
+        {
+            if (p == target)
+                payload[0] = 7;
+        };
+        try
+        {
+            var receipt = _v.Service.CreateBytes("Photos/new.bin", payload);
+
+            File.ReadAllBytes(target).ShouldBe(new byte[] { 5, 6 });
+            receipt.Verified.ShouldBeTrue();
+            receipt.NewSha256.ShouldBe(VaultHash.Sha256Hex([5, 6]));
+        }
+        finally
+        {
+            AtomicFile.BeforeCreateLinkTestHook = null;
+        }
+    }
+
     [Fact]
     public void An_edit_raced_by_an_external_replacement_rejects_without_mutating()
     {

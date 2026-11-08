@@ -7,6 +7,8 @@
 //   Knapper.MutationProbe edit   <vaultRoot> <lockDir> <path> <expectSha> <old> <new>
 //   Knapper.MutationProbe create <vaultRoot> <lockDir> <path> <text>
 //   Knapper.MutationProbe append <vaultRoot> <lockDir> <path> <expectSha> <text>
+//   Knapper.MutationProbe createbytes <vaultRoot> <lockDir> <path> <base64>
+//   Knapper.MutationProbe replace     <vaultRoot> <lockDir> <path> <expectSha> <base64>
 //
 // And the crash modes, which exist because a durable disappearance can only
 // be observed from OUTSIDE the process that caused it — a try/finally proves
@@ -40,7 +42,7 @@ using Knapper.Core.Vault;
 
 if (args.Length < 4)
 {
-    Console.Error.WriteLine("usage: Knapper.MutationProbe <edit|create|append> <vaultRoot> <lockDir> <path> ...");
+    Console.Error.WriteLine("usage: Knapper.MutationProbe <edit|create|append|createbytes|replace> <vaultRoot> <lockDir> <path> ...");
     return 2;
 }
 
@@ -109,6 +111,10 @@ try
         "edit" => service.Edit(path, args[4], [new EditSpec(args[5], args[6])]),
         "create" => service.Create(path, args[4]),
         "append" => service.Append(path, args[4], args[5]),
+        // Byte paths (transfer-grants §12): content arrives base64 so any
+        // bytes — BOMs, CRLF, invalid UTF-8 — survive the command line.
+        "createbytes" => service.CreateBytes(path, Convert.FromBase64String(args[4])),
+        "replace" => service.ReplaceBytes(path, args[4], Convert.FromBase64String(args[5])),
         _ => throw new ArgumentException($"unknown command '{command}'"),
     };
     Console.WriteLine(JsonSerializer.Serialize(new { ok = true, code = (string?)null, newSha = result.NewSha256 }));

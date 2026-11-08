@@ -185,13 +185,30 @@ public sealed class VaultMutationService(
 
     // ---- vault_create --------------------------------------------------
 
-    public MutationResult Create(string path, string text, AuditContext? ctx = null)
+    public MutationResult Create(string path, string text, AuditContext? ctx = null) =>
+        CreateBytes(path, Encoding.UTF8.GetBytes(text ?? throw new KnapperException(
+            VaultErrorCode.InvalidArgument, "text is required (may be empty)")), ctx);
+
+    /// <summary>
+    /// Create a new file from exact bytes — no encoding, no newline or BOM
+    /// handling, any content type (transfer-grants §12: the text create
+    /// delegates here, so there is ONE create path). The same no-clobber
+    /// discipline as every create: gates before and under the lock, Sync size
+    /// guard, write-ahead audit, containment on both sides, hard-link publish,
+    /// byte verification. The bytes are COPIED on entry: the service owns the
+    /// one snapshot that is written, verified, hashed and convention-checked,
+    /// so a caller touching its array mid-call can neither fail the verify
+    /// nor make the receipt describe bytes that are not on disk (review
+    /// 2026-11-08 — an ownership rule in a comment is not one).
+    /// </summary>
+    public MutationResult CreateBytes(string path, byte[] content, AuditContext? ctx = null)
     {
+        ArgumentNullException.ThrowIfNull(content);
+        var written = (byte[])content.Clone();
         var vp = resolver.Resolve(path);
         try
         {
             AssertGates([vp]);
-            var written = Encoding.UTF8.GetBytes(text);
             RequireSyncable(vp, written);
             using (locks.AcquirePathLock(vp, LockTimeout))
             {
@@ -569,6 +586,34 @@ public sealed class VaultMutationService(
         if (!Directory.Exists(Path.GetDirectoryName(vp.Absolute)!))
             throw new KnapperException(VaultErrorCode.NotFound, $"parent directory does not exist for {vp.Relative}");
         return (vp, null, Encoding.UTF8.GetBytes(item.Text), item);
+    }
+
+    // ---- conditional whole-file replacement -------------------------------
+
+    /// <summary>
+    /// Replace an existing file's whole content with exact bytes — CONDITIONAL,
+    /// never otherwise: <paramref name="expectSha256"/> is mandatory and is
+    /// checked against a fresh read under the path lock, inside
+    /// <see cref="Mutate"/>'s fixed critical section (archive refusal, both
+    /// gate passes, Sync size guard, write-ahead audit, containment on both
+    /// sides, atomic exchange, byte verification). This is brief §7's
+    /// retained full-file write: "<c>expect_sha256</c> for replacement". There
+    /// is no unconditional form and none may be added. Unlike edit and append
+    /// it does not require either version to be UTF-8 — the transfer that
+    /// reaches it carries opaque bytes. Whether a deployment exposes it at all
+    /// is the caller's gate (<c>Upload:AllowReplace</c>).
+    /// </summary>
+    public MutationResult ReplaceBytes(string path, string expectSha256, byte[] content, AuditContext? ctx = null)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        // Owned snapshot, for the reason on CreateBytes.
+        var after = (byte[])content.Clone();
+        return Mutate("replace", path, expectSha256, ctx, vp =>
+        {
+            var data = ReadExisting(vp);
+            RequireSha(expectSha256, data, vp);
+            return (data, after);
+        });
     }
 
     // ---- the shared critical section -----------------------------------
@@ -1333,7 +1378,9 @@ public sealed class VaultMutationService(
         audit?.Append(new AuditLog.Entry(
             DateTimeOffset.UtcNow, op, relative, outcome,
             ctx?.Client, ctx?.RequestId, before, after, detail,
-            warnings is { Count: > 0 } ? [.. warnings.Select(w => w.Rule)] : null));
+            warnings is { Count: > 0 } ? [.. warnings.Select(w => w.Rule)] : null,
+            GrantId: ctx?.GrantId,
+            Principal: ctx?.Principal));
     }
 
     /// <summary>
