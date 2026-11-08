@@ -937,6 +937,17 @@ First-deployment measurements, dated and marked observed when taken:
   same `GrantId`:
   `grep '"GrantId":"<grant-id>"' /var/lib/knapper/audit.jsonl`.
 
+Observed 2026-11-08 on this deployment (v0.14.0, replacement allowed), from
+the CT through the public edge with the root service token: a 3 MiB create
+staged in 0.28 s and committed with the landed sha256 equal to the source's;
+a 2 MiB conditional replace committed against that hash; both audit chains
+complete (`upload_prepare` → `upload_transfer ready` → `create`/`replace`
+attempt + ok, principal kind `service`); the scratch file then soft-deleted
+to `.trash/`. curl reached the edge over **HTTP/2 and sent no `Expect:
+100-continue`** at all, so the one-second stall above does not arise there;
+it can only affect a client speaking HTTP/1.1 to the edge. Still owed: the
+same loop from a real harness over Managed OAuth.
+
 ## 7. Git (brief §10 — after backup is proven)
 
 ```sh

@@ -468,9 +468,10 @@ How the recipes hold the design's properties:
   happen; the recipe test pins it anyway, because a future URL shape that
   reintroduced the slash would fail every upload with a 404 that looks like
   a routing bug.
-- **A one-second stall on upload is not a fault.** curl sends
+- **A one-second stall on upload is not a fault.** Over HTTP/1.1, curl sends
   `Expect: 100-continue` for larger bodies and waits for the 100 before
-  sending them. If the edge strips the header or never relays the interim
+  sending them (over HTTP/2, as curl speaks to the edge by default, it sends
+  no such header — observed 2026-11-08). If the edge strips the header or never relays the interim
   response, curl gives up waiting after one second and sends the body
   anyway; the upload still succeeds, one second slower. The first
   deployment measures which of the two the edge does (§15's deployment
@@ -1099,7 +1100,10 @@ production with downloads on:
 - `/up` and the MCP root are unchanged, and wrong Host and wrong method are
   refused. **Observed**, within a 17-ok `knapper verify` run;
 - a 2–5 MB PUT carrying `Expect: 100-continue` and a 5 MiB GET both pass
-  through the tunnel intact. The cost of a surprise is bounded: a lost 100
+  through the tunnel intact. **Observed 2026-11-08 (v0.14.0):** 3 MiB and
+  2 MiB PUTs passed byte-exact; curl spoke HTTP/2 to the edge and sent no
+  `Expect` header, so the interim-response question only exists for
+  HTTP/1.1 clients. The cost of a surprise is bounded: a lost 100
   costs one second per upload (§6), and Cloudflare documents request bodies
   far above the 5 MiB ceiling. **Observed for the GET direction** at 2.3 MB
   (the PUT waits for upload);
