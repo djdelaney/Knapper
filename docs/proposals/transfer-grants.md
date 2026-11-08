@@ -24,6 +24,12 @@ The rate limiter runs after authentication, never in front of a valid token
 (§11, open decision 4). The separate-hostname choice is now open decision 5,
 with the Host binding it needs (§9).
 
+Gate zero's path-handling question was then answered on the production
+edge itself, with no disposable deployment (§9, §15). An existing
+path-scoped child application served as the stand-in for the planned
+Bypass, and unauthenticated probes showed which application matched each
+request. What is left is measured on the first deployment.
+
 Reviewers: the questions this document cannot settle on its own are in
 §16 (open decisions), and the places it most needs a skeptical read are in
 §17.
@@ -446,9 +452,9 @@ How the recipes hold the design's properties:
   `Expect: 100-continue` for larger bodies and waits for the 100 before
   sending them. If the edge strips the header or never relays the interim
   response, curl gives up waiting after one second and sends the body
-  anyway; the upload still succeeds, one second slower. Gate zero (§15)
-  measures which of the two the edge does, so the delay is known rather
-  than diagnosed.
+  anyway; the upload still succeeds, one second slower. The first
+  deployment measures which of the two the edge does (§15's deployment
+  checks), so the delay is known rather than diagnosed.
 
 Verified 2026-11-07 against a local stub server (curl 8.7.1, macOS): the
 header-on-stdin form authenticates, `--fail` turns a 401 into exit 22 with
@@ -665,6 +671,37 @@ differently from its documentation: path matching, policy precedence,
 adjacent paths, wrong Host, tunnel routing. This deployment has already had
 one ingress verdict inverted by exactly that class of surprise (2026-08-14,
 a followed login redirect that reported an exposed surface as healthy).
+
+**Measured 2026-11-08, observed on the production edge.** The deployment
+already runs a path-scoped child application under its hostname-wide one: a
+monitoring path with a Service Auth policy, beneath a root application with
+Managed OAuth. The two refuse in distinguishable shapes (a flat 403 page
+from the child, a 401 carrying a `resource_metadata` pointer from the
+root), so an unauthenticated probe shows which application matched each
+path without any credential. Every refusal came from the edge, and none was
+a bot challenge. Writing `/p` for the child's path:
+
+| Request | Matched | What it means for `/downloads/*` |
+|---|---|---|
+| `/p`, `/p/`, `/p/x`, `/p?x=1` | child | the child overrides the Managed OAuth root: precedence works |
+| `/px`, `/p;x`, `/p%2F` | root | matching respects the segment boundary: `/downloadsx` stays protected |
+| `/p/../mcp` (sent unnormalized) | root | dot segments are resolved BEFORE matching: no Bypass into MCP |
+| `/P`, `/%70` (an escaped letter) | child | case-insensitive and decodes unreserved escapes, as Kestrel routing does |
+| `//p`, `/./p` | child | reaches the origin with a path no route serves |
+| `/p/..%2Fmcp` | child | an encoded slash is NOT resolved: see below |
+
+The last row is the one that matters. Under a Bypass, `/downloads/..%2Fmcp`
+reaches the origin unauthenticated. Kestrel does not decode `%2F` into a
+separator, so it routes to the download handler as an unknown ID, never to
+`/mcp`, and the MCP route would demand an Access assertion even if it did.
+An origin-side test pins exactly this request. The bare child path (`/p`,
+so `/downloads` with no ID) also matches, so the origin must refuse it
+without touching any grant.
+
+What this does NOT prove, and the first deployment must: that a Bypass
+policy behaves as the Service Auth one did (Cloudflare orders applications
+by path whatever their action, but that is documentation, not
+measurement); and what the probes in §15 list as deployment checks.
 
 ## 10. Bounds and configuration
 
@@ -1001,21 +1038,34 @@ errors rather than two mappings of their meaning.
 
 ## 15. Evidence and gates, in order
 
-**Gate zero: prove the edge on a disposable deployment, before any grant
-code exists.** Everything genuinely expensive here is the edge exception,
-not the code. Prove:
+**Gate zero: prove the edge's path handling before any grant code exists.**
+Everything genuinely expensive here is the edge exception, not the code.
+**Passed 2026-11-08 without a disposable deployment** (§9 has the table):
+an existing path-scoped child application on the production hostname
+served as the stand-in, and unauthenticated probes measured its precedence
+over the Managed OAuth root, its boundary matching, and its handling of dot
+segments, case, and encoded variants. That was the question gate zero
+existed to answer before code was written: whether a path-scoped exception
+on this hostname can be made tight. It can, with the one encoded-slash case
+handed to the origin.
 
-- `/uploads/*` and `/downloads/*` each demand their own grant scheme and
-  refuse everything else;
-- adjacent and malformed paths (`/downloads`, `/downloadsx`,
-  `/downloads/../mcp`, encoded variants) are still refused by Access;
+Measured only once a Bypass application exists, so these are deployment
+checks, not gates on the code:
+
+- `/uploads/*` and `/downloads/*` reach the origin and each demand their own
+  grant scheme (the refusal carries `WWW-Authenticate: KnapperUpload` or
+  `KnapperDownload` from the ORIGIN, not an edge page);
 - `/up` and the MCP root are unchanged, and wrong Host and wrong method are
   refused;
 - a 2–5 MB PUT carrying `Expect: 100-continue` and a 5 MiB GET both pass
-  through the tunnel intact.
-
-If that cannot be shown, the rest is wasted work, and learning it costs a day
-instead of the whole implementation.
+  through the tunnel intact. The cost of a surprise is bounded: a lost 100
+  costs one second per upload (§6), and Cloudflare documents request bodies
+  far above the 5 MiB ceiling;
+- the principal shape across two harnesses (§8.2). The edge's
+  authentication log does not record Managed OAuth sign-ins (observed
+  2026-11-08: thirty days showed only service-token traffic), so this is
+  measured at the origin, by logging a digest of the subject while two
+  harnesses call in.
 
 **Gate one: draft the four tool descriptions and measure them** composed
 with conventions configured (§13). Also cheap, also before building.
@@ -1046,7 +1096,10 @@ those are their own deployment task.
   writing again; a download grant serves once.
 - **Isolation.** Staging changes nothing in the vault. Another principal
   cannot inspect or commit a grant. A grant cannot authorize MCP, reads or
-  monitoring endpoints. The GET handler never touches the filesystem.
+  monitoring endpoints. The GET handler never touches the filesystem. The
+  encoded-slash request the edge passes through a Bypass
+  (`/downloads/..%2Fmcp`, §9) and the bare `/downloads` both reach a refusal
+  from the transfer route, never MCP routing, against a real Kestrel.
 - **Mutation races through the byte path**, with real second processes:
   create and no-clobber, replace and stale hash. Existing external-writer,
   containment, conflict, sync-gate, audit-failure and short-write behaviour
@@ -1090,7 +1143,7 @@ read-only.
 
 - the real Access principal shapes are verified, including two harnesses as
   one person (§8.2);
-- the edge exception is configured and tested on a disposable deployment;
+- the edge exception is configured and gate zero's deployment checks pass;
 - the full loop passes in each harness the operator intends to support,
   with no authentication beyond its MCP connection. This is the harness
   matrix: hash, prepare, transfer and commit for upload; prepare, fetch and
@@ -1156,8 +1209,9 @@ read-only.
      DNS and tunnel change. In return, the vault hostname's safety depends
      on Cloudflare's path precedence holding.
 
-   Decide before gate zero, because gate zero tests the arrangement it is
-   given.
+   Decide before the edge exception is configured. Gate zero's measurement
+   (§9) covers the Bypass arrangement; the separate hostname needs no
+   path-scoped exception at all, so it has nothing for gate zero to measure.
 
 ## 17. Where review is most useful
 
@@ -1165,8 +1219,9 @@ read-only.
   the vault's hostname is tolerable because the ORIGIN validates the Access
   assertion on the MCP route, so an edge surprise reaches a 401, not the
   vault. A separate hostname is recommended hygiene, not a precondition.
-  Still open: whether to take the hygiene (open decision 5), and gate zero's
-  measurement of the edge's actual behaviour.
+  Gate zero's path-handling measurement passed the same day (§9). Still
+  open: whether to take the hygiene (open decision 5), and the deployment
+  checks §15 lists.
 - **The download threat model (§3, §5, §16.2).** Does serving only
   in-memory snapshots bound a GET authentication defect the way §3 claims?
   Is the audited prepare enough record of what left the vault?
