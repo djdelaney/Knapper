@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knapper · Let AI agents into your Obsidian vault without losing a note</title>
+<meta name="description" content="Knapper is a self-hosted, open-source MCP server that gives Claude and other agents safe read and write access to your Obsidian vault. Every write is checked, nothing gets overwritten blind, and anything unsafe stops instead of guessing.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0E0C14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FBFAFE" media="(prefers-color-scheme: light)">
+<meta property="og:title" content="Knapper">
+<meta property="og:description" content="Let AI agents into your Obsidian vault without losing a note.">
+<meta property="og:image" content="assets/knapper-tile-512.png">
+<link rel="icon" href="assets/favicon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/favicon-light.svg" type="image/svg+xml" media="(prefers-color-scheme: light)">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+<script src="main.js" defer></script>
+</head>
+<body>
+<div class="k" id="k" data-theme="dark" style="min-height: 100vh">
+<script>(function(){var t;try{t=localStorage.getItem("knapper-theme")}catch(e){}if(!t){t=window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"}document.getElementById("k").setAttribute("data-theme",t)})();</script>
+
+<!-- 5.1 NAV -->
+<header class="nav">
+<div class="wrap nav-in">
+<a class="wm" href="#top" aria-label="Knapper home">
+<svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,4 76,62 66,72 76,96 50,86 24,96 34,72 24,62" style="fill: var(--m-body)"></polygon><polygon points="50,4 50,72 24,62" style="fill: var(--m-hi)"></polygon><polygon points="50,4 76,62 50,72" style="fill: var(--m-sh)"></polygon><polygon points="24,96 34,72 50,86" style="fill: var(--m-hi)"></polygon><polygon points="76,96 66,72 50,86" style="fill: var(--m-deep)"></polygon></svg>
+<span>Knapper</span>
+</a>
+<nav class="nav-links" aria-label="Sections">
+<a href="#how">How it works</a>
+<a href="#features">Features</a>
+<a href="#security">Security</a>
+<a href="#start">Get started</a>
+<a href="https://github.com/djdelaney/Knapper">GitHub</a>
+</nav>
+<button class="iconbtn cut-s" type="button" id="theme-toggle" aria-label="Switch theme">
+<svg class="show-dark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"></circle><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"></path></svg>
+<svg class="show-light" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>
+</button>
+</div>
+</header>
+
+<!-- 5.2 HERO -->
+<section class="hero" id="top">
+<div class="facet" aria-hidden="true" style="right: -120px; top: -60px; width: 620px; height: 620px; background: var(--sf); clip-path: polygon(55% 0, 100% 38%, 82% 100%, 18% 72%)"></div>
+<div class="facet" aria-hidden="true" style="right: 160px; top: 260px; width: 380px; height: 420px; background: var(--sf2); opacity: .55; clip-path: polygon(40% 0, 100% 60%, 30% 100%, 0 45%)"></div>
+<div class="wrap g2" style="position: relative">
+<div>
+<p class="eyebrow">Open-source MCP server for Obsidian</p>
+<h1 class="h1">Let AI agents into your Obsidian vault <em>without losing a note.</em></h1>
+<p class="lede">Knapper is a self-hosted MCP server that gives Claude and other agents read and write access to your Obsidian vault. Every write is checked, nothing gets overwritten blind, and anything unsafe stops instead of guessing.</p>
+<div style="display: flex; gap: 12px; margin-top: 36px; flex-wrap: wrap">
+<a class="btn btn-p cut-s" href="#start">Get started</a>
+<a class="btn btn-s cut-s" href="https://github.com/djdelaney/Knapper">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
+View on GitHub</a>
+</div>
+<div class="small"><span>Open source</span><span aria-hidden="true">·</span><span>Self-hosted</span><span aria-hidden="true">·</span><span>Works with Obsidian Sync</span></div>
+</div>
+<figure style="margin: 0">
+<div class="frame cut" role="img" aria-label="Animated log of two agents editing the same note. Agent B's stale edit is refused, it re-reads, and its second edit lands with both changes kept.">
+<div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">Trip planning.md · two agents, one note</span><span>live</span></div>
+<pre><span class="rl a1"><span class="c-mu">09:14:02</span>  <span class="c-key">agent-a</span>  read   <span class="c-mu">→ v1</span> <span class="c-ac">#f049</span></span><span class="rl a2"><span class="c-mu">09:14:03</span>  <span class="c-key">agent-b</span>  read   <span class="c-mu">→ v1</span> <span class="c-ac">#f049</span></span><span class="rl a3"><span class="c-mu">09:14:07</span>  <span class="c-key">agent-a</span>  edit   expect <span class="c-ac">#f049</span>  <span class="c-ok">✓ landed v2 #4f61</span></span><span class="rl a4"><span class="c-mu">09:14:09</span>  <span class="c-key">agent-b</span>  edit   expect <span class="c-ac">#f049</span>  <span class="c-no">✕ changed since your read</span></span><span class="rl a5"><span class="c-mu">09:14:10</span>  <span class="c-key">agent-b</span>  read   <span class="c-mu">→ v2</span> <span class="c-ac">#4f61</span></span><span class="rl a6"><span class="c-mu">09:14:12</span>  <span class="c-key">agent-b</span>  edit   expect <span class="c-ac">#4f61</span>  <span class="c-ok">✓ landed v3 #b319</span></span><span class="rl a7">
+<span class="c-mu">──</span> v3 has both changes. Nothing was overwritten.</span></pre>
+</div>
+</figure>
+</div>
+</section>
+
+<div class="namestrip">
+<div class="wrap" style="display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap">
+<b>knap·per</b>
+<span>Someone who shapes obsidian into tools by striking flakes off it. This one shapes your Obsidian vault into tools for agents.</span>
+</div>
+</div>
+
+<!-- 5.3 PROBLEM -->
+<section class="sec">
+<div class="wrap g2">
+<div>
+<p class="eyebrow">The problem</p>
+<h2 class="h2">Whoever saves last wins.</h2>
+<p class="lede">Give a few agents access to your vault (Claude on your laptop, Claude Code on another machine, Claude on your phone) and they all edit the same files through Sync. Edits vanish quietly, and nobody tells you.</p>
+</div>
+<figure style="margin: 0" aria-label="Three devices save the same note through Sync. Only the last save survives; the other two edits are lost.">
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px">
+<div class="dev cut-s"><b>Laptop</b><span>Claude · 09:14:02</span></div>
+<div class="dev cut-s"><b>Workstation</b><span>Claude Code · 09:14:05</span></div>
+<div class="dev cut-s"><b>Phone</b><span>Claude · 09:14:09</span></div>
+</div>
+<div style="display: flex; justify-content: space-around; color: var(--bd2); font-family: var(--mono); font-size: 18px; line-height: 34px" aria-hidden="true"><span>↓</span><span>↓</span><span>↓</span></div>
+<div class="note cut">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><b style="font-size: 15px">Garden log.md</b><span class="dlabel">after Sync settles</span></div>
+<div class="note-l lost"><span>+ Moved tomatoes to bed 3</span><span>laptop · gone</span></div>
+<div class="note-l lost"><span>+ Linked [[Seed order 2026]]</span><span>workstation · gone</span></div>
+<div class="note-l kept"><span>+ Watered at 7am</span><span style="color: var(--fa)">phone · last save</span></div>
+<p style="margin: 14px 0 0; font-size: 14px; color: var(--mu)">No conflict, no error, no warning. Two edits simply aren't there.</p>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.4 HOW IT WORKS -->
+<section class="sec alt" id="how">
+<div class="wrap">
+<p class="eyebrow">How it works</p>
+<h2 class="h2">One careful door into your vault.</h2>
+<p class="lede">You keep using Obsidian and Obsidian Sync. Knapper runs next to a synced copy of your vault, and agents talk only to Knapper. Many agents editing at once becomes one server handling one change per note at a time.</p>
+
+<figure style="margin: 0" aria-label="Topology. People's laptop and phone use Obsidian apps and reach the vault through Obsidian Sync. Agents (claude.ai, Claude Desktop, Claude mobile, Claude Code) pass through Cloudflare Access to Knapper, which sits next to the synced vault on your server with an audit log and git history.">
+<div class="d1">
+<div class="d1-col">
+<div class="lab">People</div>
+<div class="node cut-s">Laptop<small>Obsidian app</small></div>
+<div class="node cut-s">Phone<small>Obsidian mobile</small></div>
+</div>
+<div class="conn both"><span>edits</span></div>
+<div class="node cut-s" style="flex: 0 0 auto; text-align: center">Obsidian Sync<small>cloud</small></div>
+<div class="conn both"></div>
+<div class="d1-srv cut">
+<div class="lab" style="margin: 0">Your server</div>
+<div class="d1-srv-row">
+<div class="node" style="background: var(--sf2)">Vault folder<small>obsidian-headless</small></div>
+<div class="conn ag rev" style="flex: 0 0 56px"><span>1 per note</span></div>
+<div class="node kn">Knapper<small>MCP server</small></div>
+</div>
+<div class="minitags"><span class="minitag">audit log</span><span class="minitag">git history</span><span class="minitag">no open ports</span></div>
+</div>
+<div class="conn ag rev"></div>
+<div class="node gate cut-s" style="flex: 0 0 auto">Cloudflare<br>Access<small>gate</small></div>
+<div class="conn ag rev"></div>
+<div class="d1-col">
+<div class="lab">Agents</div>
+<div class="node">claude.ai</div>
+<div class="node">Claude Desktop</div>
+<div class="node">Claude mobile</div>
+<div class="node">Claude Code</div>
+</div>
+</div>
+<div class="d1-cap">
+<div><b>People go through Sync.</b>Your apps and your Sync subscription don't change.</div>
+<div><b>Agents go through Knapper.</b>Only. There is no second path to the files.</div>
+<div><b>Both meet at one vault.</b>Edits from agents show up in Obsidian moments later.</div>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.6 FEATURES (overview; each card jumps to its section) -->
+<section class="sec" id="features">
+<div class="wrap">
+<p class="eyebrow">Features</p>
+<h2 class="h2">Careful by default. Every part of it.</h2>
+<p class="lede">The short version. Each card jumps to where it's shown in detail.</p>
+<div class="feat">
+<a class="fc cut" href="#overwrites"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="12" height="15" rx="1"></rect><path d="M8 21h11V7"></path><path d="M7.5 10.5l2 2 3.5-4"></path></svg></span><h3>No blind overwrites</h3><p>Every edit proves it's working on the latest version.</p><span class="more">↓ The race</span></a>
+<a class="fc cut" href="#write"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 10h7M16 10h4M4 14h16M4 18h10"></path><path d="M13.5 7.5v5"></path></svg></span><h3>Surgical edits</h3><p>Agents change the paragraph they mean, not the whole file. Guard text must survive every edit.</p><span class="more">↓ Inside a save</span></a>
+<a class="fc cut" href="#search"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4"></path><path d="M8.5 11l1.8 1.8 3.2-3.6"></path></svg></span><h3>Search you can trust</h3><p>"No results" means the whole scope was searched. Totals are never guessed.</p><span class="more">↓ Search</span></a>
+<a class="fc cut" href="#stops"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"></path><path d="M8 12h8"></path></svg></span><h3>Stops instead of guessing</h3><p>A Sync conflict or unhealthy sync blocks writes until you look. Reads keep working.</p><span class="more">↓ Gates</span></a>
+<a class="fc cut" href="#write"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"></path><path d="M8.5 12l2.5 2.5 4.5-5"></path></svg></span><h3>Every write checked</h3><p>Atomic writes, re-read and byte-compared afterwards. Soft deletes, an audit log and git history.</p><span class="more">↓ Inside a save</span></a>
+<a class="fc cut" href="#obsidian"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6v14h3M15 5h3v14h-3"></path><path d="M10 12h4"></path></svg></span><h3>Speaks Obsidian</h3><p>Wikilinks, link checking, your own writing conventions, archived folders.</p><span class="more">↓ Built for Obsidian</span></a>
+<a class="fc cut" href="#transfers"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11M7.5 9.5L12 14l4.5-4.5"></path><path d="M4 16v4h16v-4"></path></svg></span><h3>Exact file transfers</h3><p>Big or binary files move by a one-time link and a hash check, never through the model.</p><span class="more">↓ Transfers</span></a>
+<a class="fc cut" href="#security"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg></span><h3>Private by design</h3><p>No open ports. Cloudflare Access at the edge, checked again by the server. Notes are data, never instructions.</p><span class="more">↓ Security</span></a>
+</div>
+</div>
+</section>
+
+<!-- 5.5 SIGNATURE + 5.7 LIFE OF A WRITE (merged) -->
+<section class="sec alt" id="overwrites">
+<div class="wrap">
+<p class="eyebrow">No blind overwrites</p>
+<h2 class="h2">An edit that hasn't seen the latest version doesn't land.</h2>
+<p class="lede">Every edit carries a fingerprint of the version the agent read. If the note changed in the meantime, the edit is refused, the agent re-reads, and it tries again. There is no "just overwrite it" tool to misuse.</p>
+
+<div class="race">
+<figure class="rpanel cut" style="margin: 0" aria-label="Without Knapper: both agents read v1. A saves v2. B saves its own v2 on top. A's change is lost.">
+<div class="rhead"><h3>Without Knapper</h3><span class="dlabel">last save wins</span></div>
+<div class="sq-h"><div>Agent A</div><div class="n">note</div><div>Agent B</div></div>
+<div class="sq"><div class="msg l ret">read → v1</div><div class="mid"><span class="ver">v1</span></div><div class="msg r ret">v1 ← read</div></div>
+<div class="sq"><div class="msg r">save v2</div><div class="mid"><span class="ver">v2</span></div><div></div></div>
+<div class="sq"><div></div><div class="mid"><span class="ver no">v2′</span></div><div class="msg l no">save its v2 on top</div></div>
+<div class="sq"><div></div><div class="mid"></div><div></div></div>
+<div class="sq"><div></div><div class="mid"></div><div></div></div>
+<div class="res no cut-s"><b class="ico">✕</b><span><b>A's change is gone.</b> B never saw it, and nobody was told.</span></div>
+</figure>
+<figure class="rpanel cut" style="margin: 0" aria-label="With Knapper: both read v1 with fingerprint f049. A saves with f049 and lands v2. B saves with f049 and is refused because the note changed. B re-reads v2, saves with the new fingerprint, and v3 lands with both changes.">
+<div class="rhead"><h3>With Knapper</h3><span class="dlabel" style="color: var(--ac)">fingerprinted</span></div>
+<div class="sq-h"><div>Agent A</div><div class="n">note</div><div>Agent B</div></div>
+<div class="sq"><div class="msg l ret">read → v1 #f049</div><div class="mid"><span class="ver">v1</span></div><div class="msg r ret">#f049 v1 ← read</div></div>
+<div class="sq"><div class="msg r ok">save, expect #f049 ✓</div><div class="mid"><span class="ver ok">v2</span></div><div></div></div>
+<div class="sq"><div></div><div class="mid"><span class="ver">v2</span></div><div class="msg l no">expect #f049 ✕ changed</div></div>
+<div class="sq"><div></div><div class="mid"><span class="ver">v2</span></div><div class="msg r ret">#4f61 v2 ← re-read</div></div>
+<div class="sq"><div></div><div class="mid"><span class="ver ok">v3</span></div><div class="msg l ok">save, expect #4f61 ✓</div></div>
+<div class="res ok cut-s"><b class="ico">✓</b><span><b>v3 has both changes.</b> B got an error, re-read, and tried again.</span></div>
+</figure>
+</div>
+
+<div class="g2" style="margin-top: 72px; align-items: start">
+<div>
+<h3 style="font-size: 24px; margin: 0 0 12px; font-weight: 600">What that looks like in a chat</h3>
+<p style="color: var(--mu); margin: 0">The agent gets an error and re-reads. You see one extra tool call, not a lost paragraph. Fingerprints are SHA-256 hashes of the note, shortened here.</p>
+</div>
+<figure style="margin: 0">
+<div class="chat cut">
+<div class="chat-bar"><span>Chat</span><span>illustration</span></div>
+<div class="chat-body">
+<div class="bub-u">Note in Trip planning that the ferry tickets are booked.</div>
+<div class="tool no"><span class="tn">vault_edit</span><span>Trip planning.md · expect #f049</span><span class="st-no">✕ [PreconditionFailed]</span></div>
+<div class="tool"><span class="tn">vault_read</span><span>Trip planning.md</span><span style="color: var(--fa)">→ #4f61</span></div>
+<div class="tool ok"><span class="tn">vault_edit</span><span>Trip planning.md · expect #4f61</span><span class="st-ok">✓ landed</span></div>
+<div class="bub-a">Done. Someone had added hotel details since I first read the note, so I re-read it and added the ticket note under the ferry times. Both changes are there.</div>
+</div>
+</div>
+</figure>
+</div>
+
+<div id="write" style="margin-top: 96px; padding-top: 72px; border-top: 1px solid var(--bd)">
+<p class="eyebrow">Inside that save</p>
+<h3 class="h2" style="font-size: 34px">The fingerprint check is one step of ten.</h3>
+<p class="lede">Every change follows the same path, in the same order. The other nine steps make sure what lands is whole, checked on disk, and logged. Two checks can stop the write, and when they do, nothing touches the disk. Hover or focus a step for what it does.</p>
+<figure style="margin: 0" aria-label="Write pipeline: Lock, Fresh read, Fingerprint check, Apply edit, Check guards, Log intent, Write to hidden temp, Atomic swap, Re-read and compare, Unlock. A failed fingerprint check or guard check refuses the write with nothing written.">
+<div class="pipe">
+<div class="step"><button class="chip cut-s" type="button"><span class="num">01</span><span>Lock</span><span class="tip">One change per note at a time. Other writers wait their turn.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">02</span><span>Fresh read</span><span class="tip">Read the note from disk now, not from a cache.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip kgate cut-s" type="button"><span class="num">03</span><span>Fingerprint check</span><span class="tip">Compare with the fingerprint the agent read. Different? Refuse.</span></button><div class="branch"><span class="drop"></span><span class="refuse cut-s">✕ refused<br>nothing written</span></div></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">04</span><span>Apply edit</span><span class="tip">Make the anchored change in memory.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip kgate cut-s" type="button"><span class="num">05</span><span>Check guards</span><span class="tip">Guard text the agent named must still be there after the edit.</span></button><div class="branch"><span class="drop"></span><span class="refuse cut-s">✕ refused<br>nothing written</span></div></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">06</span><span>Log intent</span><span class="tip">Record what's about to happen, before it happens.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">07</span><span>Write to hidden temp</span><span class="tip">Write the new version beside the note under a hidden name, and flush it to disk.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">08</span><span>Atomic swap</span><span class="tip">Check the fingerprint once more, then exchange the new version in with one atomic step. No half-written notes.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip cut-s" type="button"><span class="num">09</span><span>Re-read and compare</span><span class="tip">Read it back from disk and compare byte for byte.</span></button></div>
+<div class="chev" aria-hidden="true">›</div>
+<div class="step"><button class="chip fin cut-s" type="button"><span class="num">10</span><span>Unlock</span><span class="tip">Release the note and return a receipt with the new fingerprint.</span></button></div>
+</div>
+<div class="pipe-legend">
+<span><i class="sw" style="box-shadow: inset 0 0 0 1.5px var(--ac)"></i>Check that can refuse</span>
+<span><i class="sw" style="background: var(--noBg); box-shadow: inset 0 0 0 1px var(--no)"></i>Refused: the agent gets an error and the note is untouched</span>
+<span><i class="sw" style="background: var(--ac)"></i>Receipt returned</span>
+</div>
+</figure>
+</div>
+</div>
+</section>
+
+<!-- 5.8 STOPS -->
+<section class="sec" id="stops">
+<div class="wrap">
+<p class="eyebrow">Stops instead of guessing</p>
+<h2 class="h2">When Sync is unsure, writes wait for you.</h2>
+<div class="g2" style="align-items: start">
+<p class="lede">When Obsidian Sync creates a conflict copy, or sync stops working, Knapper blocks writes to the affected notes until a human sorts it out. Agents never pick a winner. Reading keeps working the whole time.</p>
+<figure style="margin: 0">
+<div class="chat cut">
+<div class="chat-bar"><span>Chat</span><span>illustration</span></div>
+<div class="chat-body">
+<div class="bub-u">Log today's watering in Garden log.</div>
+<div class="tool no"><span class="tn">vault_append</span><span class="st-no">[MutationBlocked]</span><span style="color: var(--mu)">'Garden/Garden log.md' has an unresolved conflict sibling ('Garden log (Conflicted copy …).md'). Mutations to both are blocked until a human reconciles.</span></div>
+<div class="bub-a">I couldn't save that. Obsidian Sync made a conflict copy of Garden log, so Knapper is holding writes until you pick which version to keep. I can still read both if you'd like me to compare them.</div>
+</div>
+</div>
+</figure>
+</div>
+<figure style="margin: 64px 0 0; display: flex; flex-direction: column; gap: 40px" aria-label="Gates. A note is writable. When a conflict copy appears, writes are blocked while reads stay available. After you reconcile, the note is writable again. Separately, if the sync heartbeat goes stale, writes are blocked.">
+<div>
+<div class="lab">Per note · conflict copy</div>
+<div class="gstrip">
+<div class="gst ok cut-s"><b><i>✓</i>Writable</b><small>read ✓ write ✓</small></div>
+<div class="gconn"><span>conflict copy appears</span></div>
+<div class="gst no cut-s"><b><i>✕</i>Writes blocked</b><small>read ✓ write ✕</small></div>
+<div class="gconn"><span>you reconcile</span></div>
+<div class="gst ok cut-s"><b><i>✓</i>Writable</b><small>read ✓ write ✓</small></div>
+</div>
+</div>
+<div>
+<div class="lab">Whole vault · sync heartbeat</div>
+<div class="gstrip">
+<div class="gst ok cut-s"><b><i>●</i>Healthy</b><small>beat seconds ago</small></div>
+<div class="gconn"><span>beats stop</span></div>
+<div class="gst wa cut-s"><b><i>◐</i>Stale</b><small>no recent beat</small></div>
+<div class="gconn"><span>past the limit</span></div>
+<div class="gst no cut-s"><b><i>✕</i>Writes blocked</b><small>reads still OK</small></div>
+</div>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.9 SEARCH -->
+<section class="sec alt" id="search">
+<div class="wrap g2" style="align-items: start">
+<div>
+<p class="eyebrow">Search you can trust</p>
+<h2 class="h2">"No results" means it looked everywhere.</h2>
+<p class="lede">Search is built on ripgrep and every answer says how complete it is. <code>truncated: false</code> means every file in scope was searched. If results are cut off, a cursor picks up exactly where they stopped, with nothing skipped or repeated.</p>
+<ul class="fields">
+<li><span class="cal">1</span><span><code>truncated: false</code> means the whole scope was searched.</span></li>
+<li><span class="cal">2</span><span><code>nextCursor</code> resumes a cut-off search exactly where it stopped.</span></li>
+<li><span class="cal">3</span><span><code>scannedFiles</code> is how many files were actually searched.</span></li>
+<li><span class="cal">4</span><span><code>totalMatches</code> is counted, or <code>null</code> if it wasn't. Never estimated.</span></li>
+</ul>
+</div>
+<figure style="margin: 0">
+<div class="frame cut">
+<div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">vault_search "ferry" in Travel/ · response</span><button class="copy" type="button">Copy</button></div>
+<pre><span class="c-mu">{</span>
+  <span class="c-key">"items"</span>: [
+    { <span class="c-key">"path"</span>: <span class="c-str">"Travel/Packing list.md"</span>, <span class="c-key">"line"</span>: <span class="c-num">3</span>, <span class="c-key">"column"</span>: <span class="c-num">3</span>,
+      <span class="c-key">"text"</span>: <span class="c-str">"- Ferry tickets (printed)"</span> },
+    { <span class="c-key">"path"</span>: <span class="c-str">"Travel/Trip planning.md"</span>, <span class="c-key">"line"</span>: <span class="c-num">5</span>, <span class="c-key">"column"</span>: <span class="c-num">1</span>,
+      <span class="c-key">"text"</span>: <span class="c-str">"Ferry leaves 07:40, back 18:15."</span> }
+  ],
+<span class="hl">  <span class="c-key">"truncated"</span>: <span class="c-ok">false</span>,<span class="cal-in">1</span></span>
+<span class="hl">  <span class="c-key">"nextCursor"</span>: <span class="c-mu">null</span>,<span class="cal-in">2</span></span>
+<span class="hl">  <span class="c-key">"scannedFiles"</span>: <span class="c-num">5</span>,<span class="cal-in">3</span></span>
+  <span class="c-key">"returnedItems"</span>: <span class="c-num">2</span>,
+<span class="hl">  <span class="c-key">"totalMatches"</span>: <span class="c-num">2</span>,<span class="cal-in">4</span></span>
+  <span class="c-key">"changedDuringQuery"</span>: <span class="c-ok">false</span>,
+  <span class="c-mu">…</span>
+<span class="c-mu">}</span></pre>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.10 OBSIDIAN -->
+<section class="sec" id="obsidian">
+<div class="wrap">
+<p class="eyebrow">Built for Obsidian</p>
+<h2 class="h2">It understands vaults, not just files.</h2>
+<div class="trio">
+<div class="ti">
+<div class="frame cut">
+<div class="frame-bar"><span class="ttl">vault_lint · links</span></div>
+<pre><span class="c-key">"items"</span>: [{
+  <span class="c-key">"check"</span>: <span class="c-no">"broken_anchor"</span>,
+  <span class="c-key">"path"</span>: <span class="c-str">"Garden/Reading list.md"</span>,
+  <span class="c-key">"subject"</span>: <span class="c-str">"Garden log#Tomatos"</span>,
+  <span class="c-key">"line"</span>: <span class="c-num">3</span>, <span class="c-key">"column"</span>: <span class="c-num">22</span>,
+  <span class="c-key">"message"</span>: <span class="c-str">"'Garden/Garden log.md' has
+    no heading 'Tomatos'"</span>
+}],
+<span class="c-key">"truncated"</span>: <span class="c-ok">false</span></pre>
+</div>
+<h3>Link checking</h3>
+<p>Finds broken wikilinks and heading anchors. Accept the current list once, and after that it reports only what's new.</p>
+</div>
+<div class="ti">
+<div class="frame cut">
+<div class="frame-bar"><span class="ttl">vault_create · receipt</span></div>
+<pre><span class="c-key">"path"</span>: <span class="c-str">"Travel/Trip ideas.md"</span>,
+<span class="c-key">"newSha256"</span>: <span class="c-str">"3e0d3342…"</span>,
+<span class="c-key">"verified"</span>: <span class="c-ok">true</span>,
+<span class="c-key">"warnings"</span>: [{
+  <span class="c-key">"rule"</span>: <span class="c-wa">"markdown_internal_link"</span>,
+  <span class="c-key">"message"</span>: <span class="c-str">"this write added 1 markdown
+    link(s) … internal links are
+    [[wikilinks]] here"</span>
+}]</pre>
+</div>
+<h3>Your conventions</h3>
+<p>Tell agents your house rules (wikilinks only, no new tags, where new notes go) and get a warning when a write breaks one.</p>
+</div>
+<div class="ti">
+<div class="tree cut">
+<div style="color: var(--tx)">Archive/</div>
+<div>├─ 2025 Garden log.md <span class="no">· edit ✕</span></div>
+<div>├─ Old reading list.md <span class="no">· edit ✕</span></div>
+<div>└─ <span style="color: var(--tx)">2026 Trip planning.md</span> <span class="ok">· add ✓</span></div>
+</div>
+<h3>Archived folders</h3>
+<p>Files can be added to an archive, but nothing already in it can be changed.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- 5.11 TRANSFERS -->
+<section class="sec alt" id="transfers">
+<div class="wrap">
+<p class="eyebrow">Exact file transfers</p>
+<h2 class="h2">Byte for byte, without the model in the middle.</h2>
+<p class="lede">Need a PDF or image byte for byte? The agent asks Knapper for a one-time link, its shell downloads the file with <code>curl</code>, and the hash is checked before the file lands. Uploads pass the same checks as any other write, plus a scan for leaked secrets. Off by default.</p>
+<figure style="margin: 0" aria-label="Transfer flow across three lanes. 1, the model asks Knapper for a grant. 2, Knapper returns a one-time link. 3, the model hands the link to the agent shell. 4, the shell fetches the file with curl. 5, the shell checks the hash and the file lands. File bytes never pass through the model.">
+<div class="lanes">
+<div class="lane">
+<div class="lane-n cut-s">Model</div>
+<div class="lane-b" style="padding-bottom: 26px">
+<div class="ev cut-s"><span class="n">1</span><span>ask for a grant → Knapper</span></div>
+<div class="gap"></div>
+<div class="ev cut-s"><span class="n">3</span><span>hand link ↓ to shell</span></div>
+<div class="gap"></div>
+<div class="gap"></div>
+<div class="never">file bytes never pass through the model</div>
+</div>
+</div>
+<div class="lane">
+<div class="lane-n cut-s">Agent shell</div>
+<div class="lane-b">
+<div class="gap"></div>
+<div class="gap"></div>
+<div class="gap"></div>
+<div class="ev cut-s"><span class="n">4</span><span>curl the link ↓</span></div>
+<div class="ev ok cut-s"><span class="n">5 ✓</span><span>sha256 matches, file lands</span></div>
+</div>
+</div>
+<div class="lane">
+<div class="lane-n kn cut-s">Knapper</div>
+<div class="lane-b">
+<div class="gap"></div>
+<div class="ev cut-s"><span class="n">2</span><span>one-time link + hash ↑</span></div>
+<div class="gap"></div>
+<div class="ev cut-s"><span class="n">↗</span><span>serves bytes once, then the link expires</span></div>
+<div class="gap"></div>
+</div>
+</div>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.12 SECURITY -->
+<section class="sec" id="security">
+<div class="wrap g2">
+<figure style="margin: 0; display: flex; justify-content: center" aria-label="Security rings from outside in: Cloudflare Access verifies identity at the edge; Knapper checks the Access token again; a host check accepts only the expected hostname; path confinement keeps every path inside the vault; at the centre, the vault.">
+<div style="width: 100%; max-width: 500px">
+<div class="ring" style="background: var(--bd)">
+<span class="rl-t">Cloudflare Access</span><span class="rl-s">who you are, at the edge</span>
+<div class="ring" style="background: var(--sf2); width: 100%">
+<span class="rl-t">Knapper token check</span><span class="rl-s">the Access token, verified again</span>
+<div class="ring" style="background: var(--sf); width: 100%">
+<span class="rl-t">Host check</span><span class="rl-s">only the expected hostname</span>
+<div class="ring" style="background: var(--bg); width: 100%">
+<span class="rl-t">Path confinement</span><span class="rl-s">nothing outside the vault</span>
+<div class="ring" style="background: var(--ac); width: 100%; padding: 26px 20px"><span class="rl-t" style="color: var(--acTx)">Vault</span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</figure>
+<div>
+<p class="eyebrow">Security</p>
+<h2 class="h2">This vault holds your whole life. It's treated that way.</h2>
+<p class="lede">Your vault never listens on your network. Agents reach it through a Cloudflare Tunnel behind Cloudflare Access, and Knapper checks the Access token again itself, so a mistake at the edge doesn't expose your notes. Paths are confined to the vault. Every action is logged with who made it. A read-only mode lets you start cautiously.</p>
+<div class="frame cut" style="margin-top: 32px">
+<div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">audit log + vault history · local dev server</span></div>
+<pre><span class="c-ac">$</span> jq -r '[.Client, .Op, .Path, .Outcome] | @tsv' audit.jsonl
+<span class="c-mu">…</span>
+<span class="c-key">loopback</span>  edit    Travel/Trip planning.md  <span class="c-ok">ok</span>
+<span class="c-key">loopback</span>  append  Garden/Garden log.md     <span class="c-no">MutationBlocked</span>
+<span class="c-key">loopback</span>  append  Archive/2025 Retro.md    <span class="c-no">PathArchived</span>
+<span class="c-mu"># refusals are logged too. Behind Cloudflare Access,</span>
+<span class="c-mu"># Client is the signed-in identity.</span>
+<span class="c-ac">$</span> git log --oneline -2
+<span class="c-num">8a62658</span> knapper snapshot 2026-11-09 02:22:43Z
+<span class="c-num">cc1e254</span> knapper snapshot 2026-11-09 02:22:42Z</pre>
+</div>
+</div>
+</div>
+</section>
+
+<!-- 5.14 TIPS -->
+<section class="sec alt">
+<div class="wrap">
+<p class="eyebrow">Tips for fast agents · optional</p>
+<h2 class="h2">The round trip is the cost. Batch.</h2>
+<p class="lede">Knapper does about 12 ms of work per call. The round trip through the chat app is about 3 seconds. So agents that batch reads and writes feel fast, and Knapper tells them to.</p>
+<figure style="margin: 0" aria-label="Two bars on the same scale. Knapper's work, about 12 milliseconds, is a sliver. The round trip through the chat app, about 3 seconds, is full width. Three separate edits take 6 calls; one batched read and one batched write take 2.">
+<div class="bars">
+<div class="bar-row"><span>Knapper's work <span class="mono" style="color: var(--fa)">~12 ms</span></span><div class="bar-t"><div class="bar-f" style="width: 4px; background: var(--ac)"></div></div></div>
+<div class="bar-row"><span>Round trip through the chat app <span class="mono" style="color: var(--fa)">~3 s</span></span><div class="bar-t"><div class="bar-f" style="width: 100%; background: var(--bd2)"></div></div></div>
+</div>
+<div class="calls">
+<div class="call cut-s"><b>3 separate edits</b> <span style="color: var(--mu)">= 6 calls, ~18 s</span><div class="pips" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+<div class="call good cut-s"><b>1 batched read + 1 batched write</b> <span style="color: var(--mu)">= 2 calls, ~6 s</span><div class="pips" aria-hidden="true"><i></i><i></i></div></div>
+</div>
+</figure>
+</div>
+</section>
+
+<!-- 5.15 GET STARTED -->
+<section class="sec" id="start">
+<div class="wrap">
+<p class="eyebrow">Get started</p>
+<h2 class="h2">An honest path in. Trust it a step at a time.</h2>
+<div class="steps3">
+<div class="s3 cut"><span class="n">01</span><h3>Try it locally</h3><p>Generate a sample vault and connect Claude Code. Nothing real involved.</p></div>
+<div class="s3 cut"><span class="n">02</span><h3>Deploy read-only</h3><p>Point it at your vault with <code>Mcp__ReadOnly=true</code>. Agents can look but not touch.</p></div>
+<div class="s3 cut"><span class="n">03</span><h3>Turn on writes</h3><p>Run <code>knapper verify</code> against your deployment. When it passes and you trust it, turn read-only off.</p></div>
+</div>
+<div class="g2 wide-l" style="margin-top: 24px; align-items: start">
+<figure style="margin: 0">
+<div class="frame cut">
+<div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">step 01 · local quickstart</span><button class="copy" type="button">Copy</button></div>
+<pre><span class="c-ac">$</span> git clone https://github.com/djdelaney/Knapper &amp;&amp; cd Knapper
+<span class="c-mu"># a synthetic sample vault, plus the env for a dev server over it</span>
+<span class="c-ac">$</span> tools/dev-vault.sh /tmp/kdev &amp;&amp; . /tmp/kdev/env.sh
+<span class="c-ac">$</span> dotnet run --project src/Knapper.Mcp
+<span class="c-mu"># in another terminal</span>
+<span class="c-ac">$</span> claude mcp add --transport http knapper http://127.0.0.1:3535/</pre>
+</div>
+<div class="frame cut" style="margin-top: 16px">
+<div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">before step 03 · knapper verify · read-only checks</span></div>
+<pre><span class="c-ac">$</span> knapper verify --url http://127.0.0.1:3535/
+<span class="c-mu">…</span>
+<span class="c-ok">ok</span>    the MCP endpoint completes initialize
+<span class="c-ok">ok</span>    /up and the MCP surface are the same build
+<span class="c-ok">ok</span>    tools/list is EXACTLY the locked surface (18 tools)
+<span class="c-ok">ok</span>    every published tool schema is one a client can load (18 schemas)
+<span class="c-ok">ok</span>    a no-match search still reports exhaustive scan evidence
+<span class="c-ok">ok</span>    the mutation surface is wired and answers with typed codes
+<span class="c-mu">…</span>
+12 ok, 0 failed, 5 skipped
+<span class="c-ok">all checks passed</span>
+<span class="c-mu"># skipped: the Access checks, which need the tunnel URL</span></pre>
+</div>
+</figure>
+<div class="req cut">
+<div class="lab" style="margin: 0">To try it</div>
+<ul>
+<li>macOS or Linux</li>
+<li>.NET 10 SDK, ripgrep 15+, git</li>
+</ul>
+<div class="lab" style="margin: 20px 0 0">To deploy it</div>
+<ul>
+<li>A Linux host with a case-sensitive filesystem</li>
+<li>Obsidian Sync subscription, with <code>obsidian-headless</code></li>
+<li>Cloudflare Tunnel and Access</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<!-- 5.16 FOOTER -->
+<footer class="foot">
+<div class="wrap foot-in">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<span class="wm" style="font-size: 18px; color: var(--tx)"><svg width="22" height="22" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,4 76,62 66,72 76,96 50,86 24,96 34,72 24,62" style="fill: var(--m-body)"></polygon><polygon points="50,4 50,72 24,62" style="fill: var(--m-hi)"></polygon><polygon points="50,4 76,62 50,72" style="fill: var(--m-sh)"></polygon><polygon points="24,96 34,72 50,86" style="fill: var(--m-hi)"></polygon><polygon points="76,96 66,72 50,86" style="fill: var(--m-deep)"></polygon></svg>Knapper</span>
+<span>A knapper shapes obsidian into tools.</span>
+</div>
+<nav style="display: flex; gap: 28px; flex-wrap: wrap" aria-label="Footer">
+<a href="https://github.com/djdelaney/Knapper">GitHub</a>
+<a href="https://github.com/djdelaney/Knapper#readme">Docs</a>
+<a href="https://github.com/djdelaney/Knapper/blob/main/LICENSE">Apache-2.0 licence</a></nav>
+</div>
+</footer>
+
+</div>
+</body>
+</html>
