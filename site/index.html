@@ -5,9 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Knapper · Let AI agents into your Obsidian vault without losing a note</title>
 <meta name="description" content="Knapper is a self-hosted, open-source MCP server that gives Claude and other agents safe read and write access to your Obsidian vault. Every write is checked, nothing gets overwritten blind, and anything unsafe stops instead of guessing.">
-<meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0E0C14" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#FBFAFE" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0E0C14" id="theme-color">
 <meta property="og:title" content="Knapper">
 <meta property="og:description" content="Let AI agents into your Obsidian vault without losing a note.">
 <meta property="og:image" content="assets/knapper-tile-512.png">
@@ -22,7 +21,7 @@
 </head>
 <body>
 <div class="k" id="k" data-theme="dark" style="min-height: 100vh">
-<script>(function(){var t;try{t=localStorage.getItem("knapper-theme")}catch(e){}if(!t){t=window.matchMedia&&matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"}document.getElementById("k").setAttribute("data-theme",t)})();</script>
+<script>(function(){var t;try{t=localStorage.getItem("knapper-theme")}catch(e){}t=t==="light"?"light":"dark";document.getElementById("k").setAttribute("data-theme",t);document.documentElement.style.colorScheme=t;document.getElementById("theme-color").setAttribute("content",t==="light"?"#FBFAFE":"#0E0C14")})();</script>
 
 <!-- 5.1 NAV -->
 <header class="nav">

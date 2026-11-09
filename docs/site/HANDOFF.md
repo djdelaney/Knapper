@@ -84,8 +84,9 @@ re-alternate the ones after it.
 - **Type:** IBM Plex Sans (text, 400/500/600/700) and JetBrains Mono (code, labels,
   eyebrows, fingerprints). Loaded from Google Fonts in `<head>`; self-host if preferred.
 - **Theme:** tokens are CSS custom properties on `.k[data-theme="dark|light"]` at the top
-  of `styles.css`. `main.js` follows the system setting until the visitor uses the
-  toggle, then remembers the choice in `localStorage` (`knapper-theme`). An inline script
+  of `styles.css`. The page is dark by default whatever the system setting
+  (changed 2026-11-09). The toggle switches to light and remembers the choice in
+  `localStorage` (`knapper-theme`). An inline script
   at the top of `<body>` sets the theme before first paint to avoid a flash.
 - **Brand violets (from the mark):** dark UI `#8F78EA / #C9BAFF / #7059CD / #5F49B8`,
   light UI `#5C47AD / #9781E8 / #4A3894 / #3C2C7C`. Logo is inlined as SVG (exact paths

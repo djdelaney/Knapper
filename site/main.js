@@ -3,8 +3,12 @@
   var root = document.getElementById('k');
   var KEY = 'knapper-theme';
 
-  // Theme: follows the system setting until the visitor picks one with the toggle.
+  // Theme: dark by default, whatever the system setting. The toggle switches
+  // to light and the choice is remembered. The inline script at the top of
+  // <body> applies the saved choice before first paint; this keeps the
+  // browser bar colour and native scrollbars in step when it changes.
   var toggle = document.getElementById('theme-toggle');
+  var themeColor = document.getElementById('theme-color');
   function label() {
     var t = root.getAttribute('data-theme');
     toggle.setAttribute('aria-label', t === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
@@ -14,18 +18,12 @@
     toggle.addEventListener('click', function () {
       var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       root.setAttribute('data-theme', next);
+      document.documentElement.style.colorScheme = next;
+      if (themeColor) themeColor.setAttribute('content', next === 'light' ? '#FBFAFE' : '#0E0C14');
       try { localStorage.setItem(KEY, next); } catch (e) {}
       label();
     });
   }
-  try {
-    var mq = window.matchMedia('(prefers-color-scheme: light)');
-    mq.addEventListener('change', function (e) {
-      var saved = null;
-      try { saved = localStorage.getItem(KEY); } catch (err) {}
-      if (!saved) { root.setAttribute('data-theme', e.matches ? 'light' : 'dark'); label(); }
-    });
-  } catch (e) {}
 
   // Copy buttons: copy data-copy if present, otherwise the frame's <pre> text.
   document.querySelectorAll('.copy').forEach(function (btn) {
