@@ -92,3 +92,9 @@ intentionally stays vague enough not to rot — trust those, not this.
 | [docs/call-economics.md](docs/call-economics.md) | Why vault work feels slow when the server answers in ~12ms, why call COUNT is the only lever an agent has, and the dated baseline to measure against (`ops/call-economics.sh`) |
 | [ops/ct106-runbook.md](ops/ct106-runbook.md) | Production deployment on the Proxmox LXC |
 | [CLAUDE.md](CLAUDE.md) (= [AGENTS.md](AGENTS.md)) | The silent invariants — what a change must not break even though nothing would fail loudly. Two byte-identical files, one per agent convention (not a symlink — some tooling refuses those); edit `CLAUDE.md` then `cp CLAUDE.md AGENTS.md`. CI aborts on drift |
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026
+Daniel Delaney; see [NOTICE](NOTICE). The licence grants no rights to the
+Knapper name or logo (Apache-2.0 §6).
