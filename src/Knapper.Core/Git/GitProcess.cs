@@ -15,13 +15,20 @@ internal static class GitProcess
     /// <summary>
     /// Per-invocation overrides for every config key the commands Knapper runs
     /// would EXECUTE: hooks (pre-commit, commit-msg, post-commit…), the
-    /// fsmonitor daemon command `add` consults, and a commit-signing program.
+    /// fsmonitor daemon command `add` consults, a commit-signing program, the
+    /// signature VERIFIER `log` runs, and any transport helper.
     /// </summary>
     internal static readonly string[] NeutralizedConfig =
     [
         "core.hooksPath=/dev/null",
         "core.fsmonitor=false",
         "commit.gpgSign=false",
+        // `log` VERIFIES signatures when this is set, which runs gpg.program —
+        // commit.gpgSign only covers signing (security review 2026-11).
+        "log.showSignature=false",
+        // No transport, ever: the vault repo has no remote by design, and a
+        // configured remote's uploadpack / ssh / ext command is a program.
+        "protocol.allow=never",
     ];
 
     /// <summary>A start description for git in <paramref name="root"/>: neutralized, stdout/stderr redirected.</summary>
@@ -53,6 +60,13 @@ internal static class GitProcess
         // finding into the "accepted" backlog. (Rewriting loose objects in
         // place is the residual: cat-file does not re-hash what it reads.)
         psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+        // A promisor remote turns a MISSING OBJECT into a fetch, and the fetch
+        // runs `remote.<name>.uploadpack` from the repo's config: delete one
+        // loose tree, mark the repo a partial clone, and `diff --cached` ran a
+        // planted program inside the commit job (security review 2026-11,
+        // reproduced on git 2.56). A missing object is corruption to report,
+        // never something to go and get.
+        psi.Environment["GIT_NO_LAZY_FETCH"] = "1";
         foreach (var setting in NeutralizedConfig)
         {
             psi.ArgumentList.Add("-c");

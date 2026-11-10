@@ -440,13 +440,15 @@ if (accessEnabled)
     // Owner audience for everything vault-bearing; /up additionally accepts
     // the path-scoped monitoring app. A leaked monitoring credential must not
     // reach the vault — the asymmetry IS the control.
-    mcpEndpoint.RequireAuthorization(AccessAuth.OwnerPolicy);
+    mcpEndpoint.RequireAuthorization(AccessAuth.VaultPolicy);
     healthEndpoint.RequireAuthorization(AccessAuth.OwnerPolicy);
     upEndpoint.RequireAuthorization(AccessAuth.MonitoringPolicy);
 
     startupLogger.LogInformation(
         "Cloudflare Access assertion validation ENABLED (issuer {Issuer}, loopback bypass {Loopback}).",
-        resolvedMcpOpts.Access.TeamDomain, resolvedMcpOpts.Access.AllowLoopback ? "on" : "off");
+        resolvedMcpOpts.Access.TeamDomain,
+        !resolvedMcpOpts.Access.AllowLoopback ? "off"
+            : resolvedMcpOpts.Access.AllowLoopbackMcp ? "on, INCLUDING the MCP endpoint" : "on for /health and /up only");
 
     // The single-app collapse, said out loud. An EQUAL MonitoringAudience is
     // refused at Validate(); an EMPTY one is a supported downgrade, so it warns
@@ -470,6 +472,20 @@ if (accessEnabled)
     // Fetch signing keys NOW or refuse to start — lazy retrieval fails into an
     // EventSource nobody hears while the server 401s every real caller.
     await AccessAuth.VerifySigningKeysAsync(app.Services, startupLogger).ConfigureAwait(false);
+
+    if (resolvedMcpOpts.Access.AllowLoopback && resolvedMcpOpts.Access.AllowLoopbackMcp)
+    {
+        // The exemption trusts a loopback peer that ASKED for a loopback Host.
+        // cloudflared keeps the public hostname, so its requests are validated;
+        // a same-box reverse proxy that rewrites Host (nginx's default
+        // proxy_pass does) makes every caller it forwards look local, and
+        // nothing at run time can tell the two apart.
+        startupLogger.LogWarning(
+            "Mcp:Access:AllowLoopbackMcp is on: an MCP request from a loopback peer with a loopback Host header " +
+            "skips Access validation. cloudflared must be the ONLY proxy on this box in front of this port, " +
+            "and must not set httpHostHeader to a loopback name — any proxy that rewrites Host to " +
+            "localhost/127.0.0.1 hands its callers the whole vault unauthenticated.");
+    }
 }
 else
 {

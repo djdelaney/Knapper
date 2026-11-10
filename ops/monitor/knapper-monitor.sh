@@ -145,10 +145,13 @@ send_mail() {
 # Check 1b is the second line of defence — it refuses to read a body it cannot
 # parse — but it is a backstop, not a reason to relax this test.
 UP_BODY=$(mktemp)
-HTTP_CODE=$(curl -s -o "$UP_BODY" -w '%{http_code}' \
+# The credentials go in on STDIN (-H @-), never as arguments: argv is readable
+# by every user on this host through ps for as long as curl runs.
+HTTP_CODE=$(printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' \
+        "$CF_CLIENT_ID" "$CF_CLIENT_SECRET" |
+    curl -s -o "$UP_BODY" -w '%{http_code}' \
     --max-time "$CURL_TIMEOUT" \
-    -H "CF-Access-Client-Id: ${CF_CLIENT_ID}" \
-    -H "CF-Access-Client-Secret: ${CF_CLIENT_SECRET}" \
+    -H @- \
     "$UP_URL" 2>/dev/null) || HTTP_CODE=000
 if [ "$HTTP_CODE" != "200" ]; then
     fail "/up returned HTTP ${HTTP_CODE} (expected 200) at ${UP_URL} — knapper degraded/down, tunnel down, or Access rejecting the monitor token"

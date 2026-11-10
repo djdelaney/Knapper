@@ -49,6 +49,42 @@ public sealed class SyncSizeLimitTests
         File.ReadAllText(Path.Combine(v.VaultDir.Path, "near.md")).ShouldBe(new string('x', 990));
     }
 
+    /// <summary>
+    /// Edits apply in sequence, so "a"→"aa" with a doubling count doubles the
+    /// note at every step: a 1.2 KB request built an 8 GB string before the
+    /// post-transform check ran (security review 2026-11). The ceiling must
+    /// stop the growth BEFORE each replacement is allocated — 40 doublings
+    /// would be a terabyte, so merely finishing is the assertion.
+    /// </summary>
+    [Fact]
+    public void Edit_refuses_exponential_growth_before_allocating_it()
+    {
+        using var v = new MutationVault();
+        var service = v.ServiceWithMaxFileBytes(1000);
+        var sha = v.Write("amp.md", "a");
+        var edits = Enumerable.Range(0, 40).Select(i => new EditSpec("a", "aa", 1 << Math.Min(i, 30))).ToList();
+
+        var e = Should.Throw<KnapperException>(() => service.Edit("amp.md", sha, edits));
+
+        e.Code.ShouldBe(VaultErrorCode.TooLargeToSync);
+        File.ReadAllText(Path.Combine(v.VaultDir.Path, "amp.md")).ShouldBe("a");
+    }
+
+    [Fact]
+    public void Batch_edit_refuses_exponential_growth_before_allocating_it()
+    {
+        using var v = new MutationVault();
+        var service = v.ServiceWithMaxFileBytes(1000);
+        var sha = v.Write("amp.md", "a");
+        var edits = Enumerable.Range(0, 40).Select(i => new EditSpec("a", "aa", 1 << Math.Min(i, 30))).ToList();
+
+        var e = Should.Throw<KnapperException>(() => service.Batch(
+            [new BatchItem(BatchItemKind.Edit, "amp.md", ExpectSha256: sha, Edits: edits)]));
+
+        e.Code.ShouldBe(VaultErrorCode.TooLargeToSync);
+        File.ReadAllText(Path.Combine(v.VaultDir.Path, "amp.md")).ShouldBe("a");
+    }
+
     [Fact]
     public void Edit_refuses_when_the_RESULT_crosses_the_limit()
     {

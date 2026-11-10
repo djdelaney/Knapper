@@ -20,7 +20,24 @@ public class ToolSupportTests
         new HttpContextAccessor(),
         Options.Create(new McpOptions { LogToolCalls = false }),
         NullLogger<ToolSupport>.Instance,
-        metrics ?? new KnapperMetrics());
+        metrics ?? new KnapperMetrics(),
+        Resolver);
+
+    private static readonly Knapper.Core.Vault.VaultPathResolver Resolver =
+        new(Directory.CreateTempSubdirectory("knapper-toolsupport-").FullName);
+
+    /// <summary>
+    /// Core's low-level failures name the absolute paths they were handed;
+    /// where the vault lives on the server never reaches an agent.
+    /// </summary>
+    [Fact]
+    public void An_absolute_vault_path_in_an_error_reaches_the_wire_relative()
+    {
+        var absolute = Path.Combine(Resolver.Root, "Notes", "a.md");
+        var ex = Should.Throw<McpException>(() => NewSupport().Run<int>("t",
+            () => throw new KnapperException(VaultErrorCode.AlreadyExists, $"file already exists: {absolute}")));
+        ex.Message.ShouldBe("[AlreadyExists] file already exists: Notes/a.md");
+    }
 
     [Fact]
     public void Knapper_exceptions_lead_with_their_code()

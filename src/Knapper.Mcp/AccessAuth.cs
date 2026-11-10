@@ -32,6 +32,15 @@ internal static class AccessAuth
     /// <summary>/up only — additionally admits the path-scoped monitoring app's audience.</summary>
     internal const string MonitoringPolicy = "knapper-access-monitoring";
 
+    /// <summary>
+    /// The MCP endpoint's policy: the owner audience, and NO loopback
+    /// exemption unless <c>Access:AllowLoopbackMcp</c> opts in. /health keeps
+    /// the exemption (same-box health checks carry no token); the vault does
+    /// not, because "loopback peer + loopback Host" is exactly what a same-box
+    /// reverse proxy that rewrites Host produces for every internet caller.
+    /// </summary>
+    internal const string VaultPolicy = "knapper-access-vault";
+
     internal static void AddAccessAuthentication(IServiceCollection services)
     {
         services.AddHttpContextAccessor();
@@ -102,6 +111,8 @@ internal static class AccessAuth
                 p.AddRequirements(new AccessAudienceRequirement(AccessScope.Owner)));
             options.AddPolicy(MonitoringPolicy, p =>
                 p.AddRequirements(new AccessAudienceRequirement(AccessScope.Monitoring)));
+            options.AddPolicy(VaultPolicy, p =>
+                p.AddRequirements(new AccessAudienceRequirement(AccessScope.Owner, vaultBearing: true)));
         });
         services.AddSingleton<IAuthorizationHandler, AccessAudienceHandler>();
     }
@@ -163,9 +174,12 @@ internal enum AccessScope
 /// "for THIS endpoint" — the split is what keeps a leaked monitoring
 /// credential away from the vault.
 /// </summary>
-internal sealed class AccessAudienceRequirement(AccessScope scope) : IAuthorizationRequirement
+internal sealed class AccessAudienceRequirement(AccessScope scope, bool vaultBearing = false) : IAuthorizationRequirement
 {
     public AccessScope Scope { get; } = scope;
+
+    /// <summary>The endpoint serves vault content, so the loopback exemption needs its own opt-in.</summary>
+    public bool VaultBearing { get; } = vaultBearing;
 }
 
 internal sealed class AccessAudienceHandler(
@@ -184,7 +198,12 @@ internal sealed class AccessAudienceHandler(
         // peer alone would silently disable origin validation for the whole
         // public surface. A genuine same-box caller also asks for a loopback
         // Host; a tunneled request carries the public hostname.
-        if (access.AllowLoopback && HostGuard.IsLocalRequest(http.HttpContext))
+        // And for the endpoint that serves the vault, not even that without
+        // an explicit opt-in: a reverse proxy on this box that rewrites Host
+        // to a loopback name (nginx's default proxy_pass) makes every caller
+        // it forwards indistinguishable from a same-box one.
+        var exempt = access.AllowLoopback && (!requirement.VaultBearing || access.AllowLoopbackMcp);
+        if (exempt && HostGuard.IsLocalRequest(http.HttpContext))
         {
             context.Succeed(requirement);
             return Task.CompletedTask;

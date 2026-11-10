@@ -145,6 +145,11 @@ public static class TransferConfiguration
             yield return "Transfer:LocalOnly is refused with Mcp:Access:AllowPublicHostsWithoutAccess — that flag means " +
                          "an edge fronts this server.";
         }
+        if (!System.Net.IPAddress.TryParse(mcp.BindAddress, out var bind) || !System.Net.IPAddress.IsLoopback(bind))
+        {
+            yield return $"Transfer:LocalOnly is refused while Mcp:BindAddress ('{mcp.BindAddress}') is not loopback — " +
+                         "other machines can reach this port.";
+        }
         var publicHosts = (mcp.AllowedHosts ?? [])
             .Select(h => h?.Trim())
             .Where(h => !string.IsNullOrEmpty(h) && !IsLoopbackName(h))

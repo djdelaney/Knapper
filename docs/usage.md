@@ -6,9 +6,9 @@ agents see. Deployment to the production LXC is `ops/ct106-runbook.md`.
 ## Running locally (dev)
 
 ```sh
-export Vault__RootPath=$HOME/dev-vault          # any directory of notes
-export Vault__LockDirectory=/tmp/knapper/locks  # OUTSIDE the vault
-export Vault__AuditLogPath=/tmp/knapper/audit.jsonl
+export Vault__RootPath=$HOME/dev-vault          # a SYNTHETIC vault — see below; never a real one
+export Vault__LockDirectory=$HOME/.local/state/knapper/locks  # OUTSIDE the vault, and not in shared /tmp
+export Vault__AuditLogPath=$HOME/.local/state/knapper/audit.jsonl
 export Sync__Mode=open                          # EXPLICIT dev opt-out of the sync gate
 dotnet run --project src/Knapper.Mcp            # http://127.0.0.1:3535
 curl -s 127.0.0.1:3535/health | jq .status      # "ok"
@@ -83,7 +83,7 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 
 | Key | Default | Meaning |
 |---|---|---|
-| `BindAddress` | `127.0.0.1` | IP literal (never "localhost"). Loopback in production too — cloudflared is the only ingress. |
+| `BindAddress` | `127.0.0.1` | IP literal (never "localhost"). Loopback in production too — cloudflared is the only ingress. A non-loopback address with `Access:Enabled` false **refuses startup**: the Host allowlist stops browsers, not machines, so another host sending `Host: localhost` would otherwise read and mutate the whole vault. |
 | `Port` | 3535 | |
 | `AllowedHosts` | `[]` | Extra Host-header names for HostGuard (the public hostname). Loopback names always allowed. A public name with `Access:Enabled` false **refuses startup** — see `Access:AllowPublicHostsWithoutAccess`. |
 | `DisabledTools` | `[]` | Tools removed from list AND call. Unknown names fail startup. |
@@ -97,7 +97,8 @@ Sources, in precedence order: environment variables (`Section__Key=…`) →
 | `Access:TeamDomain` | — | `https://TEAM.cloudflareaccess.com` (with scheme; compared to `iss`). |
 | `Access:Audience` | — | The Access app's AUD tag. Required when enabled. |
 | `Access:MonitoringAudience` | — | Second AUD accepted on `/up` only. Must differ from `Access:Audience` — equal values would give the monitoring credential the whole vault surface, so startup **refuses**. Empty is the **single-app setup**: `/up` falls back to accepting the owner audience, so the monitor authenticates with the vault's own token and the credential in its config file on another machine carries every note. Supported, but a downgrade, not a neutral default — and note the asymmetry: an equal AUD refuses startup outright, while an empty one boots clean with `doctor` all-ok, `/health` and `/up` green, and `knapper verify` *skipping* the check that would catch it (no `CF_MONITOR_*` pair to test with). A startup **warning** is the only signal, so two apps is the default (runbook §6.2 creates both before the unit is edited). |
-| `Access:AllowLoopback` | true | Same-box health checks need no assertion. "Same-box" requires a loopback TCP peer AND a loopback Host header — tunneled requests proxied by cloudflared arrive from 127.0.0.1 but keep their public hostname, so they are always validated. |
+| `Access:AllowLoopback` | true | Same-box health checks (`/health`, `/up`) need no assertion; the MCP endpoint is NOT covered unless `Access:AllowLoopbackMcp` is set. "Same-box" requires a loopback TCP peer AND a loopback Host header — tunneled requests proxied by cloudflared arrive from 127.0.0.1 but keep their public hostname, so they are always validated. |
+| `Access:AllowLoopbackMcp` | false | Extend the loopback exemption to the MCP endpoint, for an agent running on the same box. Off by default, so with Access on every vault call needs an assertion. **Only with cloudflared as the sole proxy on the box:** any other reverse proxy that rewrites Host to a loopback name (nginx's default `proxy_pass` does) makes every caller it forwards look same-box, and they would reach the whole vault unauthenticated. The server warns at startup when this is on and `knapper doctor` states it. Ignored when `Access:AllowLoopback` is false. |
 
 ### `Sync:*` — the mutation gate
 
@@ -154,7 +155,7 @@ configuration.
 | Key | Default | Meaning |
 |---|---|---|
 | `Transfer:PublicOrigin` | empty | Exact origin grant URLs are built from (`https://host[:port]`, nothing else); never derived from request headers. Required when a direction is on; its host must be in `Mcp:AllowedHosts` (or loopback). Grant URLs append the fixed `/transfer/...` path. |
-| `Transfer:LocalOnly` | `false` | Same-machine deployments without Access: mints a fixed local principal for a loopback caller and allows a loopback `http://` origin. Refused unless `Mcp:Access:Enabled` is false, `Mcp:AllowedHosts` names only loopback hosts, and `Mcp:Access:AllowPublicHostsWithoutAccess` is false. |
+| `Transfer:LocalOnly` | `false` | Same-machine deployments without Access: mints a fixed local principal for a loopback caller and allows a loopback `http://` origin. Refused unless `Mcp:Access:Enabled` is false, `Mcp:BindAddress` is loopback, `Mcp:AllowedHosts` names only loopback hosts, and `Mcp:Access:AllowPublicHostsWithoutAccess` is false. |
 | `Transfer:MaxBufferedBytes` | `33554432` | Shared in-memory byte budget for grant snapshots. Must hold one `Sync:MaxFileBytes` file. A full budget refuses per item (`DownloadCapacityExceeded`); nothing is evicted. |
 | `Transfer:MaxTrackedGrants` | `128` | Active plus retained terminal grant records. |
 | `Download:Enabled` | `false` | `vault_download_prepare` and `GET /transfer/downloads/*` together. Refused on an `Mcp:ReadOnly` deployment or with `vault_download_prepare` in `Mcp:DisabledTools` — hiding the tool must never leave the route usable. |

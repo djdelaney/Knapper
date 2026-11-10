@@ -21,7 +21,8 @@ public sealed class ToolSupport(
     IHttpContextAccessor httpContext,
     IOptions<McpOptions> mcpOptions,
     ILogger<ToolSupport> logger,
-    KnapperMetrics metrics)
+    KnapperMetrics metrics,
+    Knapper.Core.Vault.VaultPathResolver resolver)
 {
     public T Run<T>(string tool, Func<T> body)
     {
@@ -41,7 +42,9 @@ public sealed class ToolSupport(
         {
             metrics.RecordToolOutcome(e.Code.ToString());
             Log(tool, e.Code.ToString(), started);
-            throw new McpException($"[{e.Code}] {e.Message}");
+            // Relativized HERE, the one exit every tool error takes: Core's
+            // low-level messages name absolute paths.
+            throw new McpException($"[{e.Code}] {resolver.Relativize(e.Message)}");
         }
         catch (OperationCanceledException)
         {

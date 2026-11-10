@@ -95,8 +95,9 @@ public sealed class TransferAccessTests : IDisposable
     [Fact]
     public async Task The_loopback_exemption_supplies_no_principal()
     {
-        // A genuine same-box caller passes Access's loopback exemption with
-        // no claims at all — and therefore cannot mint a grant.
+        // With Access:AllowLoopbackMcp, a genuine same-box caller passes the
+        // loopback exemption with no claims at all — and therefore cannot
+        // mint a grant.
         var session = await RawMcp.OpenAsync(_factory.CreateClient());
         var result = await session.CallToolAsync("vault_download_prepare", new { items = new[] { new { path = "Notes/Daily.md" } } });
         result.GetProperty("isError").GetBoolean().ShouldBeTrue();
@@ -170,6 +171,10 @@ public sealed class TransferAccessTests : IDisposable
             ["Mcp:Access:Enabled"] = "true",
             ["Mcp:Access:TeamDomain"] = TeamDomain,
             ["Mcp:Access:Audience"] = OwnerAudience,
+            // Opted in so The_loopback_exemption_supplies_no_principal can
+            // reach a tool at all: by default a same-box caller is refused at
+            // the MCP endpoint before any grant question arises.
+            ["Mcp:Access:AllowLoopbackMcp"] = "true",
             ["Mcp:AllowedHosts:0"] = PublicHost,
             ["Transfer:PublicOrigin"] = "https://" + PublicHost,
             ["Download:Enabled"] = "true",

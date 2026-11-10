@@ -62,6 +62,10 @@ Environment=Mcp__AllowedHosts__0=<smoke-hostname>
 Environment=Mcp__Access__Enabled=true
 Environment=Mcp__Access__TeamDomain=<https://YOURTEAM.cloudflareaccess.com>
 Environment=Mcp__Access__Audience=<smoke-access-app-aud>
+# §8b drives its mutation gates as raw tools/call over loopback. With Access on
+# the MCP endpoint refuses same-box callers unless this is set — which is right
+# for the DISPOSABLE vault here and must never be copied to knapper.service.
+Environment=Mcp__Access__AllowLoopbackMcp=true
 
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -42,8 +42,8 @@ public static class HostGuard
     }
 
     /// <summary>
-    /// Null when coherent; the refusal when Access is off and a configured
-    /// allowed host is public. A public name in AllowedHosts exists for one
+    /// Null when coherent; the refusal when Access is off and either the bind
+    /// is not loopback or a configured allowed host is public. A public name in AllowedHosts exists for one
     /// reason — requests arriving under it through the tunnel — so pairing it
     /// with disabled origin validation is exposure, not a dev setup. Refusing
     /// here, rather than warning, is what makes the runbook's step order safe:
@@ -54,6 +54,17 @@ public static class HostGuard
     {
         if (options.Access.Enabled || options.Access.AllowPublicHostsWithoutAccess)
             return null;
+        // The Host allowlist is a BROWSER defence: a browser cannot forge Host,
+        // but any other client can. On a non-loopback bind, `Host: localhost`
+        // from another machine passes it, and with Access off nothing else
+        // stands between that machine and the whole vault (security review
+        // 2026-11: one forged header listed a vault over the LAN).
+        if (!IsLoopbackBind(options.BindAddress))
+        {
+            return $"Mcp:BindAddress '{options.BindAddress}' is not loopback but Mcp:Access:Enabled is false — " +
+                   "any machine that can reach this port could read and MUTATE the whole vault by sending " +
+                   "'Host: localhost'. Bind 127.0.0.1, or enable Access (runbook §6.3).";
+        }
         var publicHosts = (options.AllowedHosts ?? [])
             .Select(h => h?.Trim())
             .Where(h => !string.IsNullOrEmpty(h) && !IsLoopbackHost(h))
