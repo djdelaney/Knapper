@@ -372,6 +372,24 @@ internal static partial class Posix
     }
 
     /// <summary>
+    /// Linux's O_NOFOLLOW is NOT one number: asm-generic (x86, x86-64,
+    /// riscv64, loongarch64) says 0x20000, while arm, arm64 and powerpc say
+    /// 0x8000 — and on those, 0x20000 is O_LARGEFILE, which open(2) accepts
+    /// without complaint. The single x86 value shipped here for every Linux,
+    /// so on arm64 every read opened WITHOUT no-follow and nothing failed
+    /// except one symlink test nobody ran there (CI is x86-64; found
+    /// 2026-11-10 in an arm64 container). An architecture not listed refuses
+    /// to guess: a wrong flag here is silent, a throw is not.
+    /// </summary>
+    internal static int LinuxNoFollow => RuntimeInformation.ProcessArchitecture switch
+    {
+        Architecture.X64 or Architecture.X86 or Architecture.RiscV64 or Architecture.LoongArch64 => 0x20000,
+        Architecture.Arm64 or Architecture.Arm or Architecture.Armv6 or Architecture.Ppc64le => 0x8000,
+        var other => throw new PlatformNotSupportedException(
+            $"O_NOFOLLOW is not known for Linux on {other}; add its value to Posix.LinuxNoFollow before running here."),
+    };
+
+    /// <summary>
     /// Open a vault file for READING, refusing anything but a regular file —
     /// and without being able to hang on the way. The read surface used
     /// File.OpenRead, which blocks in open(2) on a FIFO until a writer
@@ -386,7 +404,7 @@ internal static partial class Posix
         const int O_RDONLY = 0;
         var macOS = OperatingSystem.IsMacOS();
         int O_NONBLOCK = macOS ? 0x4 : 0x800;
-        int O_NOFOLLOW = macOS ? 0x100 : 0x20000;
+        int O_NOFOLLOW = macOS ? 0x100 : LinuxNoFollow;
         int O_CLOEXEC = macOS ? 0x1000000 : 0x80000;
         int ELOOP = macOS ? 62 : 40;
         const int ENOENT = 2;

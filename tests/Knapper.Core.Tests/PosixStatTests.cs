@@ -132,4 +132,22 @@ public sealed class PosixStatTests : IDisposable
         byFd.IsRegular.ShouldBeTrue();
         byFd.Size.ShouldBe(12);
     }
+
+    /// <summary>
+    /// The read surface's no-follow guarantee, pinned on the platform running
+    /// the suite. O_NOFOLLOW's VALUE differs by CPU architecture on Linux,
+    /// and the wrong one is accepted by open(2) as a different, harmless flag
+    /// — so a symlink to a perfectly ordinary file was opened and read on
+    /// arm64 Linux, with nothing else noticing (found 2026-11-10).
+    /// </summary>
+    [Fact]
+    public void OpenRegularForRead_refuses_a_symlink_to_a_regular_file()
+    {
+        var target = _dir.File("real.md", "content");
+        var link = Path.Combine(_dir.Path, "link.md");
+        File.CreateSymbolicLink(link, target);
+
+        Should.Throw<KnapperException>(() => Posix.OpenRegularForRead(link, "link.md").Dispose())
+            .Code.ShouldBe(VaultErrorCode.SymlinkRejected);
+    }
 }
