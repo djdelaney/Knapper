@@ -389,6 +389,13 @@ Directory.Build.props <Version>          the one carrier
   over-budget whole-file `vault_read` should refuse or return a range waits on
   the measurement; the partial-read option carries a copy-then-delete data-loss
   hazard.
+- **Bulk folder reads** — [proposals/bulk-read.md](proposals/bulk-read.md)
+  (2026-11-10). A local read-only replica measured no meaningful speed win
+  for vault-wide projects: Knapper was 4.5% of turn time. The one real cost
+  was the model writing out every path for a folder-sized
+  `vault_batch_read`. Preferred shape if built: `includeContent` on
+  `vault_files`, byte-bounded pages. Recommendation is not to build it until
+  folder reads become routine, and to design it with the response budget.
 - **Live-server write races**: `knapper verify --url` now covers the
   deployed service READ-ONLY (runbook §5 pre-ingress and §6 through the
   tunnel), and that boundary is deliberate — it runs against Helios, where
