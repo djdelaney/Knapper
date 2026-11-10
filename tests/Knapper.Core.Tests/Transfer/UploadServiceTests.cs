@@ -300,4 +300,44 @@ public sealed class UploadServiceTests : IDisposable
         var id = Stage(service, Create("Archive/filed.bin", [7]), [7]);
         service.Commit(Owner, [id], AuditContext.None).Items.Single().State.ShouldBe("succeeded");
     }
+
+    [Fact]
+    public void An_unexpected_commit_failure_is_reported_to_the_host_not_swallowed()
+    {
+        var reported = new List<(string Id, Exception Error)>();
+        var service = new UploadService(_v.Resolver, _v.Service, _store, _v.Audit, ArchivedPrefixes.None,
+            new TransferOptions { PublicOrigin = "https://vault.example.com" },
+            new UploadOptions { Enabled = true }, new SyncOptions(),
+            (id, e) => reported.Add((id, e)));
+        var id = Stage(service, Create("Photos/boom.bin", [1]), [1]);
+        _v.Audit.BeforeAppendTestHook = _ => throw new InvalidOperationException("not a failure anyone listed");
+
+        var item = service.Commit(Owner, [id], AuditContext.None).Items.ShouldHaveSingleItem();
+
+        item.State.ShouldBe("failed");
+        item.ErrorCode.ShouldBe("Internal");
+        var report = reported.ShouldHaveSingleItem();
+        report.Id.ShouldBe(id);
+        report.Error.ShouldBeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void A_commit_that_escapes_leaves_no_grant_committing()
+    {
+        var service = Service();
+        var first = Stage(service, Create("Photos/a.bin", [1, 2]), [1, 2]);
+        var second = Stage(service, Create("Photos/b.bin", [3, 4, 5]), [3, 4, 5]);
+        // CommitOne deliberately lets this one through; the grant behind it
+        // was already claimed and must not be stranded.
+        _v.Audit.BeforeAppendTestHook = _ => throw new OutOfMemoryException("simulated");
+
+        Should.Throw<OutOfMemoryException>(() => service.Commit(Owner, [first, second], AuditContext.None));
+
+        _v.Audit.BeforeAppendTestHook = null;
+        var states = service.Status(Owner, [first, second]).Items;
+        states.ShouldAllBe(i => i.State == "failed");
+        states.Single(i => i.UploadId == second).ErrorCode.ShouldBe("Internal");
+        _store.BufferedBytes.ShouldBe(0);
+        File.Exists(_v.Absolute("Photos/b.bin")).ShouldBeFalse();
+    }
 }

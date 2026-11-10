@@ -188,7 +188,8 @@ builder.Services.AddSingleton(sp => new Knapper.Core.Transfer.UploadService(
     sp.GetRequiredService<ArchivedPrefixes>(),
     sp.GetRequiredService<IOptions<TransferOptions>>().Value,
     sp.GetRequiredService<IOptions<UploadOptions>>().Value,
-    sp.GetRequiredService<IOptions<SyncOptions>>().Value));
+    sp.GetRequiredService<IOptions<SyncOptions>>().Value,
+    UploadCommitFailureLog(sp.GetRequiredService<ILoggerFactory>().CreateLogger("Knapper.Transfer.Upload"))));
 builder.Services.AddSingleton<TransferIdentity>();
 builder.Services.AddSingleton<TransferRefusalLog>();
 builder.Services.AddSingleton<Knapper.Mcp.Tools.ToolSupport>();
@@ -502,6 +503,11 @@ _ = Task.Run(() =>
 });
 
 await app.RunAsync().ConfigureAwait(false);
+
+// Core has no logger; this is what backs "see server logs" for an upload
+// commit that failed unexpectedly. The grant ID only, never a path or content.
+static Action<string, Exception> UploadCommitFailureLog(ILogger logger) =>
+    (uploadId, e) => logger.LogError(e, "upload commit {UploadId} failed unexpectedly", uploadId);
 
 static void ConfigureServerInfo(ModelContextProtocol.Server.McpServerOptions opts, string? vaultName)
 {

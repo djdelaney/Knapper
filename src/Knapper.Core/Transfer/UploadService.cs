@@ -32,11 +32,20 @@ public sealed class UploadService
     private readonly SyncOptions _sync;
     private readonly string _urlBase;
     private readonly string _send;
+    private readonly Action<string, Exception>? _reportUnexpected;
 
+    /// <param name="reportUnexpected">
+    /// Called with (uploadId, exception) when a commit fails for a reason
+    /// nothing here anticipated. Core has no logger, so the host supplies
+    /// one: the client is told "see server logs", and this is what puts the
+    /// cause there. The grant ID only — the audit trail links it to a path.
+    /// </param>
     public UploadService(
         VaultPathResolver resolver, VaultMutationService mutations, UploadGrantStore store, AuditLog audit,
-        ArchivedPrefixes archived, TransferOptions transfer, UploadOptions upload, SyncOptions sync)
+        ArchivedPrefixes archived, TransferOptions transfer, UploadOptions upload, SyncOptions sync,
+        Action<string, Exception>? reportUnexpected = null)
     {
+        _reportUnexpected = reportUnexpected;
         _resolver = resolver;
         _mutations = mutations;
         _store = store;
@@ -241,11 +250,29 @@ public sealed class UploadService
         // (review 2026-11-08).
         var claims = ids.Select(id => new ClaimedUpload(id, _store.BeginCommit(who, id))).ToList();
         var outcomes = new Dictionary<string, UploadCommitItem>(StringComparer.Ordinal);
-        foreach (var claim in claims
-            .Where(c => c.Status == UploadGrantStore.CommitStatus.Ok)
-            .OrderBy(c => c.Grant!.Binding.Path, StringComparer.Ordinal))
+        try
         {
-            outcomes[claim.Id] = CommitOne(who, claim, caller);
+            foreach (var claim in claims
+                .Where(c => c.Status == UploadGrantStore.CommitStatus.Ok)
+                .OrderBy(c => c.Grant!.Binding.Path, StringComparer.Ordinal))
+            {
+                outcomes[claim.Id] = CommitOne(who, claim, caller);
+            }
+        }
+        finally
+        {
+            // Every grant was claimed up front, so anything that escapes one
+            // commit (CommitOne lets OutOfMemoryException through) would leave
+            // the grants behind it in `committing` — never swept, holding
+            // their bytes and slots until restart. FinishCommit ignores a
+            // grant that already left `committing`, so this touches only the
+            // ones that never ran; nothing was written for them.
+            foreach (var claim in claims.Where(c =>
+                c.Status == UploadGrantStore.CommitStatus.Ok && !outcomes.ContainsKey(c.Id)))
+            {
+                _store.FinishCommit(claim.Id, null, "Internal",
+                    "the commit call ended before this item was attempted — nothing was written; prepare again");
+            }
         }
 
         return new UploadCommitResult([.. claims.Select(c => outcomes.TryGetValue(c.Id, out var done)
@@ -323,7 +350,14 @@ public sealed class UploadService
             // it would answer "committing" until retention ended.
             code = "Internal";
             message = "unexpected server error during commit — see server logs";
-            _ = e;
+            try
+            {
+                _reportUnexpected?.Invoke(grant.UploadId, e);
+            }
+            catch (Exception r) when (r is not OutOfMemoryException)
+            {
+                // Reporting is best-effort: the grant must still leave `committing`.
+            }
         }
         finally
         {
