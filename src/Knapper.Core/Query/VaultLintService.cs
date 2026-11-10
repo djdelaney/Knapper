@@ -17,12 +17,12 @@ namespace Knapper.Core.Query;
 /// <c>table_needs_blank_line</c> (added 2026-09-01) is the first structural
 /// check, and it earned its place the same way: measured, not reasoned about.
 /// A table whose header row has no blank line above it is absorbed into the
-/// paragraph above and renders as literal pipes — the whole Setbacks table of
-/// 'Home/Mayapple/Projects/Screened Porch Project.md', which is what put this
+/// paragraph above and renders as literal pipes — the whole Budget table of
+/// 'Projects/Garden Shed/Shed Plan.md', which is what put this
 /// check here. A whole-vault sweep on that date found 12 tables preceded by a
 /// non-blank line, and all 12 were then looked at in Obsidian: 9 sit under a
 /// heading and render correctly, and 3 do not render at all — that one, plus
-/// two nested inside bullets in 'Tech/Homelab/Homelab Roadmap.md', which is
+/// two nested inside bullets in 'Projects/Workshop/Workshop Roadmap.md', which is
 /// what widened the rule from "a paragraph absorbs a table" to "so does a
 /// bullet, at any indent". It stays in the link
 /// service, and in the link parser, because it is a verdict about the SAME
@@ -622,13 +622,13 @@ public sealed class VaultLintService(
             // A target containing '/' is a path: from the vault ROOT first,
             // then RELATIVE to the linking note's folder, then as a trailing
             // run of whole path SEGMENTS. The relative form is not a nicety —
-            // Helios links to 'Proxmox/Homelab Monthly Maintenance' from
-            // Tech/Homelab/. Nor is the suffix: 'Laundry and Mudroom/Cabinets'
-            // from inside Home/Mayapple/Projects/Laundry and Mudroom/ is
+            // Helios links to 'Tools/Workshop Monthly Maintenance' from
+            // Projects/Workshop/. Nor is the suffix: 'Shed and Greenhouse/Shelving'
+            // from inside Home/Shed and Greenhouse/ is
             // neither, and Obsidian follows it (confirmed in Obsidian,
             // 2026-09-27). The suffix is segment-bounded, so the parent a link
-            // NAMES must be the file's real parent: 'Wrong/Cabinets' and
-            // 'udroom/Cabinets' stay unresolved.
+            // NAMES must be the file's real parent: 'Wrong/Shelving' and
+            // 'eenhouse/Shelving' stay unresolved.
             if (key.Contains('/', StringComparison.Ordinal))
             {
                 if (_byPath.TryGetValue(key, out var byPath))
@@ -651,7 +651,7 @@ public sealed class VaultLintService(
         /// called ambiguous. Both were measured as false positives on Helios:
         /// [[CLAUDE]] matches CLAUDE.md and Tech/Claude.md only because
         /// lookup is case-insensitive, and an exact-case match settles it;
-        /// [[Cabinets]] matches two notes, but the linking note sits in the
+        /// [[Shelving]] matches two notes, but the linking note sits in the
         /// folder of one of them and Obsidian resolves to the nearest.
         /// Reporting either is noise about a link that behaves exactly as
         /// written — and ambiguous_link is only worth having while it means

@@ -27,8 +27,8 @@ public sealed class FrontmatterDepthTests : IDisposable
     {
         _dir.File("Hostile/flow.md", Frontmatter("a: " + new string('[', HostileDepth) + new string(']', HostileDepth)));
         _dir.File("Hostile/mapping.md", Frontmatter("a: " + string.Concat(Enumerable.Repeat("{b: ", HostileDepth)) + "1" + new string('}', HostileDepth)));
-        _dir.File("Notes/Weather Station.md", Frontmatter("status: active\naliases: [Tempest]") + "# Weather Station\n");
-        _dir.File("Notes/Hub.md", "Alias: [[Tempest]].\n");
+        _dir.File("Notes/Weather Station.md", Frontmatter("status: active\naliases: [Skywatch]") + "# Weather Station\n");
+        _dir.File("Notes/Hub.md", "Alias: [[Skywatch]].\n");
         _resolver = new VaultPathResolver(_dir.Path);
         _options = new VaultOptions { RootPath = _resolver.Root };
     }

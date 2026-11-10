@@ -28,7 +28,7 @@ loud ever fires.
 
 ## 2. Prior art, and what it already paid for
 
-**`notes-drift.py`** (in Dan's vault, `Tech/Homelab/`, written 2026-07-30 in
+**`link-drift.py`** (in Dan's vault, `Projects/Workshop/`, written 2026-07-30 in
 response to concurrent-agent clobbering) is the working prototype of this
 idea. Its checks: stale values still stated as current, broken heading
 anchors, broken wikilinks, checkbox/prose disagreement, structural integrity,
@@ -57,7 +57,7 @@ make the system report the fact, not to track its old value in a list** — so
 assertions are a tier, never the foundation.
 
 Two more facts about the prototype bear on the design. It has no exec bit in
-the vault, so the documented `./notes-drift.py` invocation exits **126** —
+the vault, so the documented `./link-drift.py` invocation exits **126** —
 which this posture cannot distinguish from a real finding. And since the §9
 cutover it is unrunnable by agents at all: it is a filesystem walker over a
 vault that agents no longer reach.
@@ -101,12 +101,12 @@ Consequences for the §4 tiering, all load-bearing:
   the same character, one failure mode when escaped (a target of `Note\`),
   another when not. One parser sees both; a table checker written separately
   sees the symptom and misdiagnoses the cause.
-- **Link targets are not only notes.** The pass treated `pg-dump-backup.sh`
-  and `ev44-build-sql.py` as valid targets, correctly — resolution is
+- **Link targets are not only notes.** The pass treated `nightly-backup.sh`
+  and `build-report.py` as valid targets, correctly — resolution is
   against every vault file, not the `.md` subset.
 - **A single renamed heading broke five inbound links.** "Measured
-  throughput — 2026-08-11" in `Windows Utility VM` gained "(historical —
-  single Crucial P3 Plus)", and five references went stale at once. That is
+  throughput — 2026-08-11" in `Bench Grinder` gained "(historical —
+  single old motor)", and five references went stale at once. That is
   §1's opening scenario, dated, in this vault, produced by ordinary editing.
 
 **How these were settled: a probe note, and it is the method to reuse.** The
@@ -126,14 +126,14 @@ Delete the note afterwards — every broken spelling in it is a real finding.
 dangling-link backlog to 14 around 2026-07-30 (above); one month later the
 unresolved count is 27. If the two count comparable things — they may not,
 since the newer pass also flags plain-text names accidentally bracketed
-(`La-Z-Boy`, `Betty Crocker Kitchens`) — that is roughly **+13 unresolved
+(`Wing-Back`, `Acme Test Garages`) — that is roughly **+13 unresolved
 links per month**. It is the first evidence of how fast the backlog rebuilds,
 and it is what decides whether the §5 baseline is a nicety or the thing
 keeping a monitor alive.
 
 **One discrepancy, unexplained.** Knapper counts 242 `.md` files; the
 filesystem pass reported reviewing 241 notes. The likely cause is the second
-pass excluding a root file such as `CLAUDE.md` or `Templates/Main Note.md`
+pass excluding a root file such as `CLAUDE.md` or `Templates/Base Note.md`
 from what it calls a note. Worth confirming rather than assuming — but note
 the direction is wrong for §11's blind spot, which would leave CT 106 with
 FEWER files than Helios, not more.
@@ -343,7 +343,7 @@ implicit in a run, so a real finding nags until it is fixed or accepted.
 ### The cost, stated
 
 The backlog is invisible unless asked for (`--all`). That is deliberate:
-clearing 14 dangling links where *"Mayapple"* means four different things is a
+clearing 14 dangling links where one name means four different things is a
 project to be scheduled and thought about, not something a timer should raise
 at 02:30. Reporting is the timer's job; auditing is not.
 
@@ -372,8 +372,8 @@ Contract obligations, not preferences:
 
 The steering risk is concrete and this vault is the worked example. The
 roadmap carries an explicit prohibition on bulk-fixing dangling links,
-because *"Mayapple"* means the house, the neighbourhood, the network and the
-HOA depending on context, so each cluster needs a decision about **intent**,
+because one dangling name means four different things depending on
+context, so each cluster needs a decision about **intent**,
 not a find-and-replace. A tool that hands an agent a tidy list of "problems"
 in someone's personal vault is an invitation to unrequested writes.
 
@@ -417,8 +417,8 @@ first run produced 11 findings and 10 were junk:
   `Target link — [[Some Missing Note]]` verbatim: emphasis, code spans and
   link syntax are all part of the anchor. The seductive reading — "anchor by
   the display text" — was adopted here on the strength of six inbound links
-  in Helios spelling `#Remote access — Tailscale Remote Access` against a
-  heading `## Remote access — [[Tailscale Remote Access]]`, and it is
+  in Helios spelling `#Remote access — VPN Remote Access` against a
+  heading `## Remote access — [[VPN Remote Access]]`, and it is
   exactly backwards: that heading's anchor contains `[[`, so NO link can
   address it (a link would terminate at the inner `]]`), the heading is
   unreachable, and all six of those links are broken. Stripping made a real
@@ -431,20 +431,20 @@ first run produced 11 findings and 10 were junk:
   links case-insensitively, so `[[CLAUDE]]` matches both `CLAUDE.md` and
   `Tech/Claude.md` — but an exact-case match settles it and nothing is
   actually ambiguous.
-- **A shared basename is resolved by proximity.** Two `Cabinets.md` exist,
+- **A shared basename is resolved by proximity.** Two `Shelving.md` exist,
   and a link from a note sitting in one of their folders is not arbitrary:
   Obsidian takes the nearest. `ambiguous_link` is only worth having while it
   means "Obsidian's choice here is a coin flip".
 - **A path can be relative to the LINKING note's folder**, not just the vault
-  root: `[[Proxmox/Homelab Monthly Maintenance]]` from `Tech/Homelab/`.
+  root: `[[Tools/Workshop Monthly Maintenance]]` from `Projects/Workshop/`.
   Root-only matching calls it broken.
 - **A path can also be a trailing run of whole SEGMENTS.** Confirmed in
-  Obsidian 2026-09-27: `[[Laundry and Mudroom/Cabinets]]`, from a note inside
+  Obsidian 2026-09-27: `[[Shed and Greenhouse/Shelving]]`, from a note inside
   that very folder, is neither root- nor note-relative, and Obsidian follows
   it. This overturns an earlier line here that ruled suffixes out, which rested
   on an agent's read of the files rather than on Obsidian. The match stays
   bounded at `/`, so the parent a link names must be the real one:
-  `Wrong/Cabinets` and `udroom/Cabinets` remain unresolved.
+  `Wrong/Shelving` and `eenhouse/Shelving` remain unresolved.
 
 ## 9. Configuration
 
@@ -554,7 +554,7 @@ Not free, and worth stating so the decision is priced:
   and all three displayed the alias. There is no table-context rule. The
   consequence is that a link to a heading genuinely containing a pipe is
   broken in Obsidian however it is spelled — so the one finding a whole-vault
-  run reports (`InfluxDB Migration Runbook.md:361`) is a TRUE positive and
+  run reports (`Sensor Migration Runbook.md:361`) is a TRUE positive and
   the note needs fixing.
 - ~~Should heading anchors strip emphasis and code markup?~~ **CLOSED, same
   session.** No: Obsidian's heading suggester offers `Target **bold**
@@ -570,8 +570,8 @@ Two lines in Dan's vault are already wrong regardless of whether this gets
 built, and should be fixed when it is decided either way:
 
 - The homelab housekeeping instruction "After any session that edits
-  `Tech/Homelab/` notes, run `./notes-drift.py`" cannot be followed by an
+  `Projects/Workshop/` notes, run `./link-drift.py`" cannot be followed by an
   agent under MCP-only routing, and names the invocation that exits 126.
-- The roadmap item "Schedule `notes-drift.py`" still proposes Mac launchd or
+- The roadmap item "Schedule `link-drift.py`" still proposes Mac launchd or
   the Syncthing mirror as the venue, both of which predate CT 106 holding the
   authoritative replica and the git history.

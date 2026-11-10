@@ -371,7 +371,7 @@ public sealed record LintQuery
 /// One observation. Not a work item: proposal §7 is explicit that a cluster
 /// of related findings usually means a decision about intent rather than an
 /// edit, and this vault is the worked example — accidentally bracketed
-/// plain-text names ([[La-Z-Boy]]) are correctly unresolved and are fixed by
+/// plain-text names ([[Wing-Back]]) are correctly unresolved and are fixed by
 /// UNbracketing, not by creating a note.
 ///
 /// <c>Subject</c> is the stable identity: the normalized link target with its

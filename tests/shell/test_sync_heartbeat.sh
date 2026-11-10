@@ -17,7 +17,7 @@
 set -u
 
 SCRIPT=$(cd "$(dirname "$0")/../.." && pwd)/ops/sync-heartbeat.sh
-VAULT_ID=ea989b9e58b759ef7a491fcacfb7abbe
+VAULT_ID=a1b2c3d4e5f60718293a4b5c6d7e8f90
 OTHER_ID=00000000000000000000000000000000
 
 if ! date -u -d "2026-01-01T00:00:00.000Z" +%s >/dev/null 2>&1; then
