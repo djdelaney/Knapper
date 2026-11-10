@@ -423,7 +423,14 @@ format by default.
   from a loopback PEER; a peer-only check silently disables origin
   validation for the whole public surface (shipped here once, caught in
   review 2026-08-09; `AccessTopologyTests` pins the topology). Never point
-  the tunnel's `httpHostHeader` at a loopback name.
+  the tunnel's `httpHostHeader` at a loopback name. **And with Access on, the
+  exemption covers /health and /up, never the MCP endpoint** (`VaultPolicy`,
+  unless `Access:AllowLoopbackMcp` opts in): loopback peer + loopback Host is
+  also what any OTHER same-box reverse proxy produces for every caller it
+  forwards (nginx's default `proxy_pass` rewrites Host), and nothing at run
+  time can tell that from a genuine local caller. Attaching `OwnerPolicy` to
+  a vault-bearing route puts the exemption back, silently
+  (`Mcp_from_a_genuine_local_caller_still_needs_an_assertion`).
 - **Startup fail-closed checks live in Program.cs singleton factories** and
   are forced at boot (`GetRequiredService` before Run): missing vault root /
   lock dir / audit path, lock dir or audit path INSIDE the vault — all
@@ -848,16 +855,28 @@ are deployed, uploads are off until a deployment enables them.
   `A_git_that_never_exits_is_killed_rather_than_holding_the_lock_forever`).
   **And nothing on disk may choose a program for git to run.** `.git/` is
   writable by everything running as the service account — including
-  obsidian-headless, a networked npm program sandboxed AWAY from
-  /var/lib/knapper — so a hook, `core.fsmonitor` or `gpg.program` planted
-  there would run inside the commit job with its wider access. `GitProcess`
+  obsidian-headless, a networked npm program whose own unit cannot WRITE
+  /var/lib/knapper (it can read it: same account, and the heartbeat unit
+  runs the same `ob` binary with write access there, so this is a narrower
+  boundary than "sandboxed away") — so a hook, `core.fsmonitor` or
+  `gpg.program` planted there would run inside the commit job with its
+  wider access. `GitProcess`
   — the ONE launcher, shared by the committer and lint's baseline reader —
   cuts off system/global config and overrides every executing key it can name
   (`NeutralizedConfig`); filter drivers have attacker-chosen names, so any
-  `filter.*` key refuses the commit before `add` could run it. A new git
+  `filter.*` key refuses the commit before `add` could run it. Two routes
+  are not hooks at all and were missed until the 2026-11 review: a promisor
+  remote turns a MISSING OBJECT into a fetch that runs
+  `remote.<name>.uploadpack` (closed by `GIT_NO_LAZY_FETCH=1` and
+  `protocol.allow=never`), and `log` runs `gpg.program` to VERIFY when
+  `log.showSignature` is set (`commit.gpgSign=false` covers signing only).
+  A new git
   invocation goes through `GitProcess`, and a new executing config key joins
   that list
-  (`Planted_hooks_fsmonitor_and_signing_programs_never_run`). The scanner's
+  (`Planted_hooks_fsmonitor_and_signing_programs_never_run`,
+  `A_planted_promisor_remote_never_runs_its_uploadpack_program`,
+  `A_planted_signature_verifier_never_runs_when_reading_the_last_commit`).
+  The scanner's
   size cap is for ATTACHMENTS: text formats are scanned at any size, or every
   note between the cap and Sync's ceiling enters history unscanned. **WHICH
   bytes are scanned and HOW they are decoded is `SecretScanPolicy`'s alone**

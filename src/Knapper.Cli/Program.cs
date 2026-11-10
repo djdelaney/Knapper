@@ -322,6 +322,26 @@ int Doctor()
         var label = problems.Count > 0 ? "INVALID — " + string.Join(" ", problems) : state + ", " + uploadState;
         Check($"Transfer configuration coherent ({label})", () => problems.Count == 0);
     }
+    {
+        // Not the server's refusal re-run (that lives in Knapper.Mcp) — the
+        // same three facts, stated so an operator sees the ingress posture
+        // without reading a startup log.
+        var mcp = configuration.GetSection(McpOptions.SectionName).Get<McpOptions>() ?? new McpOptions();
+        var loopbackBind = System.Net.IPAddress.TryParse(mcp.BindAddress, out var bind) && System.Net.IPAddress.IsLoopback(bind);
+        var label = mcp.Access.Enabled
+            ? "Access ENABLED" + (!mcp.Access.AllowLoopback
+                ? "; no loopback exemption"
+                : mcp.Access.AllowLoopbackMcp
+                    ? "; loopback callers exempt INCLUDING the MCP endpoint — no other reverse proxy may front this port"
+                    : "; loopback exempt on /health and /up only")
+            : mcp.Access.AllowPublicHostsWithoutAccess
+                ? "Access DISABLED with AllowPublicHostsWithoutAccess — test rigs only, never production"
+                : loopbackBind
+                    ? "Access DISABLED, loopback bind — dev only: every local process is the vault owner"
+                    : $"Access DISABLED on non-loopback bind {mcp.BindAddress} — the server refuses to start";
+        Check($"Ingress ({label})",
+            () => mcp.Access.Enabled || (loopbackBind && !mcp.Access.AllowPublicHostsWithoutAccess));
+    }
     Check($"Vault:HealthScanBudgetMs within {VaultOptions.MinHealthScanBudgetMs}–{VaultOptions.MaxHealthScanBudgetMs} ({vaultOptions.HealthScanBudgetMs} ms)",
         () => VaultOptions.ValidateHealthScanBudget(vaultOptions.HealthScanBudgetMs) is null);
     Check("Vault:CommitStampPath outside the vault (or unset)",

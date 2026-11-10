@@ -94,6 +94,20 @@ public class StartupContainmentTests
             _ => new() { ["Mcp:AllowedHosts:0"] = "mcp.example.test" },
             "Mcp:Access:Enabled is false");
 
+    /// <summary>
+    /// The Host allowlist stops browsers, not machines: on a non-loopback bind
+    /// another host sends 'Host: localhost' and passes it. With Access off
+    /// that is the whole vault, so the pair refuses startup.
+    /// </summary>
+    [Theory]
+    [InlineData("0.0.0.0")]
+    [InlineData("192.0.2.10")]
+    [InlineData("::")]
+    public void A_non_loopback_bind_with_Access_disabled_refuses_startup(string bind) =>
+        ShouldRefuseStartup(
+            _ => new() { ["Mcp:BindAddress"] = bind },
+            "is not loopback but Mcp:Access:Enabled is false");
+
     [Fact]
     public void Loopback_allowed_hosts_with_Access_disabled_still_boot()
     {

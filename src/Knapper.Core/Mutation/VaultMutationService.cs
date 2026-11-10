@@ -93,6 +93,29 @@ public sealed class VaultMutationService(
     }
 
     /// <summary>
+    /// The Sync ceiling, applied to an edit BEFORE its replacement is
+    /// allocated. <see cref="RequireSyncable"/> judges the finished bytes, which
+    /// is too late for memory: edits apply in sequence, so a list of
+    /// "a"→"aa" steps doubles the text each time and a 1.2 KB request built an
+    /// 8 GB string before the size check ever ran (security review 2026-11).
+    /// UTF-8 never encodes a char in less than one byte, so a char count over
+    /// the byte ceiling is over it in bytes too. The one thing this refuses
+    /// that the final check would not: an edit list that overshoots the
+    /// ceiling partway and shrinks back under it by the end. That is the
+    /// price of bounding memory at every step, and reordering the edits
+    /// (shrink first) gets such a caller through.
+    /// </summary>
+    private void RequireEditFits(VaultPath vp, int currentLength, int found, EditSpec edit)
+    {
+        var projected = currentLength + (long)found * (edit.New.Length - edit.Old.Length);
+        if (projected <= syncOptions.MaxFileBytes)
+            return;
+        throw new KnapperException(VaultErrorCode.TooLargeToSync,
+            $"{vp.Relative} would grow past {syncOptions.MaxFileBytes} bytes (Sync__MaxFileBytes) partway " +
+            "through these edits — refused before the replacement was built; file untouched.");
+    }
+
+    /// <summary>
     /// Test seams for the move/delete link–unlink window. The per-path lock
     /// only binds cooperating Knapper writers — Sync and human shells honor
     /// no locks — so the external-writer race cannot be reproduced from a
@@ -151,6 +174,7 @@ public sealed class VaultMutationService(
                         $"edit[{i}]: anchor matched {found} times, expected exactly {edit.Count} — " +
                         $"file untouched: '{Snip(edit.Old)}'");
                 }
+                RequireEditFits(vp, newText.Length, found, edit);
                 newText = newText.Replace(edit.Old, edit.New, StringComparison.Ordinal);
             }
             if (newText == text)
@@ -531,7 +555,7 @@ public sealed class VaultMutationService(
                     // receipt for the items that already landed.
                     var ke = NormalizeIo(e, "batch-apply", vp.Relative);
                     TryAudit(opName, vp.Relative, ke.Code.ToString(), ctx, detail: NoteRecoveredSibling(ke));
-                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, ke.Message, []));
+                    results.Add(new BatchItemResult(vp.Relative, BatchItemStatus.Failed, null, ke.Code, resolver.Relativize(ke.Message), []));
                     failedAt = i;
                 }
             }
@@ -558,6 +582,7 @@ public sealed class VaultMutationService(
                 throw new KnapperException(VaultErrorCode.AnchorMismatch,
                     $"edit[{i}]: anchor matched {found} times, expected exactly {edits[i].Count}: '{Snip(edits[i].Old)}'");
             }
+            RequireEditFits(vp, newText.Length, found, edits[i]);
             newText = newText.Replace(edits[i].Old, edits[i].New, StringComparison.Ordinal);
         }
         if (newText == text)

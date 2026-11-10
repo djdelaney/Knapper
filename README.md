@@ -36,7 +36,8 @@ contract):
   conditional write — after the git committer's own secret scan. Both
   directions are off by default.
 - **Ingress** via Cloudflare Tunnel + Cloudflare Access (origin-validated),
-  never a LAN port. The one exception is the `/transfer` prefix, where the
+  never a LAN port: the default bind is loopback, and a non-loopback bind
+  with Access off refuses startup. The one exception is the `/transfer` prefix, where the
   grant token is the credential and the origin owns every path.
 
 ## Layout
@@ -44,7 +45,7 @@ contract):
 | Path | What |
 |---|---|
 | `src/Knapper.Core` | Safety primitives (path containment, SHA-256 preconditions, atomic commits, cross-process flock locks), the query layer (ripgrep search, file listing, reads/stat, frontmatter queries, generation counter), and the transaction layer (anchored edits, append, no-clobber create, move, soft delete, batch, byte-exact create and conditional replace — with conflict/sync gates, a write-ahead JSONL audit log, and a durable metrics snapshot for the external monitor), and transfer grants (download snapshots, upload staging, one shared memory budget) |
-| `src/Knapper.Mcp` | ASP.NET Core MCP server: 18 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only), and the `/transfer` prefix (grant-authenticated download GET and upload PUT) |
+| `src/Knapper.Mcp` | ASP.NET Core MCP server: 18 locked tools over Streamable HTTP, Cloudflare Access origin validation (loopback exemption requires loopback peer AND Host, and covers health checks only, not the MCP endpoint), DNS-rebinding guard, `/health` (loopback, detailed) + `/up` (monitor, booleans only), and the `/transfer` prefix (grant-authenticated download GET and upload PUT) |
 | `src/Knapper.Cli` | `knapper` admin binary: `git-init` / `commit` (vault-wide lock + staged secret scan + monitor freshness stamp) / `status` / `doctor` / `audit-tail` / `verify --url` (read-only checks against a DEPLOYED server, including the ingress contract through the tunnel) |
 | `ops/` | systemd units (MCP, obsidian-headless sync, heartbeat + commit timers), the Proxmox-host monitor kit (`ops/monitor/`: silent-on-success alerting over `/up` + commit-stamp age + metrics deltas), self-verifying publish script, guided deploy harness (`ops/deploy.sh`, site values in an untracked config), CT 106 deployment runbook |
 | `tools/Knapper.LockProbe` | child-process probe for genuine two-process lock tests |

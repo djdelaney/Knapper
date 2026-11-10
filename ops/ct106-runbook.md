@@ -538,7 +538,10 @@ reason not to re-run these gates casually afterwards.)
 nothing else in this runbook produces one: the CLI is read-only
 (`git-init|commit|status|doctor|audit-tail|version|verify`, and `verify` is
 deliberately read-only — §5 above), so the gates are driven as raw JSON-RPC
-`tools/call` over the loopback same-box exemption. Two details that cannot be
+`tools/call` over the loopback same-box exemption — which, with Access on,
+reaches the MCP endpoint only because the smoke unit sets
+`Mcp__Access__AllowLoopbackMcp=true` (production never does; there a loopback
+`tools/call` answers 401). Two details that cannot be
 guessed from the code: responses come back as **SSE** (`data: {…}` — strip the
 prefix before `jq`), and the transport is **stateless**, so no `Mcp-Session-Id`
 is issued and nothing has to be echoed back on the next call.
@@ -1611,15 +1614,18 @@ demand that exact build. Running the check from the tarball's own CLI makes it
 `--expect-this-version`, with nothing typed by hand:
 
 ```sh
-pct exec 106 -- /opt/knapper/cli/knapper verify \
-    --url http://127.0.0.1:3535/ --expect-this-version
+pct exec 106 -- sh -c '( . /root/.knapper-verify.env
+    /opt/knapper/cli/knapper verify --url https://mcp.example.com/ \
+        --expect-this-version --expect-access )'
 ```
 
-Note the loopback URL there: that form runs the just-unpacked binary ON the CT,
-which is the whole point of `--expect-this-version` (nothing typed by hand), and
-it is the one place in §10 where skipping the ingress checks is fine — §10.3 is
-asking which BUILD answered, and the tunnelled run above already asked the rest.
-`verify` prints which checks it skipped and why; read those lines.
+That form runs the just-unpacked binary ON the CT, which is the whole point of
+`--expect-this-version` (nothing typed by hand), and it still goes through the
+public URL with §6.5's token. A loopback URL no longer works here: with Access
+on, the MCP endpoint refuses same-box callers too (the loopback exemption
+covers `/health` and `/up` only, unless `Mcp__Access__AllowLoopbackMcp` is
+set, which production does not), so `verify --url http://127.0.0.1:3535/`
+fails at initialize with a 401 — that is the control working, not an outage.
 
 ⛔ **`--expect-this-version` belongs to the just-upgraded box and nowhere
 else, and a CLI kept anywhere else is a second artifact §10.1 does not

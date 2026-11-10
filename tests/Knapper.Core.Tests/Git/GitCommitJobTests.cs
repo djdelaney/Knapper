@@ -375,6 +375,93 @@ public sealed class GitCommitJobTests : IDisposable
             File.Exists(marker) ? $"a planted program ran: {File.ReadAllText(marker)}" : null);
     }
 
+    /// <summary>
+    /// A promisor remote turns a missing object into a fetch, and the fetch
+    /// runs `remote.<name>.uploadpack` out of `.git/config`: mark the repo a
+    /// partial clone, delete one loose tree HEAD needs, and `diff --cached`
+    /// went looking for it by running the planted program (security review
+    /// 2026-11). The commit may fail — the repo IS corrupt — but nothing runs.
+    /// </summary>
+    [Fact]
+    public void A_planted_promisor_remote_never_runs_its_uploadpack_program()
+    {
+        _job.Init();
+        _v.Write("Notes/a.md", "content\n");
+        _job.Commit(Ample).Committed.ShouldBeTrue();
+
+        var marker = Path.Combine(_v.Outside.Path, "pwned");
+        var payload = Script("uploadpack.sh", $"echo ran >> '{marker}'\n");
+        GitConfig("extensions.partialClone", "origin");
+        GitConfig("remote.origin.url", _v.VaultDir.Path);
+        GitConfig("remote.origin.promisor", "true");
+        GitConfig("remote.origin.uploadpack", payload);
+        var tree = GitOutput("rev-parse", "HEAD:Notes").Trim();
+        File.Delete(Path.Combine(_v.VaultDir.Path, ".git", "objects", tree[..2], tree[2..]));
+
+        _v.Write("Notes/b.md", "more\n");
+        try
+        {
+            _job.Commit(Ample);
+        }
+        catch (KnapperException)
+        {
+            // A missing object is corruption; refusing is the right answer.
+        }
+
+        File.Exists(marker).ShouldBeFalse("the promisor remote's uploadpack program ran");
+    }
+
+    /// <summary>
+    /// `log` verifies signatures when log.showSignature is set, and that runs
+    /// gpg.program; commit.gpgSign=false covers signing only.
+    /// </summary>
+    [Fact]
+    public void A_planted_signature_verifier_never_runs_when_reading_the_last_commit()
+    {
+        _job.Init();
+        _v.Write("Notes/a.md", "content\n");
+        _job.Commit(Ample).Committed.ShouldBeTrue();
+        var marker = Path.Combine(_v.Outside.Path, "pwned");
+        var payload = Script("gpg.sh", $"echo ran >> '{marker}'\n");
+        GitConfig("log.showSignature", "true");
+        GitConfig("gpg.program", payload);
+
+        // Re-point HEAD at a hand-written commit carrying a signature header.
+        var head = GitOutput("cat-file", "commit", "HEAD");
+        var blank = head.IndexOf("\n\n", StringComparison.Ordinal);
+        var signed = head[..blank] + "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----" + head[blank..];
+        var sha = GitWithInput(signed, "hash-object", "-t", "commit", "-w", "--stdin").Trim();
+        GitOutput("update-ref", "HEAD", sha);
+
+        _job.LastCommitAgeSeconds().ShouldNotBeNull();
+
+        File.Exists(marker).ShouldBeFalse("gpg.program ran during `git log`");
+    }
+
+    private string GitOutput(params string[] args) => GitWithInput(null, args);
+
+    private string GitWithInput(string? stdin, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = stdin is not null,
+        };
+        psi.ArgumentList.Add("-C");
+        psi.ArgumentList.Add(_v.VaultDir.Path);
+        foreach (var a in args)
+            psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        if (stdin is not null)
+        {
+            p.StandardInput.Write(stdin);
+            p.StandardInput.Close();
+        }
+        var output = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        p.ExitCode.ShouldBe(0, p.StandardError.ReadToEnd());
+        return output;
+    }
+
     [Fact]
     public void A_planted_filter_driver_refuses_the_commit_before_add_can_run_it()
     {

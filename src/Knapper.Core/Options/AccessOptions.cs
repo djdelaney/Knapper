@@ -38,6 +38,17 @@ public sealed class AccessOptions
     public bool AllowLoopback { get; set; } = true;
 
     /// <summary>
+    /// Extend the loopback exemption to the MCP endpoint itself. Off by
+    /// default: with Access on, <see cref="AllowLoopback"/> covers /health and
+    /// /up only, and every vault call needs an assertion. Turn it on only for
+    /// a same-box agent, and only when cloudflared is the ONLY proxy on the
+    /// box — any other one that rewrites Host to a loopback name would hand
+    /// its callers the whole vault unauthenticated. Ignored when
+    /// <see cref="AllowLoopback"/> is false.
+    /// </summary>
+    public bool AllowLoopbackMcp { get; set; }
+
+    /// <summary>
     /// Boot with Access disabled while <c>Mcp:AllowedHosts</c> names a public
     /// hostname. Refused by default: that pair only means something when the
     /// server is reachable under that name, and without origin validation

@@ -20,6 +20,20 @@ public sealed class VaultPathResolver
     /// <summary>Canonical vault root: realpath-resolved, no trailing separator.</summary>
     public string Root { get; }
 
+    /// <summary>
+    /// Rewrite any absolute vault path inside <paramref name="message"/> to its
+    /// vault-relative form. Core's low-level failures name the absolute paths
+    /// they were handed (link, exchange, an OS message), and where the vault
+    /// lives on the server is operational metadata no agent needs — a create
+    /// over an existing note answered with the server's full path (security
+    /// review 2026-11). Applied where a message leaves for the wire, so a new
+    /// low-level message cannot reintroduce the leak.
+    /// </summary>
+    public string Relativize(string message) =>
+        string.IsNullOrEmpty(message)
+            ? message
+            : message.Replace(Root + "/", "", StringComparison.Ordinal).Replace(Root, ".", StringComparison.Ordinal);
+
     public VaultPathResolver(string vaultRoot)
     {
         if (string.IsNullOrWhiteSpace(vaultRoot) || !Directory.Exists(vaultRoot))

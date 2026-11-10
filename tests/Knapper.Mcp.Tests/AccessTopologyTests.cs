@@ -91,8 +91,23 @@ public sealed class AccessTopologyTests : IDisposable
 
     // ---- what must keep working ------------------------------------------
 
+    /// <summary>
+    /// The loopback exemption covers health checks, not the vault. "Loopback
+    /// peer + loopback Host" is also what a same-box reverse proxy that
+    /// rewrites Host (nginx's default proxy_pass) produces for every internet
+    /// caller, so with Access on the MCP endpoint demands an assertion from a
+    /// same-box caller too, unless Access:AllowLoopbackMcp opts in.
+    /// </summary>
     [Fact]
-    public async Task Genuine_local_caller_loopback_peer_and_loopback_host_needs_no_assertion()
+    public async Task Mcp_from_a_genuine_local_caller_still_needs_an_assertion()
+    {
+        using var client = _factory.CreateClient(); // Host defaults to localhost
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/");
+        (await client.SendAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Genuine_local_caller_loopback_peer_and_loopback_host_needs_no_assertion_for_health()
     {
         using var client = _factory.CreateClient(); // Host defaults to localhost
         (await client.GetAsync("/health")).StatusCode.ShouldBe(HttpStatusCode.OK);

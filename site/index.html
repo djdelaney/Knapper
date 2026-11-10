@@ -128,7 +128,7 @@ View on GitHub</a>
 <div class="conn ag rev" style="flex: 0 0 56px"><span>1 per note</span></div>
 <div class="node kn">Knapper<small>MCP server</small></div>
 </div>
-<div class="minitags"><span class="minitag">audit log</span><span class="minitag">git history</span><span class="minitag">no open ports</span></div>
+<div class="minitags"><span class="minitag">audit log</span><span class="minitag">git history (opt-in)</span><span class="minitag">no open ports</span></div>
 </div>
 <div class="conn ag rev"></div>
 <div class="node gate cut-s" style="flex: 0 0 auto">Cloudflare<br>Access<small>gate</small></div>
@@ -143,7 +143,7 @@ View on GitHub</a>
 </div>
 <div class="d1-cap">
 <div><b>People go through Sync.</b>Your apps and your Sync subscription don't change.</div>
-<div><b>Agents go through Knapper.</b>Only. There is no second path to the files.</div>
+<div><b>Agents go through Knapper.</b>That is the one path meant for them. Keep agents away from any synced copy of the vault.</div>
 <div><b>Both meet at one vault.</b>Edits from agents show up in Obsidian moments later.</div>
 </div>
 </figure>
@@ -161,10 +161,10 @@ View on GitHub</a>
 <a class="fc cut" href="#write"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 10h7M16 10h4M4 14h16M4 18h10"></path><path d="M13.5 7.5v5"></path></svg></span><h3>Surgical edits</h3><p>Agents change the paragraph they mean, not the whole file. Guard text must survive every edit.</p><span class="more">↓ Inside a save</span></a>
 <a class="fc cut" href="#search"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.4-4.4"></path><path d="M8.5 11l1.8 1.8 3.2-3.6"></path></svg></span><h3>Search you can trust</h3><p>"No results" means the whole scope was searched. Totals are never guessed.</p><span class="more">↓ Search</span></a>
 <a class="fc cut" href="#stops"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"></path><path d="M8 12h8"></path></svg></span><h3>Stops instead of guessing</h3><p>A Sync conflict or unhealthy sync blocks writes until you look. Reads keep working.</p><span class="more">↓ Gates</span></a>
-<a class="fc cut" href="#write"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"></path><path d="M8.5 12l2.5 2.5 4.5-5"></path></svg></span><h3>Every write checked</h3><p>Atomic writes, re-read and byte-compared afterwards. Soft deletes, an audit log and git history.</p><span class="more">↓ Inside a save</span></a>
+<a class="fc cut" href="#write"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"></path><path d="M8.5 12l2.5 2.5 4.5-5"></path></svg></span><h3>Every write checked</h3><p>Atomic writes, re-read and byte-compared afterwards. Soft deletes, an audit log and optional git snapshots.</p><span class="more">↓ Inside a save</span></a>
 <a class="fc cut" href="#obsidian"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H6v14h3M15 5h3v14h-3"></path><path d="M10 12h4"></path></svg></span><h3>Speaks Obsidian</h3><p>Wikilinks, link checking, your own writing conventions, archived folders.</p><span class="more">↓ Built for Obsidian</span></a>
 <a class="fc cut" href="#transfers"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11M7.5 9.5L12 14l4.5-4.5"></path><path d="M4 16v4h16v-4"></path></svg></span><h3>Exact file transfers</h3><p>Big or binary files move by a one-time link and a hash check, never through the model.</p><span class="more">↓ Transfers</span></a>
-<a class="fc cut" href="#security"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg></span><h3>Private by design</h3><p>No open ports. Cloudflare Access at the edge, checked again by the server. Notes are data, never instructions.</p><span class="more">↓ Security</span></a>
+<a class="fc cut" href="#security"><span class="ic cut-s"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg></span><h3>Private by design</h3><p>No open ports. Cloudflare Access at the edge, checked again by the server. Agents are told that notes are data, not instructions.</p><span class="more">↓ Security</span></a>
 </div>
 </div>
 </section>
@@ -221,7 +221,7 @@ View on GitHub</a>
 <div id="write" style="margin-top: 96px; padding-top: 72px; border-top: 1px solid var(--bd)">
 <p class="eyebrow">Inside that save</p>
 <h3 class="h2" style="font-size: 34px">The fingerprint check is one step of ten.</h3>
-<p class="lede">Every change follows the same path, in the same order. The other nine steps make sure what lands is whole, checked on disk, and logged. Two checks can stop the write, and when they do, nothing touches the disk. Hover or focus a step for what it does.</p>
+<p class="lede">Every change follows the same path, in the same order. The other nine steps make sure what lands is whole, checked on disk, and logged. A check that fails stops the write and leaves the note untouched. Two are shown here. Hover or focus a step for what it does.</p>
 <figure style="margin: 0" aria-label="Write pipeline: Lock, Fresh read, Fingerprint check, Apply edit, Check guards, Log intent, Write to hidden temp, Atomic swap, Re-read and compare, Unlock. A failed fingerprint check or guard check refuses the write with nothing written.">
 <div class="pipe">
 <div class="step"><button class="chip cut-s" type="button"><span class="num">01</span><span>Lock</span><span class="tip">One change per note at a time. Other writers wait their turn.</span></button></div>
@@ -266,7 +266,7 @@ View on GitHub</a>
 <div class="chat-bar"><span>Chat</span><span>illustration</span></div>
 <div class="chat-body">
 <div class="bub-u">Log today's watering in Garden log.</div>
-<div class="tool no"><span class="tn">vault_append</span><span class="st-no">[MutationBlocked]</span><span style="color: var(--mu)">'Garden/Garden log.md' has an unresolved conflict sibling ('Garden log (Conflicted copy …).md'). Mutations to both are blocked until a human reconciles.</span></div>
+<div class="tool no"><span class="tn">vault_append</span><span class="st-no">[MutationBlocked]</span><span style="color: var(--mu)">'Garden/Garden log.md' has an unresolved conflict sibling ("Garden log (Conflicted copy …).md"). Mutations to both are blocked until a human reconciles.</span></div>
 <div class="bub-a">I couldn't save that. Obsidian Sync made a conflict copy of Garden log, so Knapper is holding writes until you pick which version to keep. I can still read both if you'd like me to compare them.</div>
 </div>
 </div>
@@ -453,7 +453,7 @@ View on GitHub</a>
 <div>
 <p class="eyebrow">Security</p>
 <h2 class="h2">This vault holds your whole life. It's treated that way.</h2>
-<p class="lede">Your vault never listens on your network. Agents reach it through a Cloudflare Tunnel behind Cloudflare Access, and Knapper checks the Access token again itself, so a mistake at the edge doesn't expose your notes. Paths are confined to the vault. Every action is logged with who made it. A read-only mode lets you start cautiously.</p>
+<p class="lede">Knapper listens on loopback only, and refuses to start on a network address without Access. Agents reach it through a Cloudflare Tunnel behind Cloudflare Access, and Knapper checks the Access token again itself, so a missing Access policy at the edge doesn't expose your notes. Paths are confined to the vault. Every write attempt, refusals included, is recorded with who made it; reads are logged by tool name. A read-only mode lets you start cautiously.</p>
 <div class="frame cut" style="margin-top: 32px">
 <div class="frame-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">audit log + vault history · local dev server</span></div>
 <pre><span class="c-ac">$</span> jq -r '[.Client, .Op, .Path, .Outcome] | @tsv' audit.jsonl
