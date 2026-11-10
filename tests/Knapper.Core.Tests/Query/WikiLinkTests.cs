@@ -74,8 +74,8 @@ public sealed class WikiLinkTests
         // Measured in Obsidian 2026-08-30: the escaped and unescaped forms
         // and the escaped form inside a table row ALL display the alias, so
         // there is one rule and no table context. See Split's remarks.
-        var link = Parse("See [[Homelab#every `curl \\| sh` installer fails]].").Links.ShouldHaveSingleItem();
-        link.Target.ShouldBe("Homelab");
+        var link = Parse("See [[Workshop#every `curl \\| sh` installer fails]].").Links.ShouldHaveSingleItem();
+        link.Target.ShouldBe("Workshop");
         link.Fragment.ShouldBe("every `curl"); // trimmed at the separator
         link.Alias.ShouldBe(" sh` installer fails");
     }
@@ -99,8 +99,8 @@ public sealed class WikiLinkTests
         // therefore UNREACHABLE — a link addressing it would terminate at the
         // inner ']]' — so every inbound link to it is genuinely broken and
         // reporting them is correct.
-        Parse("## Remote access — [[Tailscale Remote Access]]").Headings
-            .ShouldBe(["remote access — [[tailscale remote access]]"]);
+        Parse("## Remote access — [[VPN Remote Access]]").Headings
+            .ShouldBe(["remote access — [[vpn remote access]]"]);
         Parse("## A [markdown](https://example.com) link").Headings
             .ShouldBe(["a [markdown](https://example.com) link"]);
     }
@@ -148,8 +148,8 @@ public sealed class WikiLinkTests
     [Fact]
     public void Fragments_split_into_headings_and_block_ids()
     {
-        var heading = Parse("[[Mailvec Stack#Step 8 — Backups (VM)]]").Links.ShouldHaveSingleItem();
-        heading.Target.ShouldBe("Mailvec Stack");
+        var heading = Parse("[[Mail Stack#Step 8 — Backups (VM)]]").Links.ShouldHaveSingleItem();
+        heading.Target.ShouldBe("Mail Stack");
         heading.Fragment.ShouldBe("Step 8 — Backups (VM)");
         heading.FragmentIsBlockId.ShouldBeFalse();
 
@@ -196,7 +196,7 @@ public sealed class WikiLinkTests
         WikiLink.NormalizeHeading("  Step 8 —   Backups (VM) ").ShouldBe("step 8 — backups (vm)");
         WikiLink.NormalizeHeading("Measured throughput — 2026-08-11")
             .ShouldNotBe(WikiLink.NormalizeHeading(
-                "Measured throughput — 2026-08-11 (historical — single Crucial P3 Plus)"));
+                "Measured throughput — 2026-08-11 (historical — single old motor)"));
     }
 
     [Fact]

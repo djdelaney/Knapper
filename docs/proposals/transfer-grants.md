@@ -59,10 +59,10 @@ cannot enter at all. Once built, this design replaces bulk-ingest.md's
 that is not UTF-8 (`NotUtf8`), and no tool hands bytes over. An agent
 building something printable from photos and PDFs the vault holds cannot get
 them. Measured 2026-11-07 via `vault_files`, the deployment this was written
-for held 17 binaries outside its archive: five phone JPEGs of 1.7–2.9 MB
-and a 2.4 MB PDF added that day, two older project photos, eight small
-photos of people, and one image that encodes a credential, which
-`SecretScanner` cannot read.
+for held 17 binaries outside its archive: mostly phone photos of a few MB
+and a PDF, and among them images of a kind text scanning cannot judge
+(photos of people; an image can encode a credential `SecretScanner`
+cannot read).
 
 Two things that look like answers are not:
 

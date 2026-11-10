@@ -16,24 +16,24 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     {
         Findings(LintChecks.UnresolvedLink, "Notes").Select(f => f.Subject).ShouldBe(
         [
-            // [[Home Assistant/InfluxDB Migration Plan]] resolves: its segments
+            // [[Field Station/Sensor Migration Plan]] resolves: its segments
             // are a suffix of Tech/Home Assistant/…. A suffix is matched on
             // whole segments only, so a link naming the WRONG parent, or
             // starting mid-way through a folder name, is still broken.
-            "Wrong Parent/InfluxDB Migration Plan",
-            "Assistant/InfluxDB Migration Plan",
-            "La-Z-Boy",
+            "Wrong Parent/Sensor Migration Plan",
+            "Station/Sensor Migration Plan",
+            "Wing-Back",
         ]);
     }
 
     [Fact]
     public void Attachments_aliases_and_same_file_anchors_all_resolve()
     {
-        // The measured pass treated pg-dump-backup.sh as a valid target:
+        // The measured pass treated nightly-backup.sh as a valid target:
         // resolution is against every vault file, not the .md subset.
         var subjects = Findings(LintChecks.UnresolvedLink, "Notes").Select(f => f.Subject).ToList();
-        subjects.ShouldNotContain("pg-dump-backup.sh");
-        subjects.ShouldNotContain("Tempest");   // a frontmatter alias
+        subjects.ShouldNotContain("nightly-backup.sh");
+        subjects.ShouldNotContain("Skywatch");   // a frontmatter alias
         subjects.ShouldNotContain("#Hub");      // a heading in the linking file itself
     }
 
@@ -50,12 +50,13 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     [Fact]
     public void A_renamed_heading_breaks_its_inbound_anchors()
     {
-        // The live case: a heading gained "(historical — single Crucial P3
-        // Plus)" and five inbound links went stale at once.
+        // The live case's shape: a heading gained a parenthetical
+        // ("(historical — single old motor)") and five inbound links went
+        // stale at once.
         Findings(LintChecks.BrokenAnchor, "Notes").Select(f => f.Subject).ShouldBe(
         [
-            "Mailvec Stack#Backups",
-            "Windows Utility VM#Measured throughput — 2026-08-11",
+            "Mail Stack#Backups",
+            "Bench Grinder#Measured throughput — 2026-08-11",
             // A same-file [[#Heading]] resolves to its own note, so a missing
             // one is a broken ANCHOR — never an unresolved link.
             "#Nope",
@@ -76,26 +77,26 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     public void A_basename_matching_two_notes_is_ambiguous_rather_than_resolved()
     {
         var finding = Findings(LintChecks.AmbiguousLink, "Notes").ShouldHaveSingleItem();
-        finding.Subject.ShouldBe("Cabinets");
-        finding.Message.ShouldContain("Kitchen/Cabinets.md");
-        finding.Message.ShouldContain("Laundry/Cabinets.md");
+        finding.Subject.ShouldBe("Shelving");
+        finding.Message.ShouldContain("Garage/Shelving.md");
+        finding.Message.ShouldContain("Attic/Shelving.md");
     }
 
     [Fact]
     public void Only_an_unescaped_pipe_inside_a_table_row_is_flagged()
     {
         var finding = Findings(LintChecks.TablePipe, "Notes").ShouldHaveSingleItem();
-        finding.Subject.ShouldBe("[[Mailvec Stack|MS]]");
+        finding.Subject.ShouldBe("[[Mail Stack|MS]]");
         finding.Line.ShouldBe(16);
     }
 
     [Fact]
     public void A_table_the_paragraph_above_it_absorbs_is_reported_and_nothing_else_is()
     {
-        // The live cases, measured in Helios 2026-09-01: 'Screened Porch
-        // Project.md' renders its whole Setbacks table as literal pipes
+        // The shapes measured in a real vault 2026-09-01, under invented
+        // names: 'Shed Plan.md' renders its whole Budget table as literal pipes
         // because the paragraph above it has no blank line under it, and both
-        // tables nested inside bullets in 'Tech/Homelab/Homelab Roadmap.md'
+        // tables nested inside bullets in 'Projects/Workshop/Workshop Roadmap.md'
         // do the same — a bullet's text is an open paragraph like any other,
         // whatever the indent.
         //
@@ -119,7 +120,7 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     [Fact]
     public void An_absorbed_block_is_not_a_table_row_so_table_pipe_stays_silent_inside_it()
     {
-        // One defect, one finding. The pipe in [[Mailvec Stack|MS]] opens no
+        // One defect, one finding. The pipe in [[Mail Stack|MS]] opens no
         // column while the block renders as prose; it becomes a table_pipe
         // finding once the blank line above turns the block into a table.
         Findings(LintChecks.TablePipe, "Tables").ShouldBeEmpty();
@@ -162,9 +163,9 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
         // genuinely broken, and Helios has six such links onto one heading.
         Findings(LintChecks.BrokenAnchor, "Cases").Select(f => f.Subject).ShouldBe(
         [
-            "Homelab#Remote access — Tailscale Remote Access",
-            "Homelab#Remote access — Tailscale Remote Access",
-            "Homelab#Pipe",
+            "Workshop#Remote access — VPN Remote Access",
+            "Workshop#Remote access — VPN Remote Access",
+            "Workshop#Pipe",
         ]);
     }
 
@@ -176,7 +177,7 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
         // heading that genuinely contains one is unreachable, and saying so
         // is correct — Helios has exactly one such link.
         Findings(LintChecks.BrokenAnchor, "Cases")
-            .ShouldContain(f => f.Subject == "Homelab#Pipe");
+            .ShouldContain(f => f.Subject == "Workshop#Pipe");
     }
 
     [Fact]
@@ -189,30 +190,30 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     [Fact]
     public void The_nearest_note_settles_a_shared_basename()
     {
-        // Kitchen/Nearest.md -> [[Cabinets]] with Kitchen/Cabinets.md beside
+        // Garage/Nearest.md -> [[Shelving]] with Garage/Shelving.md beside
         // it: Obsidian resolves to the nearest, so this is not arbitrary...
-        Findings(LintChecks.AmbiguousLink, "Kitchen").ShouldBeEmpty();
+        Findings(LintChecks.AmbiguousLink, "Garage").ShouldBeEmpty();
         // ...while the same link from a note in NEITHER folder still is.
-        Findings(LintChecks.AmbiguousLink, "Notes").ShouldHaveSingleItem().Subject.ShouldBe("Cabinets");
+        Findings(LintChecks.AmbiguousLink, "Notes").ShouldHaveSingleItem().Subject.ShouldBe("Shelving");
     }
 
     [Fact]
     public void A_path_relative_to_the_linking_notes_folder_resolves()
     {
-        // Tech/Homelab/Relative Path.md -> [[Proxmox/Monthly Maintenance]].
+        // Projects/Workshop/Relative Path.md -> [[Tools/Monthly Maintenance]].
         // Root-only matching calls this broken; Obsidian follows it.
-        Findings(LintChecks.UnresolvedLink, "Tech/Homelab").ShouldBeEmpty();
+        Findings(LintChecks.UnresolvedLink, "Projects/Workshop").ShouldBeEmpty();
     }
 
     [Fact]
     public void A_path_naming_the_targets_own_folder_from_inside_it_resolves()
     {
         // The Helios case, confirmed in Obsidian 2026-09-27: a note inside
-        // Laundry and Mudroom/ links [[Laundry and Mudroom/Cabinets]] to tell
-        // it apart from Kitchen/Cabinets. Neither root nor relative matches;
+        // Shed and Greenhouse/ links [[Shed and Greenhouse/Shelving]] to tell
+        // it apart from Garage/Shelving. Neither root nor relative matches;
         // the segment suffix does, and it names the right note.
-        Findings(LintChecks.UnresolvedLink, "Home/Laundry and Mudroom").ShouldBeEmpty();
-        Findings(LintChecks.AmbiguousLink, "Home/Laundry and Mudroom").ShouldBeEmpty();
+        Findings(LintChecks.UnresolvedLink, "Home/Shed and Greenhouse").ShouldBeEmpty();
+        Findings(LintChecks.AmbiguousLink, "Home/Shed and Greenhouse").ShouldBeEmpty();
     }
 
     [Fact]
@@ -301,7 +302,7 @@ public sealed class VaultLintTests : IClassFixture<LintFixtureVault>
     [Fact]
     public void A_clean_scope_reports_nothing_and_claims_exhaustiveness()
     {
-        var result = _vault.Lint.Lint(new LintQuery { PathPrefix = "Kitchen" });
+        var result = _vault.Lint.Lint(new LintQuery { PathPrefix = "Garage" });
         result.Items.ShouldBeEmpty();
         result.Truncated.ShouldBeFalse();
         result.TotalMatches.ShouldBe(0);

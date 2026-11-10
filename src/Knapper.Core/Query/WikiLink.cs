@@ -18,8 +18,8 @@ namespace Knapper.Core.Query;
 /// lands in the same scan one line earlier: a header row sitting directly
 /// under a paragraph line is not a table at all. Obsidian absorbs it into
 /// that paragraph and renders the pipes as literal text (measured in Helios
-/// 2026-09-01 — 'Home/Mayapple/Projects/Screened Porch Project.md' renders
-/// its Setbacks table as a wall of '|'). So the scan decides whether a
+/// 2026-09-01 — 'Projects/Garden Shed/Shed Plan.md' renders
+/// its Budget table as a wall of '|'). So the scan decides whether a
 /// candidate block IS a table before marking its rows, which is also what
 /// keeps the two table checks from double-reporting one defect: rows that do
 /// not render as a table cannot be opening a phantom column, so table_pipe
@@ -407,7 +407,7 @@ internal static class WikiLink
     /// A LIST ITEM absorbs it exactly as a paragraph does, and indent has
     /// nothing to do with it — measured in Obsidian 2026-09-01, after this
     /// check first shipped abstaining on the shape: both tables nested inside
-    /// bullets in 'Tech/Homelab/Homelab Roadmap.md' render as walls of '|'.
+    /// bullets in 'Projects/Workshop/Workshop Roadmap.md' render as walls of '|'.
     /// The bullet's text is an open paragraph and the header row is lazy
     /// continuation of it, so the fix is the same one blank line, kept at the
     /// list's indent.

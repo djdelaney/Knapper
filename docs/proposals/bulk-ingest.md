@@ -310,8 +310,8 @@ the tool surface*. **That property does not exist.** Measured against Helios
 the same day:
 
 ```
-Home/Mayapple/Projects/Kids Bathroom/Bathroom.jpg              515,432 bytes
-Home/Mayapple/Projects/…/81281C74-…_1_105_c.jpeg               304,793 bytes
+Projects/Garden Shed/Photos/Shed.jpg                    515,432 bytes
+Projects/Garden Shed/Photos/IMG-0042.jpeg                   304,793 bytes
 ```
 
 Both arrived through the human Sync channel, both predate the git era, and
@@ -368,7 +368,7 @@ this wrong means building §4 for a case §4 does not serve.
    lost and nothing is re-emitted.
 
 **Referencing** an image that is already in the vault needs nothing new —
-`vault_edit` writes `![[Bathroom.jpg]]` into a note today. The gap is only
+`vault_edit` writes `![[Shed.jpg]]` into a note today. The gap is only
 ever *introducing new bytes*.
 
 Binary sharpens two items elsewhere in this document. `Sync__MaxFileBytes`

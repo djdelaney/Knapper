@@ -30,8 +30,8 @@ public sealed class FrontmatterParseFailureTests : IDisposable
     public FrontmatterParseFailureTests()
     {
         _dir.File("Broken/flow-then-key.md", $"---\n{Trigger}\n---\nbody\n");
-        _dir.File("Notes/Weather Station.md", "---\nstatus: active\naliases: [Tempest]\n---\n# Weather Station\n");
-        _dir.File("Notes/Hub.md", "Alias: [[Tempest]].\n");
+        _dir.File("Notes/Weather Station.md", "---\nstatus: active\naliases: [Skywatch]\n---\n# Weather Station\n");
+        _dir.File("Notes/Hub.md", "Alias: [[Skywatch]].\n");
         _resolver = new VaultPathResolver(_dir.Path);
         _options = new VaultOptions { RootPath = _resolver.Root };
     }
