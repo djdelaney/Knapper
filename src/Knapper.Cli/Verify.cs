@@ -117,6 +117,26 @@ internal static class Verify
             return 2;
         }
 
+        // A half pair used to collapse silently into NO token (Token below),
+        // and a run through the edge without the owner token sent every
+        // "authenticated" check bare while labelling it "with the owner
+        // token". That reads exactly like Access refusing a valid credential:
+        // on 2026-11-13 an env file whose lines lacked `export` — sourced, so
+        // the shell had the values and verify did not — sent a whole outage
+        // diagnosis after a service token that had never been presented.
+        // Refused before any request, naming the one thing to check.
+        if (HalfPair("CF_ACCESS_CLIENT_ID", clientId, "CF_ACCESS_CLIENT_SECRET", clientSecret) is { } ownerHalf)
+            return RefuseCredentials(ownerHalf);
+        if (HalfPair("CF_MONITOR_CLIENT_ID", monitorId, "CF_MONITOR_CLIENT_SECRET", monitorSecret) is { } monitorHalf)
+            return RefuseCredentials(monitorHalf);
+        if ((expectAccess || !endpoint.IsLoopback) && Token(clientId, clientSecret) is null)
+        {
+            return RefuseCredentials(
+                "a run through an Access edge needs the owner service token, and neither CF_ACCESS_CLIENT_ID nor " +
+                "CF_ACCESS_CLIENT_SECRET is in this process's environment — every authenticated check would go " +
+                "out with no credential and fail as if Access had refused one");
+        }
+
         return new Checker(
                 endpoint, Token(clientId, clientSecret), Token(monitorId, monitorSecret),
                 expectVersion, expectVersionFromSelf, expectAccess, expectReadOnly)
@@ -124,6 +144,23 @@ internal static class Verify
 
         static (string Id, string Secret)? Token(string? id, string? secret) =>
             string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(secret) ? null : (id, secret);
+
+        // Names only — never a value, not even a prefix.
+        static string? HalfPair(string idName, string? id, string secretName, string? secret) =>
+            (string.IsNullOrWhiteSpace(id), string.IsNullOrWhiteSpace(secret)) switch
+            {
+                (false, true) => $"{idName} is set but {secretName} is not in this process's environment",
+                (true, false) => $"{secretName} is set but {idName} is not (environment or its --*client-id flag)",
+                _ => null,
+            };
+
+        static int RefuseCredentials(string problem)
+        {
+            Console.Error.WriteLine(
+                $"verify: {problem}. A sourced file sets variables for the SHELL only: each line must read " +
+                "`export NAME=value`, or source it under `set -a` (runbook §6.5).");
+            return 2;
+        }
     }
 
     private sealed class Checker(

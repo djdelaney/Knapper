@@ -312,6 +312,55 @@ public sealed class VerifyCommandTests : IDisposable
     }
 
     /// <summary>
+    /// 2026-11-13: an env file whose lines lacked `export` was sourced, so the
+    /// shell held the token and verify did not. It ran every authenticated
+    /// check bare, labelled "with the owner token", and the 401s read as
+    /// Access refusing a valid credential. A run through an edge without the
+    /// owner token now refuses before any request, naming the cause.
+    /// </summary>
+    [Theory]
+    [InlineData("https://mcp.example.test/", null)]
+    [InlineData("http://127.0.0.1:9/", "--expect-access")]
+    public void A_run_through_an_edge_without_the_owner_token_is_refused_before_any_request(
+        string url, string? extra)
+    {
+        var (exitCode, output) = extra is null
+            ? RunVerifyRaw("--url", url)
+            : RunVerifyRaw("--url", url, extra);
+        exitCode.ShouldBe(2, output);
+        output.ShouldContain("CF_ACCESS_CLIENT_ID");
+        output.ShouldContain("export");
+        output.ShouldNotContain("verifying "); // refused before the first probe
+    }
+
+    /// <summary>
+    /// A half pair used to collapse silently into "no token" — for the
+    /// monitoring pair that SKIPPED the separation check as a single-app setup.
+    /// Names are reported; values never are.
+    /// </summary>
+    [Theory]
+    [InlineData("CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET")]
+    [InlineData("CF_ACCESS_CLIENT_SECRET", "CF_ACCESS_CLIENT_ID")]
+    [InlineData("CF_MONITOR_CLIENT_ID", "CF_MONITOR_CLIENT_SECRET")]
+    [InlineData("CF_MONITOR_CLIENT_SECRET", "CF_MONITOR_CLIENT_ID")]
+    public void A_half_credential_pair_is_refused_by_name(string present, string missing)
+    {
+        var env = new Dictionary<string, string>
+        {
+            ["CF_ACCESS_CLIENT_ID"] = "owner-id.access",
+            ["CF_ACCESS_CLIENT_SECRET"] = "owner-s3cret",
+            [present] = "half-s3cret-value",
+        };
+        if (missing.StartsWith("CF_ACCESS", StringComparison.Ordinal))
+            env.Remove(missing);
+
+        var (exitCode, output) = RunVerifyRaw(env, "--url", "https://mcp.example.test/");
+        exitCode.ShouldBe(2, output);
+        output.ShouldContain($"{present} is set but {missing}");
+        output.ShouldNotContain("s3cret");
+    }
+
+    /// <summary>
     /// Service-token secrets travel as request headers: plain http to a remote
     /// host sends them in the clear. Loopback http stays legal (every other
     /// test here runs on it).
@@ -396,7 +445,11 @@ public sealed class VerifyCommandTests : IDisposable
         RunVerify(edge.Url, edge);
 
     /// <summary>Exactly these arguments after `verify`, no credentials in the environment.</summary>
-    private static (int ExitCode, string Output) RunVerifyRaw(params string[] args)
+    private static (int ExitCode, string Output) RunVerifyRaw(params string[] args) =>
+        RunVerifyRaw(new Dictionary<string, string>(), args);
+
+    /// <summary>Exactly these arguments, and exactly these CF_* variables — none inherited.</summary>
+    private static (int ExitCode, string Output) RunVerifyRaw(IReadOnlyDictionary<string, string> credentials, params string[] args)
     {
         var psi = new ProcessStartInfo
         {
@@ -405,6 +458,10 @@ public sealed class VerifyCommandTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        foreach (var name in (string[])["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CF_MONITOR_CLIENT_ID", "CF_MONITOR_CLIENT_SECRET"])
+            psi.Environment.Remove(name);
+        foreach (var (name, value) in credentials)
+            psi.Environment[name] = value;
         foreach (var a in (string[])["exec", CliDll(), "verify", .. args])
             psi.ArgumentList.Add(a);
         using var process = Process.Start(psi)!;

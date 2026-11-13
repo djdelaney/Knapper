@@ -472,6 +472,12 @@ Tool errors are structured MCP errors whose message leads with the code:
     knapper verify --url https://mcp.example.com/ )
   ```
 
+  A run through an edge (a non-loopback URL, or `--expect-access`) without
+  the owner token is refused before any request, and so is half of either
+  credential pair: a line missing its `export` leaves the value in the shell
+  and out of `verify`, and the bare probes that followed used to fail exactly
+  as if Access had refused a valid token.
+
   Every run prints the CLI's OWN build in its header
   (`verifying … · knapper CLI 0.5.1+gabc0dbf`) and a tally above the verdict
   (`15 ok, 0 failed, 1 skipped`), and warns outright when the CLI is an older

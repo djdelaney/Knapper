@@ -777,9 +777,11 @@ and still without a write.
    Four lines, each an `export` — `export CF_ACCESS_CLIENT_ID=<token>.access`,
    `export CF_ACCESS_CLIENT_SECRET=<secret>`, and the
    `CF_MONITOR_CLIENT_ID` / `CF_MONITOR_CLIENT_SECRET` pair from the `/up`
-   app. A line missing its `export` fails LOUDLY at the first authenticated
-   probe (the credential simply is not in the environment, so `/up` answers
-   with a refusal and the check fails) — it cannot pass quietly.
+   app. A line missing its `export` leaves the value in the shell and out of
+   `verify`'s environment. `verify` refuses that before any request, naming
+   the variable (2026-11-13: before it did, the bare probes failed with 401s
+   that read exactly like Access refusing a valid token, and sent an outage
+   diagnosis after a credential that had never been presented).
 
    Every `verify` run in this document then takes this shape, and nothing
    secret is ever typed, so shell history needs no special handling:
