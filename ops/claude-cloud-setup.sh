@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude cloud environment setup for Knapper: .NET 10 SDK + pinned ripgrep 15.
+# Claude cloud environment setup for Knapper: .NET 11 SDK + pinned ripgrep 15.
 #
 # THIS FILE IS THE MASTER COPY. The claude.ai environment's "Setup script"
 # field holds a PASTE of it, deliberately not a call to this path: nothing we
@@ -19,15 +19,23 @@ set -euxo pipefail
 # Knapper needs neither; dropping them lets `apt-get update` finish cleanly.
 rm -f /etc/apt/sources.list.d/*deadsnakes* /etc/apt/sources.list.d/*ondrej*
 
-# ── .NET 10 SDK ──────────────────────────────────────────────────────────────
+# ── .NET 11 SDK ──────────────────────────────────────────────────────────────
+# From Microsoft's installer, NOT apt: Ubuntu's archive carries dotnet11 only
+# from 26.10 on (checked 2026-11-14), and this image is 24.04. The installer
+# takes the newest 11.0 SDK, so the image never pins a stale patch.
+#
 # `apt-get update` exits 100 if ANY configured source is unreachable, even
-# when the Ubuntu archive that carries dotnet-sdk-10.0 updated fine. Tolerate
-# it, then judge the outcome by what actually got installed.
+# when Ubuntu's own archive updated fine. Tolerate it, and tolerate the ICU
+# install too (the image may already carry it): the outcome is judged by
+# whether an 11.x SDK actually runs.
 apt-get update || echo "WARNING: apt-get update reported errors (exit $?); continuing"
-apt-get install -y dotnet-sdk-10.0
+apt-get install -y libicu74 || echo "WARNING: could not install libicu74 (exit $?); continuing"
+curl -sSLf -o /tmp/dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+bash /tmp/dotnet-install.sh --channel 11.0 --install-dir /usr/share/dotnet
+ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet
 dotnet --list-sdks
-dotnet --list-sdks | grep -q '^10\.' \
-  || { echo ".NET 10 SDK not installed" >&2; exit 1; }
+dotnet --list-sdks | grep -q '^11\.' \
+  || { echo ".NET 11 SDK not installed" >&2; exit 1; }
 
 # ── ripgrep (pinned) ─────────────────────────────────────────────────────────
 # rg 15+ is part of Knapper's query contract: rg 14 reports "searches": 0 on a

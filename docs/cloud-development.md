@@ -20,10 +20,15 @@ In the claude.ai environment settings for this repository:
    ```
    DOTNET_NOLOGO=1
    DOTNET_CLI_TELEMETRY_OPTOUT=1
+   VSTEST_ARTIFACTS_BASE_DIRECTORY=/tmp
    ```
+   The last one is for `dotnet test` as root in a container: the SDK wants
+   a private directory under `/run/user/0`, which does not exist here, and
+   without the variable every run prints a warning that blames an outdated
+   test package.
 3. **Setup script:** paste the whole of
    [`ops/claude-cloud-setup.sh`](../ops/claude-cloud-setup.sh). It installs
-   the .NET 10 SDK from Ubuntu's archive and the pinned ripgrep release,
+   the .NET 11 SDK with Microsoft's installer and the pinned ripgrep release,
    removes Ubuntu's older ripgrep, and fails the setup on anything it cannot
    verify.
 
@@ -149,10 +154,15 @@ Each of these was a real failure while the environment was first set up
 - **`apt-get update` may fail; the install is judged by its result.** The
   image shipped two third-party package sources (Python and PHP archives)
   that answered 403 from the sandbox, and `apt-get update` exits 100 on any
-  unreachable source even when Ubuntu's own archive, which carries .NET,
-  updated fine. The script removes those two sources, still tolerates an
-  update failure in case another breaks later, and then checks that a 10.x
-  SDK is actually installed.
+  unreachable source even when Ubuntu's own archive updated fine. The
+  script removes those two sources, still tolerates an update failure in
+  case another breaks later, and then checks that an 11.x SDK is actually
+  installed.
+- **The SDK comes from Microsoft's installer, not apt.** Ubuntu's archive
+  carries .NET 11 only from 26.10 on (checked 2026-11-14) and the image is
+  24.04. NOT YET RUN in a cloud environment as of that date: after
+  re-pasting, confirm `dotnet --list-sdks` in a session and read
+  `/var/log/knapper-setup.log`.
 - **Ubuntu's ripgrep is removed, not just shadowed.** It is 14.x, and
   `/usr/local/bin` coming first on `PATH` protects only processes whose
   `PATH` has it. The script fails if `/usr/bin/rg` survives.

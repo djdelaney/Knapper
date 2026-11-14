@@ -61,7 +61,7 @@ dotnet test Knapper.slnx                    # all three tiers, incl. black-box a
 dotnet test tests/Knapper.AcceptanceTests   # just the real-process acceptance tier
 ```
 
-Requires .NET 10 SDK, plus `ripgrep` and `git` on PATH. Linux/macOS only —
+Requires .NET 11 SDK, plus `ripgrep` and `git` on PATH. Linux/macOS only —
 the locking and atomic-commit semantics are POSIX by design.
 
 ## Status

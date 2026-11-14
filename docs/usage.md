@@ -31,7 +31,7 @@ FIFO named `*.md`, a file over the Sync size ceiling — and is off by default
 so a plain dev vault reports healthy. Never build a dev vault from real
 notes: this repository is public.
 
-Prereqs: .NET 10 SDK, `ripgrep`, `git` on PATH. The sync gate DEFAULTS to
+Prereqs: .NET 11 SDK, `ripgrep`, `git` on PATH. The sync gate DEFAULTS to
 `heartbeat` (fail closed: without a heartbeat path the server refuses to
 start) — `Sync__Mode=open` is the deliberate dev opt-out, and the server
 logs a warning while it's active. The CLI reads the same settings:
