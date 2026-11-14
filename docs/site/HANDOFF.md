@@ -50,7 +50,7 @@ production-final.
      S6/S7 lint/receipt JSON: match the real tool response field names.
    - S1 / S4 chat mockups: tool names `vault_edit`, `vault_read`, and the
      `[MutationBlocked]` message text should match what the server really returns.
-   - Requirements box: .NET 10, ripgrep 15+, git, Obsidian Sync with `obsidian-headless`,
+   - Requirements box: .NET 11, ripgrep 15+, git, Obsidian Sync with `obsidian-headless`,
      Cloudflare Tunnel + Access.
    - Footer links: Docs → README anchor, Licence → actual licence file path.
 5. **Keep the guardrails** from the brief: no real vault content, hostnames, IPs or

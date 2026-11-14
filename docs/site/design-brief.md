@@ -252,7 +252,7 @@ Eight cards. Each has an icon, a headline and one or two lines. Possibly a
      but not touch.
   3. **Turn on writes:** when you trust it.
 - **Requirements box:** Linux host · Obsidian Sync subscription with
-  `obsidian-headless` · Cloudflare Tunnel + Access · .NET 10, ripgrep 15+,
+  `obsidian-headless` · Cloudflare Tunnel + Access · .NET 11, ripgrep 15+,
   git.
 - **Visual:** S9 (a short terminal snippet for step 1).
 
