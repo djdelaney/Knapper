@@ -653,6 +653,20 @@ are deployed, uploads are off until a deployment enables them.
   O_NOFOLLOW, and the type judged by fstat on the DESCRIPTOR, not by a stat
   taken before the open. A new read of vault bytes goes through it; a bare
   `File.OpenRead`/`ReadAllBytes` reopens the hang (`NonRegularFileReadTests`).
+  **And that handle is read ONLY through `Posix.PRead` or
+  `RegularFileReadStream`, never handed to `FileStream` or `RandomAccess`.**
+  It carries O_NONBLOCK, and from .NET 11 the BCL classifies a non-blocking
+  descriptor as pipe-like and stops honouring offsets on it — no exception.
+  Measured on 11.0.0 (2026-11-14): `vault_stat` past the read cap answered
+  with the SHA-256 of EMPTY input, a well-formed hash that is also the
+  mutation precondition, and every download snapshot failed as "kept
+  changing". On .NET 10 the BCL spelling passes every behavioural test, so
+  the regression is invisible until the runtime moves; pread(2) names its
+  offset per call and consults neither the flag nor the descriptor position.
+  Do not "simplify" this by clearing the flag with `fcntl` — that P/Invoke is
+  variadic, the Apple arm64 trap `open` already fell into
+  (`RegularFileReadStreamTests`, whose source check is the part that fails
+  on .NET 10).
 - **Byte equality is not ownership and not continued existence.** An earlier
   fix decided rollback by comparing content and pinned a test asserting a
   byte-identical replacement gets deleted "because no distinct content is

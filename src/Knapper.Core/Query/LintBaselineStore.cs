@@ -63,7 +63,7 @@ public sealed class LintBaselineStore
             // the record that decides what is silenced to the agents lint
             // reports on. A symlink here is refused, never followed.
             using var handle = Posix.OpenRegularForRead(_path, _path);
-            using var stream = new FileStream(handle, FileAccess.Read);
+            using var stream = new RegularFileReadStream(handle);
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
             bytes = buffer.ToArray();

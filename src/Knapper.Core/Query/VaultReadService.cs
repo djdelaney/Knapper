@@ -131,7 +131,7 @@ public sealed class VaultReadService(
             // omitted it would strand every large synced attachment.
             // Text/encoding detection is bounded to a prefix; totalLines
             // stays null (it would require a full decode).
-            using var large = new FileStream(handle, FileAccess.Read);
+            using var large = new RegularFileReadStream(handle);
             var (largeEncoding, largeIsText) = DetectTextBounded(large);
             large.Position = 0;
             return Finish(new VaultStatResult(
@@ -197,7 +197,7 @@ public sealed class VaultReadService(
     /// </summary>
     private static byte[] ReadBounded(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long size, string relative)
     {
-        using var stream = new FileStream(handle, FileAccess.Read);
+        using var stream = new RegularFileReadStream(handle);
         var buffer = new byte[size + 1];
         var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
         if (read == buffer.Length)

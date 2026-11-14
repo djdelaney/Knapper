@@ -185,7 +185,7 @@ public sealed class VaultFileLister(
         {
             // Non-blocking and typed: a FIFO in the listing used to hang it.
             using var handle = Interop.Posix.OpenRegularForRead(absolutePath, relative);
-            using var stream = new FileStream(handle, FileAccess.Read);
+            using var stream = new Interop.RegularFileReadStream(handle);
             return VaultHash.Sha256HexOf(stream);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

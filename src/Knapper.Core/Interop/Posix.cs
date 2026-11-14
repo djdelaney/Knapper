@@ -32,6 +32,11 @@ internal static partial class Posix
     [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int open(string path, int flags);
 
+    // Non-variadic, and off_t is 64-bit on every platform this runs on
+    // (LP64 Linux and macOS), so the offset is a plain long.
+    [LibraryImport("libc", SetLastError = true)]
+    private static partial nint pread(SafeFileHandle fd, Span<byte> buffer, nuint count, long offset);
+
     [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int rename(string oldPath, string newPath);
 
@@ -394,8 +399,10 @@ internal static partial class Posix
     /// and without being able to hang on the way. The read surface used
     /// File.OpenRead, which blocks in open(2) on a FIFO until a writer
     /// appears: one FIFO named *.md anywhere in the vault hung every lint
-    /// forever. O_NONBLOCK makes that open return at once (it does not
-    /// change reads from a regular file), O_NOFOLLOW refuses a symlink
+    /// forever. O_NONBLOCK makes that open return at once (the KERNEL reads
+    /// a regular file the same either way — the BCL does not: read the
+    /// result only through <see cref="PRead"/> or
+    /// <see cref="RegularFileReadStream"/>), O_NOFOLLOW refuses a symlink
     /// swapped in since Resolve, and the type is judged by fstat on the
     /// DESCRIPTOR, so there is no window between the check and the open.
     /// </summary>
@@ -433,6 +440,31 @@ internal static partial class Posix
         {
             handle.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Read from <paramref name="handle"/> at an explicit offset. THE way to
+    /// read a handle from <see cref="OpenRegularForRead"/>: that handle is
+    /// O_NONBLOCK, and from .NET 11 FileStream and RandomAccess treat a
+    /// non-blocking descriptor as pipe-like and ignore the offset — silently
+    /// (see <see cref="RegularFileReadStream"/>). Returns 0 at end of file;
+    /// a short read is legal and callers loop.
+    /// </summary>
+    internal static int PRead(SafeFileHandle handle, Span<byte> buffer, long offset)
+    {
+        if (buffer.IsEmpty)
+            return 0;
+        while (true)
+        {
+            var read = pread(handle, buffer, (nuint)buffer.Length, offset);
+            if (read >= 0)
+                return (int)read;
+            var errno = Marshal.GetLastPInvokeError();
+            if (errno == EINTR)
+                continue;
+            // No path and no OS text: this message can reach a client.
+            throw new IOException($"read failed (errno {errno})");
         }
     }
 

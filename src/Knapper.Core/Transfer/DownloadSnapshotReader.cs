@@ -141,7 +141,7 @@ public sealed class DownloadSnapshotReader(VaultPathResolver resolver, SyncOptio
         long total = 0;
         while (total < size)
         {
-            var read = RandomAccess.Read(handle, buffer.AsSpan((int)total), total);
+            var read = Posix.PRead(handle, buffer.AsSpan((int)total), total);
             if (read == 0)
                 return null;
             total += read;
@@ -161,7 +161,7 @@ public sealed class DownloadSnapshotReader(VaultPathResolver resolver, SyncOptio
         while (offset < expected.LongLength)
         {
             var want = (int)Math.Min(chunk.Length, expected.LongLength - offset);
-            var read = RandomAccess.Read(handle, chunk.AsSpan(0, want), offset);
+            var read = Posix.PRead(handle, chunk.AsSpan(0, want), offset);
             if (read == 0 || !chunk.AsSpan(0, read).SequenceEqual(expected.AsSpan((int)offset, read)))
                 return false;
             offset += read;
@@ -172,7 +172,7 @@ public sealed class DownloadSnapshotReader(VaultPathResolver resolver, SyncOptio
     private static bool Grew(SafeFileHandle handle, long size)
     {
         Span<byte> probe = stackalloc byte[1];
-        return RandomAccess.Read(handle, probe, size) > 0;
+        return Posix.PRead(handle, probe, size) > 0;
     }
 
     private static string? NormalizeSha(string? sha)
