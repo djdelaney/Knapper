@@ -46,8 +46,9 @@ Developer docs (read on demand; this file stays invariants-only):
   anything a review already settled).
 - [`docs/cloud-development.md`](docs/cloud-development.md) — developing
   from Claude Code cloud sessions: the setup script (`ops/claude-cloud-setup.sh`
-  is the master copy of a paste), verifying an environment, and why
-  `dotnet test` there reports 11 skips (root; `[PermissionDenialFact]`).
+  is the master copy of a paste, also used for Mailvec), verifying an
+  environment, and why `dotnet test` there skips the `[PermissionDenialFact]`
+  tests (root).
 - [`ops/ct106-runbook.md`](ops/ct106-runbook.md) — production deployment.
   Runbooks describe how to VERIFY live state, never what it was (house rule):
   date and mark anything observed.
