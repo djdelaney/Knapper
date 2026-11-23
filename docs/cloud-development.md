@@ -11,11 +11,16 @@ that re-checks it.
 
 ## Setting up the environment
 
-In the claude.ai environment settings for this repository:
+An environment can serve Knapper alone or alongside other repositories in
+the same session. The setup script installs what Knapper needs, plus Mailvec's
+sqlite-vec library for any checkout that carries Mailvec's fetch script, so
+one environment can serve both. In the claude.ai environment settings:
 
-1. **Network access: Trusted** (the default). The build needs nuget.org,
-   the Microsoft package servers, and GitHub release downloads; all are on
-   the default allowlist.
+1. **Network access.** Setup and build need nuget.org, Microsoft's
+   `builds.dotnet.microsoft.com` (the SDK's release metadata and tarball),
+   and GitHub release downloads (ripgrep, and Mailvec's sqlite-vec). A
+   refused host fails setup at the step that needed it; add it under a
+   custom allowlist.
 2. **Environment variables:**
    ```
    DOTNET_NOLOGO=1
@@ -28,19 +33,29 @@ In the claude.ai environment settings for this repository:
    test package.
 3. **Setup script:** paste the whole of
    [`ops/claude-cloud-setup.sh`](../ops/claude-cloud-setup.sh). It installs
-   the .NET 11 SDK with Microsoft's installer and the pinned ripgrep release,
-   removes Ubuntu's older ripgrep, and fails the setup on anything it cannot
-   verify.
+   the latest .NET 11 SDK from Microsoft's tarball, checked against
+   Microsoft's published SHA-512; the pinned ripgrep release, removing
+   Ubuntu's older one; the `sqlite3` CLI; and, for any checkout carrying
+   Mailvec's `ops/fetch-sqlite-vec.sh`, the sqlite-vec library Mailvec's
+   tests load. It fails the setup on anything it cannot verify.
 
-**The file in the repo is the master copy; the settings field holds a
-paste.** Change the script through a PR like any other file, then re-paste
-it. `tests/shell/test_ripgrep_pin.sh` fails CI if its ripgrep version or
-hash drifts from `ci.yml`'s or the runbook's, and checks that it parses —
-but nothing can check that the pasted copy matches the file. After a change
-to the script, re-paste it.
+The setup script runs as root after the session's repositories are cloned,
+starting in the directory that holds the checkouts, and only when a
+container is built fresh. Its result may be cached and reused by later
+sessions.
 
-Setup output is written live and to `/var/log/knapper-setup.log`, which a
-session can read afterwards.
+**The file in this repo is the master copy; the settings field holds a
+paste.** Mailvec's cloud guide points here instead of keeping its own copy.
+Change the script through a PR here, then re-paste it. The field holds at
+most 100 lines of at most 200 bytes, and the script is at the limit, so an
+addition means trimming elsewhere. `tests/shell/test_ripgrep_pin.sh` fails
+CI if its ripgrep version or hash drifts from `ci.yml`'s or the runbook's,
+and checks that it parses. Nothing in CI can see the pasted copy. A session
+whose agent has the environment tools can read the stored script and
+compare it with this file; with no paste pending they are byte-identical.
+
+Setup output is written live and to `/var/log/dotnet-env-setup.log`, which
+a session can read afterwards.
 
 ## Checking a new environment
 
@@ -49,8 +64,8 @@ environment or changing the setup script:
 
 ```sh
 # 1. Setup finished and nothing complained.
-tail -1 /var/log/knapper-setup.log                 # setup complete
-grep -nE '^(E|W):|WARNING' /var/log/knapper-setup.log   # expect no output
+tail -1 /var/log/dotnet-env-setup.log                 # setup complete
+grep -nE '^(E|W):|WARNING' /var/log/dotnet-env-setup.log   # expect no output
 
 # 2. Exactly one ripgrep, the pinned one.
 type -a rg                                         # only /usr/local/bin/rg
@@ -66,9 +81,16 @@ tests/shell/run.sh
 dotnet test Knapper.slnx
 ```
 
-**Expected `dotnet test` result: 11 skipped, 0 failed.** The skips are the
-`[PermissionDenialFact]` tests (see [Running as root](#running-as-root)).
-Any failure is real, and so is a skip count other than 11 in those tests.
+**Expected `dotnet test` result: 0 failed, and the skipped tests are exactly
+the `[PermissionDenialFact]` ones** (see [Running as root](#running-as-root)):
+12 as of 2026-11-23. Count them rather than trusting that number:
+
+```sh
+grep -rE '^\s*\[PermissionDenialFact' tests --include=*.cs | wc -l
+```
+
+Any failure is real, and so is a skip count that differs from that count, or
+a skipped test without the attribute.
 
 `rg --version` typed into the agent's shell is not a reliable check: Claude
 Code can put its own bundled `rg` there, which the .NET process never sees.
@@ -144,7 +166,7 @@ with `Sync__Mode=open` (the dev-only opt-out of the sync gate; see
 ## Why the setup script looks the way it does
 
 Each of these was a real failure while the environment was first set up
-(2026-09-24):
+(2026-09-24), or while it moved to .NET 11 and became shared (2026-11):
 
 - **It stops on the first error.** An earlier version ended in `exit 0`,
   which reported success whatever happened — harmless for a missing SDK
@@ -158,11 +180,20 @@ Each of these was a real failure while the environment was first set up
   script removes those two sources, still tolerates an update failure in
   case another breaks later, and then checks that an 11.x SDK is actually
   installed.
-- **The SDK comes from Microsoft's installer, not apt.** Ubuntu's archive
-  carries .NET 11 only from 26.10 on (checked 2026-11-14) and the image is
-  24.04. NOT YET RUN in a cloud environment as of that date: after
-  re-pasting, confirm `dotnet --list-sdks` in a session and read
-  `/var/log/knapper-setup.log`.
+- **The SDK comes from Microsoft's tarball, not apt or `dotnet-install.sh`.**
+  Ubuntu 24.04's archive stops at .NET 10, packages.microsoft.com carries no
+  .NET SDKs for 24.04, and the `dotnet/backports` PPA is refused from the
+  sandbox. `dotnet-install.sh` verifies nothing it downloads, so the script
+  reads Microsoft's release metadata and checks the tarball against the
+  SHA-512 published there. Verified 2026-11-23: SDK 11.0.100, and Knapper and
+  Mailvec built and passed their suites.
+- **Mailvec's sqlite-vec is installed here, not only by its hook.** A
+  session carrying several repositories never loads Mailvec's
+  `.claude/settings.json`, so its SessionStart hook does not run, and about
+  650 Mailvec tests fail without the library (observed 2026-11-23). The
+  setup script finds the checkout by file, not folder name, and runs that
+  repository's own fetch script, so the library's SHA-256 pin stays in
+  Mailvec.
 - **Ubuntu's ripgrep is removed, not just shadowed.** It is 14.x, and
   `/usr/local/bin` coming first on `PATH` protects only processes whose
   `PATH` has it. The script fails if `/usr/bin/rg` survives.
