@@ -1,0 +1,44 @@
+# Weekly version updates for NuGet packages and the GitHub Actions this repo
+# pins by commit SHA. Security updates are separate (repository settings).
+#
+# NOT covered, because nothing here can see them: the ripgrep release pinned
+# by version AND SHA-256 in ci.yml, ops/ct106-runbook.md §3 and
+# ops/claude-cloud-setup.sh (tests/shell/test_ripgrep_pin.sh keeps the three
+# in step), and the .NET SDK channel the cloud setup script tracks.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    # Central Package Management: every version lives in the root
+    # Directory.Packages.props, so one directory covers every project.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # The SDK and its ASP.NET Core transport ship together; bumping one
+      # without the other fails restore.
+      mcp-sdk:
+        patterns:
+          - "ModelContextProtocol"
+          - "ModelContextProtocol.*"
+      dotnet:
+        patterns:
+          - "Microsoft.Extensions.*"
+          - "Microsoft.AspNetCore.*"
+      test:
+        patterns:
+          - "Microsoft.NET.Test.Sdk"
+          - "xunit*"
+          - "coverlet.*"
+          - "Shouldly"
+    ignore:
+      # A .NET major is a TFM move (Directory.Build.props, every workflow's
+      # dotnet-version, the cloud setup script), never a routine weekly bump.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
