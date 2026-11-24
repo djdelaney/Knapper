@@ -458,12 +458,21 @@ public sealed class VaultMutationService(
     /// </summary>
     public BatchResult Batch(IReadOnlyList<BatchItem> items, AuditContext? ctx = null)
     {
-        if (items.Count == 0)
+        if (items is null || items.Count == 0)
             throw new KnapperException(VaultErrorCode.InvalidArgument, "batch is empty");
         if (items.Count > options.MaxBatchItems)
         {
             throw new KnapperException(VaultErrorCode.InvalidArgument,
                 $"batch has {items.Count} items; the cap is {options.MaxBatchItems}");
+        }
+        // Before anything dereferences an item — a null element is a
+        // malformed request, owed [InvalidArgument] like every other one
+        // (see ValidateEdits), not the NullReferenceException that reaches
+        // an agent as [Internal].
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i] is null)
+                throw new KnapperException(VaultErrorCode.InvalidArgument, $"items[{i}] is null");
         }
 
         var resolved = items.Select(i => resolver.Resolve(i.Path)).ToList();
@@ -858,10 +867,11 @@ public sealed class VaultMutationService(
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                // Deliberately every exception, not IOException alone:
-                // File.ReadAllBytes answers UnauthorizedAccessException when
-                // the destination has become a directory or an unreadable
-                // file, and that escaping the handler is how the version
+                // Deliberately every exception, not IOException alone: the
+                // read once answered UnauthorizedAccessException when the
+                // destination had become a directory or an unreadable file
+                // (it is typed now, and a symlink or FIFO swapped in lands
+                // here too), and that escaping the handler is how the version
                 // before lost the original note outright while reporting a
                 // typed IoError (`PostCommitFailureTests`). Nothing here is
                 // destructive — the source is still at its own pathname —
@@ -997,9 +1007,9 @@ public sealed class VaultMutationService(
         byte[] held;
         try
         {
-            held = File.ReadAllBytes(tempPath);
+            held = Posix.ReadRegularFile(tempPath);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is KnapperException or IOException or UnauthorizedAccessException)
         {
             return true;
         }
@@ -1013,9 +1023,10 @@ public sealed class VaultMutationService(
                 // non-regular file at the public name neither holds our bytes
                 // nor may be read (a FIFO read would hang the rollback).
                 // Answering false keeps the temp — the safe direction.
-                return File.Exists(path)
-                    && Posix.LStat(path).IsRegular
-                    && File.ReadAllBytes(path).AsSpan().SequenceEqual(held);
+                // Judged by the open itself (no-follow, non-blocking, typed
+                // on the descriptor) — an lstat before a plain open expires
+                // in between. Missing/symlink/non-regular throw → false.
+                return Posix.ReadRegularFile(path).AsSpan().SequenceEqual(held);
             }
             catch (KnapperException)
             {
@@ -1049,9 +1060,10 @@ public sealed class VaultMutationService(
             // Non-following type check first: a source swapped for a FIFO
             // would hang this read under the path locks, and a symlink would
             // compare some other file's bytes. Either way: not our content.
-            same = File.Exists(vp.Absolute)
-                && Posix.LStat(vp.Absolute).IsRegular
-                && File.ReadAllBytes(vp.Absolute).AsSpan().SequenceEqual(expected);
+            // The open itself is no-follow and non-blocking, so there is no
+            // gap between the classification and the read; a missing file,
+            // symlink or non-regular file throws KnapperException below.
+            same = Posix.ReadRegularFile(vp.Absolute).AsSpan().SequenceEqual(expected);
         }
         catch (KnapperException)
         {
@@ -1059,8 +1071,8 @@ public sealed class VaultMutationService(
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // UnauthorizedAccessException, not IOException, is what
-            // File.ReadAllBytes answers for a mode-000 file — the same
+            // UnauthorizedAccessException, not IOException, is what a
+            // BCL read answers for a mode-000 file — the same
             // exhaustive pair the sibling judgements (CapturedIsOurs, Holds)
             // catch. Omitting it let a source chmod'ed unreadable inside this
             // window escape as [IoError] ("filesystem failure") when the
@@ -1088,10 +1100,9 @@ public sealed class VaultMutationService(
             // success path delete a pathname that was never ours; reading a
             // FIFO would block forever under the path locks. Non-regular
             // answers not-ours, which routes to the rollback's no-follow
-            // restore.
-            if (!Posix.LStat(capturedPath).IsRegular)
-                return false;
-            return File.ReadAllBytes(capturedPath).AsSpan().SequenceEqual(data);
+            // restore. The open itself enforces it (no-follow, non-blocking,
+            // fstat on the descriptor) — an lstat first would expire.
+            return Posix.ReadRegularFile(capturedPath).AsSpan().SequenceEqual(data);
         }
         catch (KnapperException)
         {
@@ -1297,7 +1308,18 @@ public sealed class VaultMutationService(
                 $"{vp.Relative} is not a regular file (a symlink, FIFO, socket, or device was put at its " +
                 "pathname by an external writer) — refused");
         }
-        return File.ReadAllBytes(vp.Absolute);
+        // ...and the open is itself no-follow and non-blocking, because the
+        // lstat above has expired by the time it happens.
+        try
+        {
+            return Posix.ReadRegularFile(vp.Absolute, vp.Relative);
+        }
+        catch (KnapperException e) when (e.Code is VaultErrorCode.SymlinkRejected or VaultErrorCode.InvalidArgument)
+        {
+            throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                $"{vp.Relative} is not a regular file (a symlink, FIFO, socket, or device was put at its " +
+                "pathname by an external writer) — refused", e);
+        }
     }
 
     private static void RequireSha(string expected, byte[] data, VaultPath vp)
@@ -1336,9 +1358,9 @@ public sealed class VaultMutationService(
         }
     }
 
-    private static void ValidateEdits(IReadOnlyList<EditSpec> edits)
+    private static void ValidateEdits(IReadOnlyList<EditSpec>? edits)
     {
-        if (edits.Count == 0)
+        if (edits is null || edits.Count == 0)
             throw new KnapperException(VaultErrorCode.InvalidArgument, "edits[] is required and must be non-empty");
         for (var i = 0; i < edits.Count; i++)
         {

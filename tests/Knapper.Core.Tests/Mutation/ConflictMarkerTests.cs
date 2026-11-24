@@ -93,4 +93,51 @@ public sealed class ConflictMarkerTests : IDisposable
         found.ShouldNotContain("Doorway/b (Conflicted copy 2026-08-20).md",
             "content behind a directory symlink is outside the walk, always");
     }
+
+    // ---- security review 2026-11-24 F4: the gate and the walk agree on shape --
+
+    /// <summary>
+    /// A displaced survivor is published no-follow, so it can be a symlink to
+    /// a DIRECTORY — which Directory.EnumerateFiles omits. The health walk
+    /// listed it (503) while the gate let mutations to the note through.
+    /// </summary>
+    [Fact]
+    public void A_sibling_that_is_a_symlink_to_a_directory_blocks_the_gate_as_it_degrades_health()
+    {
+        _vault.File("Notes/a.md", "content\n");
+        const string sibling = "Notes/a (Knapper displaced 2026-08-20 12-00-00 abcd1234).md";
+        File.CreateSymbolicLink(Path.Combine(_vault.Path, sibling), _outside.Path);
+
+        _detector.ScanAll().ShouldContain(sibling);
+        Should.Throw<KnapperException>(() => _detector.AssertNotConflicted(_resolver.Resolve("Notes/a.md")))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+    }
+
+    [Fact]
+    public void A_dangling_symlink_sibling_blocks_the_gate_as_it_degrades_health()
+    {
+        _vault.File("Notes/a.md", "content\n");
+        const string sibling = "Notes/a (Conflicted copy 2026-08-20).md";
+        File.CreateSymbolicLink(Path.Combine(_vault.Path, sibling), Path.Combine(_outside.Path, "gone.md"));
+
+        _detector.ScanAll().ShouldContain(sibling);
+        Should.Throw<KnapperException>(() => _detector.AssertNotConflicted(_resolver.Resolve("Notes/a.md")))
+            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+    }
+
+    /// <summary>
+    /// The other half of the agreement: a real FOLDER whose name carries the
+    /// marker is not a conflict object to either side. Blocking on it in the
+    /// gate alone would be the same disagreement, reversed — a note nobody
+    /// can edit under a green board.
+    /// </summary>
+    [Fact]
+    public void A_real_directory_carrying_the_marker_is_a_conflict_to_neither_the_gate_nor_the_walk()
+    {
+        _vault.File("Notes/a.md", "content\n");
+        Directory.CreateDirectory(Path.Combine(_vault.Path, "Notes/a (Conflicted copy 2026-08-20)"));
+
+        _detector.ScanAll().ShouldBeEmpty();
+        Should.NotThrow(() => _detector.AssertNotConflicted(_resolver.Resolve("Notes/a.md")));
+    }
 }

@@ -41,7 +41,7 @@ public sealed class VaultDownloadPrepareTool(DownloadService downloads, Transfer
         [Description("Files to download (1–16)")] DownloadItem[] items) =>
         support.Run("vault_download_prepare", () => downloads.Prepare(
             identity.Current(),
-            items is null ? null : [.. items.Select(i => new DownloadPrepareRequest(i.Path, i.ExpectSha256))],
+            items is null ? null : [.. items.Select(i => i is null ? null! : new DownloadPrepareRequest(i.Path, i.ExpectSha256))],
             support.Caller()));
 }
 

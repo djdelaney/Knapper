@@ -129,6 +129,18 @@ setup "stale Fully synced"
 printf '[%s] Fully synced\n' "$(ts_ago 600)" > "$LOG"
 probe; assert_rc 0; assert_not_touched; assert_withheld "sync may be wedged"
 
+# ── 4b. future: a healthy line stamped AHEAD of the clock ─────────────────
+# Negative age passed `-le MAX_SYNC_AGE` (security review 2026-11-24): after a
+# snapshot restore or a clock step the heartbeat kept being touched for the
+# whole skew. ts_ago takes a negative offset. Small skew stays tolerated.
+setup "Fully synced stamped an hour in the future"
+printf '[%s] Fully synced\n' "$(ts_ago -3600)" > "$LOG"
+probe; assert_rc 0; assert_not_touched; assert_withheld "in the FUTURE"
+
+setup "Fully synced a few seconds ahead"
+printf '[%s] Fully synced\n' "$(ts_ago -5)" > "$LOG"
+probe; assert_rc 0; assert_touched; assert_silent
+
 # ── 5. window sizing: a bulk burst INSIDE the budget still evaluates ──────
 # ~700 activity lines after the last connection-state line — the measured
 # shape of the 234-note initial pull (~3 lines per file, one trailing

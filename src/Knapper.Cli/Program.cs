@@ -198,7 +198,7 @@ int Status()
         : conflicts.Count == 0 ? "none" : string.Join(", ", conflicts))}");
     Console.WriteLine($"git:        {(job.RepoExists ? $"repo present, last commit {Describe(job.LastCommitAgeSeconds())}" : "NO repo (knapper git-init)")}");
     Console.WriteLine($"lint:       {DescribeBaseline()}");
-    Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (syncOptions.Mode == "heartbeat"
+    Console.WriteLine($"sync gate:  {syncOptions.Mode}" + (string.Equals(syncOptions.Mode, "heartbeat", StringComparison.OrdinalIgnoreCase)
         ? string.IsNullOrWhiteSpace(syncOptions.HeartbeatPath)
             ? " — NO heartbeat path configured (mutations would be blocked; set Sync__HeartbeatPath)"
             : $" — heartbeat {Describe(new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds())} (max {syncOptions.MaxAgeSeconds}s)"
@@ -220,7 +220,7 @@ int Status()
         }
         catch (KnapperException e)
         {
-            return $"UNUSABLE — {e.Message}";
+            return $"UNUSABLE — {e.Message} [{lintOptions.BaselinePath}]";
         }
     }
 }
@@ -323,9 +323,12 @@ int Doctor()
         Check($"Transfer configuration coherent ({label})", () => problems.Count == 0);
     }
     {
-        // Not the server's refusal re-run (that lives in Knapper.Mcp) — the
-        // same three facts, stated so an operator sees the ingress posture
-        // without reading a startup log.
+        // The posture, stated so an operator sees it without reading a
+        // startup log — AND the server's own refusal, from the one definition
+        // both share (IngressConfiguration). Restating it here let doctor
+        // print "ok Ingress" over an Access block with no audience, and over
+        // a public AllowedHosts entry with Access off, both of which the
+        // server refuses to start on (security review 2026-11-24).
         var mcp = configuration.GetSection(McpOptions.SectionName).Get<McpOptions>() ?? new McpOptions();
         var loopbackBind = System.Net.IPAddress.TryParse(mcp.BindAddress, out var bind) && System.Net.IPAddress.IsLoopback(bind);
         var label = mcp.Access.Enabled
@@ -339,8 +342,10 @@ int Doctor()
                 : loopbackBind
                     ? "Access DISABLED, loopback bind — dev only: every local process is the vault owner"
                     : $"Access DISABLED on non-loopback bind {mcp.BindAddress} — the server refuses to start";
-        Check($"Ingress ({label})",
-            () => mcp.Access.Enabled || (loopbackBind && !mcp.Access.AllowPublicHostsWithoutAccess));
+        var refusal = IngressConfiguration.StartupError(mcp);
+        Check(refusal is null ? $"Ingress ({label})" : $"Ingress (the server REFUSES TO START: {refusal})",
+            () => refusal is null
+                && (mcp.Access.Enabled || (loopbackBind && !mcp.Access.AllowPublicHostsWithoutAccess)));
     }
     Check($"Vault:HealthScanBudgetMs within {VaultOptions.MinHealthScanBudgetMs}–{VaultOptions.MaxHealthScanBudgetMs} ({vaultOptions.HealthScanBudgetMs} ms)",
         () => VaultOptions.ValidateHealthScanBudget(vaultOptions.HealthScanBudgetMs) is null);
@@ -427,14 +432,30 @@ int Doctor()
         p!.WaitForExit(5000);
         return p.ExitCode == 0;
     });
-    if (syncOptions.Mode == "heartbeat")
+    // The server's own gate, built and ASKED the way a mutation asks it — not
+    // a restatement. `age <= max` here passed a heartbeat stamped in the
+    // FUTURE (a restored CT, a stepped clock) that the gate blocks every
+    // mutation on, and a case-sensitive mode compare read `Heartbeat` as open
+    // (security review 2026-11-24).
     {
-        Check($"sync heartbeat fresh (<{syncOptions.MaxAgeSeconds}s)",
-            () => new FileAgeSyncGate(syncOptions).HeartbeatAgeSeconds() is { } age && age <= syncOptions.MaxAgeSeconds);
-    }
-    else
-    {
-        Console.WriteLine("warn  sync gate is OPEN — dev only; production sets Sync:Mode=heartbeat");
+        ISyncGate? gate = null;
+        Check($"Sync:Mode is 'open' or 'heartbeat' ({syncOptions.Mode})", () =>
+        {
+            gate = SyncGates.Create(syncOptions);
+            return true;
+        });
+        if (gate is FileAgeSyncGate)
+        {
+            Check($"sync heartbeat fresh (<{syncOptions.MaxAgeSeconds}s old, not in the future; {syncOptions.HeartbeatPath})", () =>
+            {
+                gate.AssertMutationsAllowed();
+                return true;
+            });
+        }
+        else if (gate is not null)
+        {
+            Console.WriteLine("warn  sync gate is OPEN — dev only; production sets Sync:Mode=heartbeat");
+        }
     }
     // WARN, not FAIL. doctor's failures stop a deployment, and an oversized
     // file blocks nothing: the rest of the vault syncs normally and no human

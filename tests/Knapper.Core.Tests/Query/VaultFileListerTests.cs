@@ -270,4 +270,41 @@ public sealed class VaultFileListerTests : IClassFixture<FixtureVault>
                 new VaultSearchQuery { Pattern = "x", IncludeGlobs = [glob] }))
             .Code.ShouldBe(VaultErrorCode.InvalidArgument);
     }
+
+    // ---- security review 2026-11-24 F8: `extensions` means one thing ------
+
+    /// <summary>
+    /// A glob in the extensions parameter matched no file and answered an
+    /// exhaustive-looking empty list; an empty extension matched every
+    /// extensionless file. vault_search refused both — and now the lister
+    /// refuses them with it, from the one shared reading.
+    /// </summary>
+    [Theory]
+    [InlineData("*.md")]
+    [InlineData("")]
+    [InlineData(".")]
+    [InlineData("md/x")]
+    [InlineData("m d")]
+    public void What_is_not_a_plain_extension_is_refused_by_the_lister_and_by_search_alike(string extension)
+    {
+        Should.Throw<KnapperException>(() => _vault.Lister.List(new VaultFilesQuery { Extensions = [extension] }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        Should.Throw<KnapperException>(() => _vault.Search.SearchMatches(
+                new VaultSearchQuery { Pattern = "needle", Extensions = [extension] }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void The_lister_caps_the_extension_list_like_search_does() =>
+        Should.Throw<KnapperException>(() => _vault.Lister.List(
+                new VaultFilesQuery { Extensions = [.. Enumerable.Repeat("md", VaultSearchService.MaxListItems + 1)] }))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+
+    [Theory]
+    [InlineData(".BIN")]
+    [InlineData("bin")]
+    [InlineData("Bin")]
+    public void A_plain_extension_still_matches_with_or_without_a_dot_in_any_case(string extension) =>
+        _vault.Lister.List(new VaultFilesQuery { Extensions = [extension] })
+            .Items.Select(i => i.Path).ShouldBe(["raw/blob.bin"]);
 }

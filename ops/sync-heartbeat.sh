@@ -159,6 +159,14 @@ EPOCH=$(date -u -d "$TS" +%s 2>/dev/null) || cannot_evaluate "date(1) could not 
 # default measured 116s gaps on CT 106) + 300s (Sync__MaxAgeSeconds). If that
 # total matters, the lever is Sync__MaxAgeSeconds.
 AGE=$(( $(date -u +%s) - EPOCH ))
+# A line stamped in the FUTURE is not a fresh one: the clock stepped back, or
+# the CT was restored from a snapshot (the runbook's own procedure), and under
+# `AGE <= max` alone a negative age reads as healthy for the whole skew while
+# ob may be wedged the entire time. Same rule and same 30s tolerance as
+# FileAgeSyncGate.FutureToleranceSeconds on the other side of the heartbeat —
+# far below the 60s tick, so a real line can never hide inside it.
+[ "$AGE" -ge -30 ] \
+  || withheld "newest connection-state line is $(( -AGE ))s in the FUTURE — the clock stepped or the log was restored; sync cannot be proven live"
 [ "$AGE" -le "$MAX_SYNC_AGE" ] \
   || withheld "newest connection-state line is ${AGE}s old (max ${MAX_SYNC_AGE}s) — sync may be wedged without logging"
 

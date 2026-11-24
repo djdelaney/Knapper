@@ -226,7 +226,7 @@ public sealed class VaultSearchService(
         var prefixes = ValidatePrefixes(query.PathPrefixes);
         ValidateGlobs(query.IncludeGlobs);
         ValidateGlobs(query.ExcludeGlobs);
-        _ = NormalizeExtensions(query.Extensions);
+        _ = Globbing.NormalizeExtensions(query.Extensions);
 
         var fingerprint = QueryCursor.Fingerprint(
             "search", mode, query.Pattern, query.Literal, query.Case, query.WholeWord,
@@ -265,7 +265,7 @@ public sealed class VaultSearchService(
         // case-insensitively — the differential contract requires the two
         // to agree (user-supplied include/exclude globs above stay
         // case-sensitive: those are raw rg semantics).
-        foreach (var ext in NormalizeExtensions(query.Extensions))
+        foreach (var ext in Globbing.NormalizeExtensions(query.Extensions))
             args.Add("--iglob=*." + ext);
         // The hidden guard. An include glob — or the extension sugar above —
         // WHITELISTS a path in rg's override set, and a whitelist overrides
@@ -448,22 +448,6 @@ public sealed class VaultSearchService(
     {
         foreach (var glob in globs ?? [])
             Globbing.Validate(glob);
-    }
-
-    private static IReadOnlyList<string> NormalizeExtensions(IReadOnlyList<string>? extensions)
-    {
-        if (extensions is null || extensions.Count == 0)
-            return [];
-        return extensions.Select(e =>
-        {
-            var ext = e.TrimStart('.');
-            if (ext.Length == 0 || !ext.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '+' or '~'))
-            {
-                throw new KnapperException(VaultErrorCode.InvalidArgument,
-                    $"'{e}' is not a plain file extension — use include_globs for patterns");
-            }
-            return ext;
-        }).ToList();
     }
 
     /// <summary>

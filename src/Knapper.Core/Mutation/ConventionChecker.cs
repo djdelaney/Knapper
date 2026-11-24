@@ -265,7 +265,14 @@ public sealed class ConventionChecker(ConventionsOptions options, KnapperMetrics
     {
         try
         {
-            return StrictUtf8.GetString(bytes);
+            // Without the BOM, as VaultReadService.DecodeStrict reads the
+            // same note ("utf-8-bom"): the mutation paths preserve the raw
+            // mark, and left in place it makes line one "\uFEFF---", so a
+            // BOM note's frontmatter was invisible to every rule here —
+            // adding it raised no frontmatter_added, and its existing tags
+            // were scanned as prose (security review 2026-11-24).
+            var text = StrictUtf8.GetString(bytes);
+            return text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
         }
         catch (DecoderFallbackException)
         {

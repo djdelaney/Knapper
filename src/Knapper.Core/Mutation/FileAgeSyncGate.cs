@@ -30,7 +30,10 @@ public sealed class FileAgeSyncGate(SyncOptions options) : ISyncGate
         if (age is null)
         {
             throw new KnapperException(VaultErrorCode.MutationBlocked,
-                $"sync heartbeat file is missing ({options.HeartbeatPath}) — the sync service looks dead; " +
+                // No path: this reaches MCP clients, and the heartbeat lives
+                // outside the vault, where Relativize strips nothing. doctor
+                // and status print Sync:HeartbeatPath for the operator.
+                "sync heartbeat file is missing (Sync:HeartbeatPath) — the sync service looks dead; " +
                 "mutations are blocked (fail closed; there is no local fallback)");
         }
         if (age < -FutureToleranceSeconds)

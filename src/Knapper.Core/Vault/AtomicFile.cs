@@ -122,7 +122,20 @@ public static class AtomicFile
         // Courtesy check: catching a stale base HERE means nothing has been
         // exchanged yet, so the failure is clean. The exchange below is what
         // makes the window between this read and the commit safe.
-        var latest = File.ReadAllBytes(absolutePath);
+        // No-follow and non-blocking: the lstat above expired before this
+        // open, and a symlink or FIFO swapped into that gap must be refused
+        // by the open itself, not read through or waited on.
+        byte[] latest;
+        try
+        {
+            latest = Posix.ReadRegularFile(absolutePath);
+        }
+        catch (KnapperException e) when (e.Code == VaultErrorCode.InvalidArgument)
+        {
+            throw new KnapperException(VaultErrorCode.PreconditionFailed,
+                $"{Path.GetFileName(absolutePath)} is no longer a regular file (an external writer replaced " +
+                "it with a FIFO, socket, or device) — refused; nothing was written", e);
+        }
         if (!VaultHash.Matches(expectedSha256, latest))
         {
             throw new KnapperException(VaultErrorCode.PreconditionFailed,
@@ -208,7 +221,7 @@ public static class AtomicFile
         try
         {
             var displaced = Posix.LStat(temp);
-            return displaced.IsRegular && VaultHash.Matches(expectedSha256, File.ReadAllBytes(temp));
+            return displaced.IsRegular && VaultHash.Matches(expectedSha256, Posix.ReadRegularFile(temp));
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -281,7 +294,7 @@ public static class AtomicFile
         try
         {
             reclaimedOurs = Posix.LStat(temp).SameIdentity(ourTemp)
-                && File.ReadAllBytes(temp).AsSpan().SequenceEqual(written);
+                && Posix.ReadRegularFile(temp).AsSpan().SequenceEqual(written);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -375,10 +388,36 @@ public static class AtomicFile
     /// Reopen and byte-compare. Every mutation ends here — this vault has a
     /// documented history of writes that reported success without landing,
     /// so a success receipt is never trusted without rereading the bytes.
+    ///
+    /// <para>The reread is NO-FOLLOW and cannot block. A pathname swapped for
+    /// a symlink after the commit would otherwise be verified against the
+    /// link's TARGET: in move/delete, a destination replaced by a symlink to
+    /// the not-yet-captured source compared equal, the capture then took the
+    /// source, and the operation reported success over a dangling link with
+    /// no copy of the note left (security review 2026-11-24). A FIFO there
+    /// blocked the open forever under the path and commit locks. A pathname
+    /// that no longer holds a regular file has not been verified, whatever
+    /// its target's bytes are.</para>
     /// </summary>
     public static void VerifyOnDisk(string absolutePath, byte[] expectedBytes)
     {
-        var onDisk = File.ReadAllBytes(absolutePath);
+        byte[] onDisk;
+        try
+        {
+            onDisk = Posix.ReadRegularFile(absolutePath);
+        }
+        catch (KnapperException e) when (e.Code == VaultErrorCode.SymlinkRejected)
+        {
+            throw new KnapperException(VaultErrorCode.SymlinkRejected,
+                $"post-write verification failed: {Path.GetFileName(absolutePath)} was replaced by a symlink " +
+                "after the write (external writer) — a symlink is never read through, so the write is unverified", e);
+        }
+        catch (KnapperException e) when (e.Code is VaultErrorCode.NotFound or VaultErrorCode.InvalidArgument)
+        {
+            throw new KnapperException(VaultErrorCode.VerifyFailed,
+                $"post-write verification failed: {Path.GetFileName(absolutePath)} no longer holds a regular " +
+                "file (an external writer removed or replaced it after the write)", e);
+        }
         if (!onDisk.AsSpan().SequenceEqual(expectedBytes))
         {
             throw new KnapperException(VaultErrorCode.VerifyFailed,

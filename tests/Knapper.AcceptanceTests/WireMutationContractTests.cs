@@ -167,4 +167,54 @@ public sealed class WireMutationContractTests : IAsyncLifetime
             Wire.TryDeleteDir(outside);
         }
     }
+
+    // ---- security review 2026-11-24 F10: JSON nulls are a bad REQUEST -------
+
+    /// <summary>
+    /// Over the real wire, because the defect lived in the tool layer's own
+    /// projections: a null array element was dereferenced there, before Core
+    /// could refuse it, and reached the agent as [Internal] — "a server bug,
+    /// give up" — for something it can fix in its own arguments.
+    /// </summary>
+    [Fact]
+    public async Task A_null_array_element_is_an_invalid_argument_never_an_internal_error()
+    {
+        await Wire.CallOk(_client, "vault_create", new() { ["path"] = "Nulls.md", ["text"] = "base\n" });
+        var sha = (await Wire.CallOk(_client, "vault_stat", new() { ["path"] = "Nulls.md" }))
+            .GetProperty("sha256").GetString();
+
+        var calls = new (string Tool, Dictionary<string, object?> Args)[]
+        {
+            ("vault_edit", new() { ["path"] = "Nulls.md", ["expectSha256"] = sha, ["edits"] = new object?[] { null } }),
+            ("vault_batch", new() { ["items"] = new object?[] { null } }),
+            ("vault_batch", new()
+            {
+                ["items"] = new object?[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["kind"] = "edit", ["path"] = "Nulls.md", ["expectSha256"] = sha,
+                        ["edits"] = new object?[] { null },
+                    },
+                },
+            }),
+            ("vault_batch_read", new() { ["items"] = new object?[] { null } }),
+            ("vault_search", new() { ["pattern"] = "base", ["includeGlobs"] = new object?[] { null } }),
+            ("vault_search", new() { ["pattern"] = "base", ["extensions"] = new object?[] { null } }),
+            ("vault_search", new() { ["pattern"] = "base", ["pathPrefixes"] = new object?[] { null } }),
+            ("vault_files", new() { ["extensions"] = new object?[] { null } }),
+            ("vault_lint", new() { ["checks"] = new object?[] { null } }),
+        };
+        foreach (var (tool, args) in calls)
+        {
+            var (ok, payload, error) = await Wire.Call(_client, tool, args);
+            // vault_batch reports a bad item per item; everything else refuses the call.
+            var text = ok ? payload!.Value.GetRawText() : error;
+            text.ShouldNotContain("Internal", Case.Sensitive, $"{tool} answered a null element with a server error");
+            text.ShouldContain("Invalid", Case.Sensitive, $"{tool}: {text}");
+        }
+
+        (await Wire.CallOk(_client, "vault_stat", new() { ["path"] = "Nulls.md" }))
+            .GetProperty("sha256").GetString().ShouldBe(sha, "nothing was written");
+    }
 }

@@ -31,6 +31,17 @@ public sealed class ConflictDetector(VaultPathResolver resolver)
         name.Contains(Marker, StringComparison.Ordinal)
         || name.Contains(DisplacedMarker, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Which directory entries can BE a conflict object: everything except a
+    /// real directory — files, file symlinks, dangling symlinks, and symlinks
+    /// to directories. A real directory is a folder that merely carries the
+    /// marker in its name; the walk recurses into it and the gate ignores it.
+    /// Shared by the gate and the health walk so the two cannot disagree
+    /// about what blocks a note. Never follows the entry.
+    /// </summary>
+    private static bool IsConflictShaped(FileSystemInfo entry) =>
+        entry is not DirectoryInfo || (entry.Attributes & FileAttributes.ReparsePoint) != 0;
+
     /// <summary>Blocks mutations to a conflict file, or to a file that has a conflict sibling.</summary>
     public void AssertNotConflicted(VaultPath path)
     {
@@ -46,10 +57,18 @@ public sealed class ConflictDetector(VaultPathResolver resolver)
         if (!Directory.Exists(directory))
             return;
         var stem = System.IO.Path.GetFileNameWithoutExtension(name);
-        var sibling = Directory.EnumerateFiles(directory)
-            .Select(System.IO.Path.GetFileName)
-            .FirstOrDefault(n => n!.StartsWith(stem + Marker, StringComparison.Ordinal)
-                || n.StartsWith(stem + DisplacedMarker, StringComparison.Ordinal));
+        // Every shape the health walk reports (IsConflictShaped — the ONE
+        // definition): Directory.EnumerateFiles omits a symlink whose target
+        // is a directory, and a displaced survivor is published no-follow so
+        // it can be exactly that — /up answered 503 for a conflict this gate
+        // was letting mutations past (security review 2026-11-24). Name
+        // first, so only a matching entry is ever stat'ed.
+        var sibling = new DirectoryInfo(directory).EnumerateFileSystemInfos()
+            .Where(e => (e.Name.StartsWith(stem + Marker, StringComparison.Ordinal)
+                    || e.Name.StartsWith(stem + DisplacedMarker, StringComparison.Ordinal))
+                && IsConflictShaped(e))
+            .Select(e => e.Name)
+            .FirstOrDefault();
         if (sibling is not null)
         {
             throw new KnapperException(VaultErrorCode.MutationBlocked,
@@ -110,9 +129,8 @@ public sealed class ConflictDetector(VaultPathResolver resolver)
                 // blocking. Recognizing the entry never follows it; recursion
                 // still refuses every reparse point, so a directory-symlink
                 // cycle stays impossible.
-                var reparse = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                if (entry is DirectoryInfo sub && !reparse)
-                    Walk(sub, rel);
+                if (!IsConflictShaped(entry))
+                    Walk((DirectoryInfo)entry, rel);
                 else if (IsConflictName(entry.Name))
                     results.Add(rel); // files, file-symlinks, AND dir-symlinks — every non-recursed shape
             }

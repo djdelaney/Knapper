@@ -32,8 +32,11 @@ public sealed class FileAgeSyncGateTests : IDisposable
     [Fact]
     public void A_missing_heartbeat_blocks_mutations()
     {
-        Should.Throw<KnapperException>(() => Gate().AssertMutationsAllowed())
-            .Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        var e = Should.Throw<KnapperException>(() => Gate().AssertMutationsAllowed());
+        e.Code.ShouldBe(VaultErrorCode.MutationBlocked);
+        // The heartbeat is outside the vault, so nothing downstream strips
+        // its path — and this message reaches MCP clients.
+        e.Message.ShouldNotContain(_dir.Path);
     }
 
     [Fact]

@@ -118,6 +118,15 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
     [InlineData("evil.example", null, false)]
     [InlineData("localhost", "https://evil.example", false)] // cross-origin browser POST
     [InlineData("localhost", "http://localhost:3535", true)]
+    // HostString.Host and Uri.Host both keep an IPv6 literal's brackets.
+    [InlineData("[::1]", null, true)]
+    [InlineData("[::1]", "http://[::1]:3535", true)]
+    [InlineData("::1", null, true)]
+    [InlineData("[::1]", "https://evil.example", false)]
+    // Brackets come off only around a real IPv6 address.
+    [InlineData("[localhost]", null, false)]
+    [InlineData("[127.0.0.1]", null, false)]
+    [InlineData("[2001:db8::1]", null, false)]
     [InlineData("localhost", "not a url", false)]
     public void Host_guard_pins_host_and_origin(string host, string? origin, bool allowed)
     {
@@ -163,5 +172,29 @@ public class HealthAndGuardTests : IClassFixture<KnapperMcpFactory>
         entry.GetProperty("Op").GetString().ShouldBe("edit");
         entry.GetProperty("Client").GetString().ShouldBe("loopback"); // no Access assertion in tests
         entry.GetProperty("RequestId").GetString().ShouldNotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// The Host a request to <c>http://[::1]:3535</c> actually carries, read
+    /// the way the middleware reads it — the unit rows above would pass on a
+    /// hand-typed "::1" that no request ever produces.
+    /// </summary>
+    [Fact]
+    public void A_request_to_the_IPv6_loopback_literal_is_a_loopback_host()
+    {
+        var host = new Microsoft.AspNetCore.Http.HostString("[::1]:3535").Host;
+
+        HostGuard.IsLoopbackHost(host).ShouldBeTrue();
+        HostGuard.IsAllowed(host, null, HostGuard.BuildAllowedHosts(null)).ShouldBeTrue();
+        HostGuard.IsLoopbackHost("[localhost]").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_configured_IPv6_host_matches_with_or_without_brackets()
+    {
+        var set = HostGuard.BuildAllowedHosts(["[2001:db8::1]"]);
+
+        HostGuard.IsAllowed("[2001:db8::1]", null, set).ShouldBeTrue();
+        HostGuard.IsAllowed("[2001:db8::2]", null, set).ShouldBeFalse();
     }
 }

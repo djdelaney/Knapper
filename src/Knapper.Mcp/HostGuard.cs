@@ -1,4 +1,5 @@
 using System.Net;
+using Knapper.Core.Options;
 
 namespace Knapper.Mcp;
 
@@ -14,15 +15,16 @@ namespace Knapper.Mcp;
 /// </summary>
 public static class HostGuard
 {
-    internal static readonly string[] Loopback = ["localhost", "127.0.0.1", "::1"];
+    // The configuration half — what "loopback" means, and when Access-off is
+    // exposure — is Knapper.Core.Options.IngressConfiguration, so that
+    // `knapper doctor` judges it with the server's own definition.
+    internal static IReadOnlyList<string> Loopback => IngressConfiguration.LoopbackHosts;
 
-    /// <summary>Unparseable counts as non-loopback — "couldn't tell" must not resolve to "safe".</summary>
-    public static bool IsLoopbackBind(string? bindAddress) =>
-        IPAddress.TryParse(bindAddress, out var ip) && IPAddress.IsLoopback(ip);
+    /// <inheritdoc cref="IngressConfiguration.IsLoopbackBind"/>
+    public static bool IsLoopbackBind(string? bindAddress) => IngressConfiguration.IsLoopbackBind(bindAddress);
 
-    /// <summary>The Host-header host component names this box, not a public hostname.</summary>
-    public static bool IsLoopbackHost(string? host) =>
-        !string.IsNullOrEmpty(host) && Loopback.Contains(host, StringComparer.OrdinalIgnoreCase);
+    /// <inheritdoc cref="IngressConfiguration.IsLoopbackHost"/>
+    public static bool IsLoopbackHost(string? host) => IngressConfiguration.IsLoopbackHost(host);
 
     /// <summary>
     /// "Local" for security exemptions means BOTH the TCP peer and the
@@ -41,48 +43,16 @@ public static class HostGuard
             && IsLoopbackHost(context!.Request.Host.Host);
     }
 
-    /// <summary>
-    /// Null when coherent; the refusal when Access is off and either the bind
-    /// is not loopback or a configured allowed host is public. A public name in AllowedHosts exists for one
-    /// reason — requests arriving under it through the tunnel — so pairing it
-    /// with disabled origin validation is exposure, not a dev setup. Refusing
-    /// here, rather than warning, is what makes the runbook's step order safe:
-    /// a tunnel routed before the Access apps exist reaches a server that
-    /// 403s the public Host, instead of one that serves it.
-    /// </summary>
-    public static string? UnauthenticatedExposureError(Knapper.Core.Options.McpOptions options)
-    {
-        if (options.Access.Enabled || options.Access.AllowPublicHostsWithoutAccess)
-            return null;
-        // The Host allowlist is a BROWSER defence: a browser cannot forge Host,
-        // but any other client can. On a non-loopback bind, `Host: localhost`
-        // from another machine passes it, and with Access off nothing else
-        // stands between that machine and the whole vault (security review
-        // 2026-11: one forged header listed a vault over the LAN).
-        if (!IsLoopbackBind(options.BindAddress))
-        {
-            return $"Mcp:BindAddress '{options.BindAddress}' is not loopback but Mcp:Access:Enabled is false — " +
-                   "any machine that can reach this port could read and MUTATE the whole vault by sending " +
-                   "'Host: localhost'. Bind 127.0.0.1, or enable Access (runbook §6.3).";
-        }
-        var publicHosts = (options.AllowedHosts ?? [])
-            .Select(h => h?.Trim())
-            .Where(h => !string.IsNullOrEmpty(h) && !IsLoopbackHost(h))
-            .ToList();
-        if (publicHosts.Count == 0)
-            return null;
-        return $"Mcp:AllowedHosts names a public hostname ({string.Join(", ", publicHosts)}) but " +
-               "Mcp:Access:Enabled is false — anything reaching this server under that name could read " +
-               "and MUTATE the whole vault. Enable Access (runbook §6.3), or remove the public hostname " +
-               "until you do.";
-    }
+    /// <inheritdoc cref="IngressConfiguration.UnauthenticatedExposureError"/>
+    public static string? UnauthenticatedExposureError(McpOptions options) =>
+        IngressConfiguration.UnauthenticatedExposureError(options);
 
     public static HashSet<string> BuildAllowedHosts(IEnumerable<string>? configured)
     {
         var set = new HashSet<string>(Loopback, StringComparer.OrdinalIgnoreCase);
         foreach (var host in configured ?? [])
         {
-            var trimmed = host?.Trim();
+            var trimmed = IngressConfiguration.NormalizeHost(host?.Trim());
             if (!string.IsNullOrEmpty(trimmed))
                 set.Add(trimmed);
         }
@@ -94,13 +64,15 @@ public static class HostGuard
     /// <param name="allowedHosts">From <see cref="BuildAllowedHosts"/>.</param>
     public static bool IsAllowed(string? host, string? origin, HashSet<string> allowedHosts)
     {
+        // Both sources keep an IPv6 literal's brackets; the set does not.
+        host = IngressConfiguration.NormalizeHost(host);
         if (string.IsNullOrEmpty(host) || !allowedHosts.Contains(host))
             return false;
         if (!string.IsNullOrEmpty(origin))
         {
             if (!Uri.TryCreate(origin, UriKind.Absolute, out var parsed))
                 return false;
-            if (!allowedHosts.Contains(parsed.Host))
+            if (!allowedHosts.Contains(IngressConfiguration.NormalizeHost(parsed.Host)!))
                 return false;
         }
         return true;

@@ -159,4 +159,21 @@ public class DownloadServiceTests : IDisposable
         items[1].ErrorCode.ShouldBe(nameof(VaultErrorCode.DownloadCapacityExceeded));
         store.BufferedBytes.ShouldBe(3);
     }
+
+    /// <summary>
+    /// Security review 2026-11-24 (F10): a null element threw
+    /// NullReferenceException past PrepareOne's typed catches. It is a
+    /// malformed call, refused whole before any grant is issued.
+    /// </summary>
+    [Fact]
+    public void A_null_item_is_refused_as_an_invalid_argument_before_any_grant_is_issued()
+    {
+        Directory.CreateDirectory(Path.Combine(_vault.Path, "Photos"));
+        File.WriteAllText(Path.Combine(_vault.Path, "Photos", "ok.txt"), "x");
+
+        Should.Throw<KnapperException>(() => _service.Prepare(Owner,
+                [new DownloadPrepareRequest("Photos/ok.txt", null), null!], AuditContext.None))
+            .Code.ShouldBe(VaultErrorCode.InvalidArgument);
+        File.Exists(Path.Combine(_outside.Path, "audit.jsonl")).ShouldBeFalse("no grant was issued, so nothing was audited");
+    }
 }

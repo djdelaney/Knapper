@@ -21,6 +21,39 @@ internal static class Globbing
     private const int MaxWildcards = 32;
 
     /// <summary>
+    /// The ONE reading of the <c>extensions</c> parameter, on BOTH surfaces:
+    /// leading dots dropped, lower-cased, at most
+    /// <see cref="VaultSearchService.MaxListItems"/> entries, each a plain
+    /// extension. <c>vault_search</c> validated; the lister only trimmed and
+    /// lower-cased, so <c>extensions: ["*.md"]</c> — a glob in the wrong
+    /// parameter — matched no file and answered an exhaustive-looking
+    /// <c>totalMatches: 0</c>, and <c>[""]</c> or <c>["."]</c> matched every
+    /// EXTENSIONLESS file where search refused the same input (security
+    /// review 2026-11-24). Same string, two meanings, both confident — the
+    /// defect <see cref="Validate"/> exists to prevent for globs.
+    /// </summary>
+    public static IReadOnlyList<string> NormalizeExtensions(IReadOnlyList<string>? extensions)
+    {
+        if (extensions is null || extensions.Count == 0)
+            return [];
+        if (extensions.Count > VaultSearchService.MaxListItems)
+        {
+            throw new KnapperException(VaultErrorCode.InvalidArgument,
+                $"{extensions.Count} extensions; the cap is {VaultSearchService.MaxListItems}");
+        }
+        return extensions.Select(e =>
+        {
+            var ext = e?.TrimStart('.') ?? "";
+            if (ext.Length == 0 || !ext.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '+' or '~'))
+            {
+                throw new KnapperException(VaultErrorCode.InvalidArgument,
+                    $"'{e}' is not a plain file extension — use a glob for patterns");
+            }
+            return ext.ToLowerInvariant();
+        }).ToList();
+    }
+
+    /// <summary>
     /// The ONE precondition every agent-supplied glob passes, on BOTH
     /// surfaces — the native lister via <see cref="Translate"/> and
     /// <c>vault_search</c>'s include/exclude lists, which never reach
