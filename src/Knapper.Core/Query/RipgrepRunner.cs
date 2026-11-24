@@ -95,6 +95,18 @@ internal sealed class RipgrepRunner(string ripgrepPath)
             {
                 while (ReadLineBounded(process.StandardOutput, process) is { } line)
                 {
+                    // Once the kill has been requested (caller cancellation
+                    // or the time budget), a line can be the TORN tail of
+                    // rg's output: the reader returns whatever preceded EOF
+                    // as a final line, newline or not. Handing that to the
+                    // sink surfaced a JSON parse error where cancellation or
+                    // a timeout belonged — and which one won was a race
+                    // (seen on Linux CI, 2026-11-24). The flag is set before
+                    // the kill callback runs, so every torn line sees it;
+                    // nothing after this point is delivered, so no record is
+                    // skipped with later ones still emitted.
+                    if (timeoutCts.IsCancellationRequested)
+                        break;
                     if (!onLine(line))
                     {
                         stoppedEarly = true;
