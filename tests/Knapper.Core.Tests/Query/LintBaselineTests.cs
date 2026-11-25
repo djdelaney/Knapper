@@ -245,6 +245,7 @@ public sealed class LintBaselineTests : IDisposable
         var e = Should.Throw<KnapperException>(() => Service().Lint(new LintQuery()));
         e.Code.ShouldBe(VaultErrorCode.IoError);
         e.Message.ShouldContain("knapper lint --accept");
+        e.Message.ShouldNotContain(_v.Outside.Path, Case.Sensitive, "the baseline's host path must not reach a client");
         Service().Lint(new LintQuery { All = true }).Items.Count.ShouldBe(3);
     }
 

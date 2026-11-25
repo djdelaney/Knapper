@@ -155,7 +155,8 @@ public sealed class UploadService
         {
             if (relative is not null && !auditFailed)
                 TryAudit(Entry(PrepareOp, relative, e.Code.ToString(), caller, principal));
-            return new UploadPrepareItem(relative ?? item?.Path ?? "", null, e.Code.ToString(), e.Message);
+            return new UploadPrepareItem(relative ?? item?.Path ?? "", null, e.Code.ToString(),
+                _resolver.Relativize(e.Message));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -342,7 +343,10 @@ public sealed class UploadService
         catch (KnapperException e)
         {
             code = e.Code.ToString();
-            message = e.Message;
+            // Relativized HERE: a per-item message never passes through
+            // ToolSupport.Run's catch, and this one is also stored on the
+            // grant for vault_upload_status to repeat.
+            message = _resolver.Relativize(e.Message);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {

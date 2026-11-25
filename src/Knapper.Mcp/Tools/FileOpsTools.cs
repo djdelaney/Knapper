@@ -58,7 +58,8 @@ public sealed class VaultBatchTool(VaultMutationService mutations, ToolSupport s
     public BatchResult Batch(
         [Description("The operations (each path at most once)")] BatchOp[] items) =>
         support.Run("vault_batch", () => mutations.Batch(
-            [.. items.Select(i => new BatchItem(
+            // Null array / null element pass through to Core's typed refusal.
+            items is null ? null! : [.. items.Select(i => i is null ? null! : new BatchItem(
                 i.Kind?.ToLowerInvariant() switch
                 {
                     null => throw new KnapperException(VaultErrorCode.InvalidArgument,
@@ -71,7 +72,7 @@ public sealed class VaultBatchTool(VaultMutationService mutations, ToolSupport s
                 },
                 i.Path,
                 i.ExpectSha256,
-                i.Edits?.Select(e => new EditSpec(e.Old, e.New, e.Count)).ToList(),
+                i.Edits?.Select(e => e is null ? null! : new EditSpec(e.Old, e.New, e.Count)).ToList(),
                 i.Guards,
                 i.Text))],
             support.Caller()));

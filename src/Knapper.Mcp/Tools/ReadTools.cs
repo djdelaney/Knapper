@@ -38,7 +38,8 @@ public sealed class VaultBatchReadTool(VaultReadService reader, ToolSupport supp
         [Description("Paths (with optional line ranges) to read")] ReadItem[] items,
         CancellationToken ct = default) =>
         support.Run("vault_batch_read", () => reader.BatchRead(
-            [.. items.Select(i => new VaultReadRequest(i.Path, i.StartLine, i.EndLine))], ct));
+            // Null array / null element pass through to Core's typed refusal.
+            items is null ? null! : [.. items.Select(i => i is null ? null! : new VaultReadRequest(i.Path, i.StartLine, i.EndLine))], ct));
 }
 
 [McpServerToolType]

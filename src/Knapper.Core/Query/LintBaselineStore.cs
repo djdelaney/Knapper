@@ -62,7 +62,9 @@ public sealed class LintBaselineStore
             // and one aimed at a vault path an agent later creates would hand
             // the record that decides what is silenced to the agents lint
             // reports on. A symlink here is refused, never followed.
-            using var handle = Posix.OpenRegularForRead(_path, _path);
+            // Named generically: these messages reach vault_lint's caller,
+            // and the baseline lives outside the vault by requirement.
+            using var handle = Posix.OpenRegularForRead(_path, "the baseline file");
             using var stream = new RegularFileReadStream(handle);
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
@@ -130,12 +132,22 @@ public sealed class LintBaselineStore
         }
         finally
         {
-            File.Delete(temp);
+            // Best-effort, and it must never throw: a delete failing HERE
+            // (the directory lost its permissions, or vanished) would replace
+            // the exception that says why the write failed with one about
+            // cleaning up after it.
+            try
+            {
+                File.Delete(temp);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
         }
     }
 
     private KnapperException Unusable(string why) => new(VaultErrorCode.IoError,
-        $"the lint baseline at {_path} is unusable: {why}. Re-accept one with `knapper lint --accept`, or pass " +
+        $"the lint baseline (Lint:BaselinePath) is unusable: {why}. Re-accept one with `knapper lint --accept`, or pass " +
         "all=true to see every finding without it");
 
     private sealed class Record

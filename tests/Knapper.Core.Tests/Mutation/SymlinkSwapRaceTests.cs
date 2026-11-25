@@ -297,4 +297,100 @@ public sealed class SymlinkSwapRaceTests : IDisposable
 
         ex.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
     }
+
+    // ---- security review 2026-11-24 F1: the post-publish verify must not
+    //      read THROUGH the destination, and must not block on it -----------
+
+    /// <summary>
+    /// The destination is published, then swapped for a symlink to the
+    /// SOURCE before it is verified. A following read compares the source's
+    /// own bytes, passes, and the capture then removes the source: success
+    /// receipt, dangling link, no copy of the note anywhere. The verify is
+    /// no-follow, so the move fails while the source is still untouched.
+    /// </summary>
+    [Fact]
+    public void A_move_destination_swapped_for_a_symlink_to_the_source_fails_with_the_source_intact()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCommitTestHook = (source, destination) =>
+        {
+            File.Delete(destination);
+            File.CreateSymbolicLink(destination, source);
+        };
+
+        Should.Throw<KnapperException>(() => _v.Service.Move("Notes/a.md", "Notes/b.md", sha))
+            .Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+
+        IsSymlink(_v.Absolute("Notes/a.md")).ShouldBeFalse();
+        _v.ReadText("Notes/a.md").ShouldBe("agent base\n", "the source must never be captured on an unverified destination");
+        IsSymlink(_v.Absolute("Notes/b.md")).ShouldBeTrue("their symlink is not ours to remove");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_delete_whose_trash_entry_is_swapped_for_a_symlink_to_the_source_fails_with_the_source_intact()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCommitTestHook = (source, destination) =>
+        {
+            File.Delete(destination);
+            File.CreateSymbolicLink(destination, source);
+        };
+
+        Should.Throw<KnapperException>(() => _v.Service.Delete("Notes/a.md", sha))
+            .Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+
+        IsSymlink(_v.Absolute("Notes/a.md")).ShouldBeFalse();
+        _v.ReadText("Notes/a.md").ShouldBe("agent base\n");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_move_destination_swapped_for_a_fifo_is_refused_without_blocking()
+    {
+        var sha = _v.Write("Notes/a.md", "agent base\n");
+        _v.Service.AfterCommitTestHook = (_, destination) =>
+        {
+            File.Delete(destination);
+            MakeFifo(destination);
+        };
+
+        var e = await BoundedThrow(() => _v.Service.Move("Notes/a.md", "Notes/b.md", sha));
+
+        e.Code.ShouldBe(VaultErrorCode.PreconditionFailed);
+        _v.ReadText("Notes/a.md").ShouldBe("agent base\n");
+        _v.TempFiles().ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Every mutation ends in VerifyOnDisk, so the rule is pinned on the
+    /// primitive too: equal content THROUGH a symlink is not verification.
+    /// </summary>
+    [Fact]
+    public void Verification_never_reads_through_a_symlink_even_when_its_target_holds_the_bytes()
+    {
+        _v.Write("Notes/a.md", "agent base\n");
+        File.WriteAllText(_outside, "agent base\n");
+        File.Delete(_v.Absolute("Notes/a.md"));
+        File.CreateSymbolicLink(_v.Absolute("Notes/a.md"), _outside);
+
+        var e = Should.Throw<KnapperException>(() =>
+            AtomicFile.VerifyOnDisk(_v.Absolute("Notes/a.md"), "agent base\n"u8.ToArray()));
+
+        e.Code.ShouldBe(VaultErrorCode.SymlinkRejected);
+        e.Message.ShouldNotContain(_v.VaultDir.Path, Case.Sensitive, "the message can reach a client");
+    }
+
+    [Fact]
+    public async Task Verification_of_a_fifo_fails_without_blocking()
+    {
+        _v.Write("Notes/a.md", "agent base\n");
+        File.Delete(_v.Absolute("Notes/a.md"));
+        MakeFifo(_v.Absolute("Notes/a.md"));
+
+        var e = await BoundedThrow(() =>
+            AtomicFile.VerifyOnDisk(_v.Absolute("Notes/a.md"), "agent base\n"u8.ToArray()));
+
+        e.Code.ShouldBe(VaultErrorCode.VerifyFailed);
+    }
 }

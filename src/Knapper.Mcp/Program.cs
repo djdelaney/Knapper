@@ -105,15 +105,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<ISyncGate>(sp =>
 {
     var sync = sp.GetRequiredService<IOptions<SyncOptions>>().Value;
-    return sync.Mode.ToLowerInvariant() switch
-    {
-        "open" => StaticSyncGate.Open,
-        "heartbeat" => string.IsNullOrWhiteSpace(sync.HeartbeatPath)
-            ? throw new InvalidOperationException("Sync:Mode is 'heartbeat' but Sync:HeartbeatPath is empty.")
-            : new FileAgeSyncGate(sync),
-        _ => throw new InvalidOperationException(
-            $"Sync:Mode must be 'open' or 'heartbeat', got '{sync.Mode}'."),
-    };
+    return SyncGates.Create(sync); // the one definition — doctor runs the same
 });
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<VaultOptions>>().Value);
 builder.Services.AddSingleton<VaultFileLister>();
@@ -303,10 +295,10 @@ var resolvedSyncOpts = app.Services.GetRequiredService<IOptions<SyncOptions>>().
 
 if (VaultOptions.ValidateHealthScanBudget(app.Services.GetRequiredService<VaultOptions>().HealthScanBudgetMs) is { } budgetError)
     throw new InvalidOperationException(budgetError);
-if (resolvedMcpOpts.Access.Validate() is { } accessConfigError)
-    throw new InvalidOperationException(accessConfigError);
-if (HostGuard.UnauthenticatedExposureError(resolvedMcpOpts) is { } exposureError)
-    throw new InvalidOperationException(exposureError);
+// One definition with `knapper doctor` (Access misconfiguration, then
+// unauthenticated exposure) — see IngressConfiguration.
+if (IngressConfiguration.StartupError(resolvedMcpOpts) is { } ingressError)
+    throw new InvalidOperationException(ingressError);
 
 var vaultRoot = app.Services.GetRequiredService<VaultPathResolver>().Root;
 bool vaultIsCaseInsensitive;

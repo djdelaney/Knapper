@@ -190,6 +190,31 @@ public sealed class WikiLinkTests
         shape.Links.ShouldHaveSingleItem().Target.ShouldBe("Parent Note");
     }
 
+    /// <summary>
+    /// A '---' on line 1 that never closes is a thematic break, not a
+    /// frontmatter block running to end of file. Read as one, it hid every
+    /// heading and block id in the note, and each inbound anchor link
+    /// reported a false broken_anchor (security review 2026-11-24).
+    /// </summary>
+    [Fact]
+    public void An_unclosed_leading_rule_does_not_swallow_the_notes_headings_and_block_ids()
+    {
+        var shape = Parse("---", "# Title", "A paragraph. ^para1", "## Section");
+
+        shape.Headings.ShouldBe(["title", "section"]);
+        shape.BlockIds.ShouldBe(["para1"]);
+    }
+
+    [Theory]
+    [InlineData("---")]
+    [InlineData("...")]
+    public void Frontmatter_closed_by_either_delimiter_still_hides_its_own_comment_lines(string close)
+    {
+        var shape = Parse("---", "# a YAML comment", close, "# Real");
+
+        shape.Headings.ShouldBe(["real"]);
+    }
+
     [Fact]
     public void Heading_comparison_is_case_and_whitespace_insensitive_but_keeps_punctuation()
     {

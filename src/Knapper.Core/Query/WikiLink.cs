@@ -106,7 +106,15 @@ internal static class WikiLink
         // frontmatter value is not a heading. Links inside it ARE real
         // (Obsidian resolves links in properties), so only heading/block-id
         // extraction skips it.
-        var inFrontmatter = lines.Count > 0 && Trim(lines[0]) == "---";
+        //
+        // ...and only when the block CLOSES. A '---' on line 1 with no later
+        // '---' or '...' is a thematic break (or frontmatter someone never
+        // finished), not a block running to end of file: treating it as one
+        // dropped every heading and block id in the note, and each inbound
+        // [[Note#Heading]] across the vault then reported a false
+        // broken_anchor (security review 2026-11-24). The closing test is the
+        // loop's own, so the two cannot disagree about where the block ends.
+        var inFrontmatter = lines.Count > 0 && Trim(lines[0]) == "---" && HasFrontmatterClose(lines);
 
         for (var i = 0; i < lines.Count; i++)
         {
@@ -683,4 +691,14 @@ internal static class WikiLink
     }
 
     private static string Trim(string line) => line.Trim().TrimEnd('\r');
+
+    private static bool HasFrontmatterClose(IReadOnlyList<string> lines)
+    {
+        for (var i = 1; i < lines.Count; i++)
+        {
+            if (Trim(lines[i].TrimEnd('\r')) is "---" or "...")
+                return true;
+        }
+        return false;
+    }
 }

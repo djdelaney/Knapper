@@ -145,6 +145,9 @@ send_mail() {
 # Check 1b is the second line of defence — it refuses to read a body it cannot
 # parse — but it is a backstop, not a reason to relax this test.
 UP_BODY=$(mktemp)
+# Removed on every exit, including a kill mid-curl: the body can hold /up's
+# answer and this runs every few minutes.
+trap 'rm -f "$UP_BODY"' EXIT
 # The credentials go in on STDIN (-H @-), never as arguments: argv is readable
 # by every user on this host through ps for as long as curl runs.
 HTTP_CODE=$(printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' \
@@ -219,7 +222,14 @@ elif ! is_uint "$STAMP_MTIME"; then
 else
     NOW=$(date +%s)
     AGE=$((NOW - STAMP_MTIME))
-    if [ "$AGE" -gt "$MAX_STAMP_AGE" ]; then
+    # A stamp in the FUTURE proves nothing about the timer: a stepped clock,
+    # a CT restored from a snapshot, or a bad touch — and under `AGE > max`
+    # alone it reads as fresh until the wall clock catches up, with the
+    # snapshot job possibly dead the whole time. Same 30s tolerance as
+    # FileAgeSyncGate.FutureToleranceSeconds.
+    if [ "$AGE" -lt -30 ]; then
+        fail "commit stamp is $(( -AGE ))s in the FUTURE — the clock stepped, the CT was restored from a snapshot, or the stamp was touched by hand; snapshot freshness is BLIND until a real commit run re-stamps it"
+    elif [ "$AGE" -gt "$MAX_STAMP_AGE" ]; then
         fail "commit stamp is ${AGE}s old (max ${MAX_STAMP_AGE}s) — the git snapshot timer is dead or every run is failing (secret scan? lock?)"
     fi
 fi

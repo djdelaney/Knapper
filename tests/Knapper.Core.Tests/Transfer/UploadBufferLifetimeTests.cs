@@ -72,4 +72,28 @@ public sealed class UploadBufferLifetimeTests : IDisposable
         items.ShouldAllBe(i => i.State == "succeeded");
         firstAliveDuringSecond.ShouldBe(false, "the first item's buffer must be collectable once it committed");
     }
+
+    /// <summary>
+    /// Security review 2026-11-24 (F5): a per-item commit error never passes
+    /// through the tool layer's relativizing catch, and it is stored on the
+    /// grant for status to repeat. A destination that appears between the
+    /// existence check and the link is refused by the kernel with a message
+    /// built from the ABSOLUTE path.
+    /// </summary>
+    [Fact]
+    public void A_commit_refusal_never_carries_the_servers_absolute_path()
+    {
+        Directory.CreateDirectory(_v.Absolute("Photos"));
+        var service = Service();
+        var (id, _) = Stage(service, "Photos/a.bin", 16);
+        AtomicFile.BeforeCreateLinkTestHook = path => File.WriteAllText(path, "sync got here first");
+
+        var item = service.Commit(Owner, [id], AuditContext.None).Items.Single();
+
+        item.State.ShouldBe("failed");
+        item.ErrorCode.ShouldBe(nameof(VaultErrorCode.AlreadyExists));
+        item.ErrorMessage.ShouldNotBeNull().ShouldContain("Photos/a.bin");
+        item.ErrorMessage.ShouldNotContain(_v.Resolver.Root);
+        service.Status(Owner, [id]).Items.Single().ErrorMessage.ShouldNotBeNull().ShouldNotContain(_v.Resolver.Root);
+    }
 }

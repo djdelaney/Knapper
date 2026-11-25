@@ -118,7 +118,10 @@ internal static partial class Posix
                     _ = close(created);
                 continue; // a concurrent creator racing us is fine — reopen whatever exists now
             }
-            throw new KnapperException(VaultErrorCode.IoError, $"open({path}) failed (errno {errno})");
+            // The file NAME only: the lock directory is outside the vault,
+            // so Relativize would not strip it, and this can reach a client.
+            throw new KnapperException(VaultErrorCode.IoError,
+                $"cannot open lock file '{Path.GetFileName(path)}' in Vault:LockDirectory (errno {errno})");
         }
     }
 
@@ -441,6 +444,29 @@ internal static partial class Posix
             handle.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// The whole of a regular file, read without following a symlink at the
+    /// final component and without being able to block: the mutation side's
+    /// replacement for File.ReadAllBytes. An lstat taken BEFORE a plain open
+    /// has expired by the open — a symlink swapped into that gap is read
+    /// THROUGH (a byte comparison then judges some other file), and a FIFO
+    /// swapped in blocks the open forever under the path locks. Here the
+    /// open itself refuses both and the type is judged on the descriptor.
+    /// Throws <see cref="KnapperException"/>: NotFound, SymlinkRejected,
+    /// InvalidArgument (not a regular file), IoError (cannot open); a failed
+    /// read is an <see cref="IOException"/>. Messages carry
+    /// <paramref name="nameForError"/>, never the absolute path.
+    /// </summary>
+    internal static byte[] ReadRegularFile(string path, string? nameForError = null)
+    {
+        using var handle = OpenRegularForRead(path, nameForError ?? Path.GetFileName(path));
+        using var stream = new RegularFileReadStream(handle);
+        var size = FStat(handle).Size;
+        using var buffer = new MemoryStream(capacity: (int)Math.Clamp(size, 0, Array.MaxLength));
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
     }
 
     /// <summary>

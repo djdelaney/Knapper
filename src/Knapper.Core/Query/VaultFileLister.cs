@@ -32,7 +32,7 @@ public sealed class VaultFileLister(
         // not claim it did.
         var excluded = archived.ExcludedFor(query.PathPrefix);
         var glob = query.Glob is null ? null : Globbing.Translate(query.Glob);
-        var extensions = NormalizeExtensions(query.Extensions);
+        var extensions = Globbing.NormalizeExtensions(query.Extensions); // the one reading, shared with vault_search
         var sizeFiltered = query.MinSize is not null || query.MaxSize is not null;
 
         var fingerprint = QueryCursor.Fingerprint(
@@ -198,9 +198,4 @@ public sealed class VaultFileLister(
                 $"cannot hash '{relative}' for include_sha", e);
         }
     }
-
-    private static IReadOnlyList<string> NormalizeExtensions(IReadOnlyList<string>? extensions) =>
-        extensions is null or []
-            ? []
-            : extensions.Select(e => e.TrimStart('.').ToLowerInvariant()).ToList();
 }

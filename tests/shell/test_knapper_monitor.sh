@@ -203,6 +203,24 @@ for SH in dash bash; do
     assert_mailed "commit stamp mtime from CT 106 is not a plain number"
 done
 
+# ── 7b. a commit stamp in the FUTURE is not a fresh one ───────────────────
+# Negative age passed `-gt MAX_STAMP_AGE` for the whole skew (security review
+# 2026-11-24): after a snapshot restore or a stray `touch -d`, check 2 stayed
+# green with the snapshot timer possibly dead. Small skew stays tolerated.
+setup "commit stamp far in the future → mail"
+stub_curl '{"status":"ok","oversized":{"ok":true}}' 200
+echo $(( $(date +%s) + 86400 )) > "$DIR/stamp"
+run
+assert_rc 1
+assert_mailed "in the FUTURE"
+
+setup "commit stamp a few seconds ahead → healthy"
+stub_curl '{"status":"ok","oversized":{"ok":true}}' 200
+echo $(( $(date +%s) + 5 )) > "$DIR/stamp"
+run
+assert_rc 0
+assert_no_mail
+
 # ── 8. honest counters still alert on a real delta ────────────────────────
 setup "real tool-error delta → mail"
 stub_curl '{"status":"ok","oversized":{"ok":true}}' 200

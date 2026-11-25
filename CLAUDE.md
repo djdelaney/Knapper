@@ -644,10 +644,17 @@ are deployed, uploads are off until a deployment enables them.
   target, recreating inside the rollback the exact alias the main path had
   been cured of (round three). And symlinks are not the only non-regular
   shape: a FIFO swapped in at any judged pathname would HANG the read while
-  the operation holds its path locks, so every such read classifies with
-  `Posix.LStat` first and refuses non-regular files — `ReadExisting` (the
-  first read of every mutation), the private-name inspection,
-  `CapturedIsOurs`, `RequireStillOurBytes`, and the rollback's `Holds`.
+  the operation holds its path locks, so every such read goes through
+  `Posix.ReadRegularFile` — no-follow, non-blocking, typed by fstat on the
+  DESCRIPTOR — `ReadExisting` (the first read of every mutation),
+  `Replace`'s pre-check, `CapturedIsOurs`, `RequireStillOurBytes`, the
+  rollback's `Holds`, and `VerifyOnDisk`. An `LStat` followed by
+  `File.ReadAllBytes` is NOT that: the stat has expired by the open, and
+  `VerifyOnDisk` had no stat at all — a move/delete destination swapped for a
+  symlink to the not-yet-captured source verified equal THROUGH the link, the
+  capture took the source, and the receipt said success over a dangling link
+  (review 2026-11-24; `SymlinkSwapRaceTests`). No bare `File.ReadAllBytes`
+  may return to `AtomicFile` or `VaultMutationService`.
   The READ surface has the same exposure with no lock to excuse it: lint reads
   every note, so one FIFO named `*.md` hung every lint forever. Reads open
   through `Posix.OpenRegularForRead` — O_NONBLOCK so the open cannot block,

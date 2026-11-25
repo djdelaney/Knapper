@@ -71,12 +71,19 @@ public sealed class VaultReadService(
     public VaultBatchReadResult BatchRead(
         IReadOnlyList<VaultReadRequest> requests, CancellationToken ct = default)
     {
-        if (requests.Count == 0)
+        if (requests is null || requests.Count == 0)
             throw new KnapperException(VaultErrorCode.InvalidArgument, "batch is empty");
         if (requests.Count > options.MaxBatchItems)
         {
             throw new KnapperException(VaultErrorCode.InvalidArgument,
                 $"batch has {requests.Count} items; the cap is {options.MaxBatchItems} — split the request");
+        }
+        for (var i = 0; i < requests.Count; i++)
+        {
+            // A malformed request, not a per-item read failure: there is no
+            // path to report the item under.
+            if (requests[i] is null)
+                throw new KnapperException(VaultErrorCode.InvalidArgument, $"items[{i}] is null");
         }
         var generationStart = generation.Current;
         var results = new List<VaultBatchReadItem>(requests.Count);
@@ -90,7 +97,8 @@ public sealed class VaultReadService(
             }
             catch (KnapperException e)
             {
-                results.Add(new VaultBatchReadItem(request.Path, null, e.Code, e.Message));
+                // Per-item, so it bypasses ToolSupport.Run's relativizing catch.
+                results.Add(new VaultBatchReadItem(request.Path, null, e.Code, resolver.Relativize(e.Message)));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {

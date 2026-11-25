@@ -22,6 +22,25 @@ public sealed class ConventionCheckerTests
         [.. (checker ?? All).Check(path, before is null ? null : Encoding.UTF8.GetBytes(before), Encoding.UTF8.GetBytes(after))
             .Select(w => w.Rule)];
 
+    // ---- UTF-8 BOM notes: the mark is not part of line one ----------------
+
+    private const string Bom = "\uFEFF";
+
+    [Fact]
+    public void Frontmatter_added_to_a_BOM_note_warns() =>
+        Rules(Bom + "# Note\nbody\n", Bom + "---\nstatus: active\n---\n# Note\nbody\n")
+            .ShouldBe(["frontmatter_added"]);
+
+    [Fact]
+    public void A_tag_added_to_a_BOM_notes_frontmatter_warns_once() =>
+        Rules(Bom + "---\nstatus: a\n---\nbody\n", Bom + "---\nstatus: a\ntags: [home]\n---\nbody\n")
+            .ShouldBe(["tags_added"]);
+
+    [Fact]
+    public void A_BOM_notes_existing_frontmatter_and_tags_are_not_new() =>
+        Rules(Bom + "---\ntags: [home]\n---\nbody\n", Bom + "---\ntags: [home]\n---\nbody\nmore\n")
+            .ShouldBeEmpty();
+
     [Fact]
     public void Nothing_is_checked_when_no_rule_is_enabled() =>
         Rules("x\n", "---\ntags: [a]\n---\n[b](c.md) #d\n", checker: ConventionChecker.Off).ShouldBeEmpty();

@@ -88,6 +88,14 @@ public sealed class DownloadService
             throw new KnapperException(VaultErrorCode.InvalidArgument,
                 $"items must hold 1–{MaxItems} entries, got {items?.Count ?? 0}");
         }
+        // Whole-call, and before any grant is issued: a null element used to
+        // throw NullReferenceException inside PrepareOne, past its typed
+        // catches, and reach the client as [Internal].
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i] is null)
+                throw new KnapperException(VaultErrorCode.InvalidArgument, $"items[{i}] is null");
+        }
         // Every grant this call issues is tracked until the response exists:
         // if anything unanticipated escapes a later item, the earlier grants
         // were never handed to anyone, so they are withdrawn rather than left
@@ -156,7 +164,8 @@ public sealed class DownloadService
             // about. The CODE is the audit signal — never the message.
             if (relative is not null && !auditFailed)
                 TryAudit(Entry(relative, e.Code.ToString(), caller, principal));
-            return new DownloadPrepareItem(relative ?? item.Path, null, e.Code.ToString(), e.Message);
+            return new DownloadPrepareItem(relative ?? item.Path, null, e.Code.ToString(),
+                _reader.Relativize(e.Message));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

@@ -44,6 +44,13 @@ public sealed class DownloadSnapshotReader(VaultPathResolver resolver, SyncOptio
     /// <summary>The vault-relative form of a path, after the resolver gate (for audit lines on refusal).</summary>
     public string Relative(string path) => resolver.Resolve(path).Relative;
 
+    /// <summary>
+    /// A Core message with the vault root stripped, for a per-item error that
+    /// reaches the client inside a result rather than through the tool
+    /// layer's one relativizing catch.
+    /// </summary>
+    public string Relativize(string message) => resolver.Relativize(message);
+
     /// <param name="reserve">
     /// Called with the file's size BEFORE any buffer is allocated, and again
     /// if the size changes between attempts; it throws when capacity is full,

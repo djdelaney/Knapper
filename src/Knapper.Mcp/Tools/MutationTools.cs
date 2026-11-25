@@ -29,7 +29,10 @@ public sealed class VaultEditTool(VaultMutationService mutations, ToolSupport su
         [Description("Strings that must exist before AND survive after the edit")] string[]? guards = null) =>
         support.Run("vault_edit", () => mutations.Edit(
             path, expectSha256,
-            [.. edits.Select(e => new EditSpec(e.Old, e.New, e.Count))],
+            // Nulls pass THROUGH: Core owns the typed [InvalidArgument] for a
+            // missing array or a null element; dereferencing one here would
+            // surface as [Internal] before Core ever saw the request.
+            edits is null ? null! : [.. edits.Select(e => e is null ? null! : new EditSpec(e.Old, e.New, e.Count))],
             guards, support.Caller()));
 }
 
